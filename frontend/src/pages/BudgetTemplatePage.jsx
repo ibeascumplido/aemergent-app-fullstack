@@ -31,7 +31,6 @@ const emptyMaterialRow = {
   margen: "30", // margen de ganancia en % (columna auxiliar)
   precio: "", // precio al público (calculado o manual)
   iva: "21",
-  horas: "", // columna auxiliar
   litros: "", // columna auxiliar
   altura: "", // columna auxiliar
   notas: "", // columna auxiliar
