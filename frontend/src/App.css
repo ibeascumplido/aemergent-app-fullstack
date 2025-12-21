@@ -1,34 +1,44 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* Custom styles for the dashboard */
+.sidebar-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-all duration-200;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.sidebar-link.active {
+    @apply bg-indigo-50 text-indigo-600 font-medium;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.stat-card {
+    @apply bg-white border border-slate-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-all duration-300;
 }
 
-.App-link {
-    color: #61dafb;
+.status-badge {
+    @apply rounded-full px-2.5 py-0.5 text-xs font-medium border;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+.status-pending {
+    @apply bg-orange-50 text-orange-700 border-orange-200;
+}
+
+.status-approved {
+    @apply bg-green-50 text-green-700 border-green-200;
+}
+
+.status-rejected {
+    @apply bg-red-50 text-red-700 border-red-200;
+}
+
+.calendar-day {
+    @apply relative h-24 p-1 border border-slate-100 bg-white hover:bg-slate-50 transition-colors cursor-pointer;
+}
+
+.calendar-day.today {
+    @apply bg-indigo-50 border-indigo-200;
+}
+
+.calendar-day.other-month {
+    @apply bg-slate-50 text-slate-400;
+}
+
+.calendar-event {
+    @apply text-xs px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 truncate mb-0.5;
 }
