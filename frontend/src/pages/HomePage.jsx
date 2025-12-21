@@ -32,7 +32,7 @@ const HomePage = () => {
       try {
         const [statsRes, budgetsRes, eventsRes] = await Promise.all([
           axios.get(`${API}/dashboard/stats`),
-          axios.get(`${API}/budgets`),
+          axios.get(`${API}/budget-templates`),
           axios.get(`${API}/events`)
         ]);
         setStats(statsRes.data);
