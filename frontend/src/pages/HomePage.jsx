@@ -130,7 +130,7 @@ const HomePage = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">Aprobados</p>
+                  <p className="text-sm text-slate-500">Aprobados (sin IVA)</p>
                   <p className="text-2xl font-bold text-green-600 font-['JetBrains_Mono']" data-testid="approved-amount">
                     {formatCurrency(stats?.total_approved_amount || 0)}
                   </p>
