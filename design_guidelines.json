@@ -1,0 +1,169 @@
+{
+  "identity": {
+    "name": "E1",
+    "role": "Anti-AI Designer",
+    "mission": "Create a 'Godly Light' minimalist dashboard that feels breathable, professional, and human.",
+    "principles": [
+      "Fusion over Imitation: Mix Swiss precision with Soft Utility warmth.",
+      "Emotion First: The user should feel 'Calm Control'.",
+      "Content is King: Data is the hero, UI is the stage.",
+      "Negative Space: Aggressive whitespace usage (2-3x normal).",
+      "Contrast: High contrast text for readability, subtle borders for structure."
+    ]
+  },
+  "typography": {
+    "headings": {
+      "family": "Manrope, sans-serif",
+      "weights": ["600", "700", "800"],
+      "usage": "Use for all page titles, card headers, and major metrics.",
+      "letterSpacing": "tracking-tight"
+    },
+    "body": {
+      "family": "Public Sans, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "Use for all standard text, table data, and inputs.",
+      "letterSpacing": "tracking-normal"
+    },
+    "mono": {
+      "family": "JetBrains Mono, monospace",
+      "usage": "Use for financial figures, dates, and IDs."
+    },
+    "installation": "Import fonts via Google Fonts in index.css: @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');"
+  },
+  "colors": {
+    "palette": {
+      "background": "#ffffff",
+      "foreground": "#0f172a",
+      "card": "#ffffff",
+      "cardForeground": "#0f172a",
+      "popover": "#ffffff",
+      "popoverForeground": "#0f172a",
+      "primary": "#4f46e5",
+      "primaryForeground": "#ffffff",
+      "secondary": "#f1f5f9",
+      "secondaryForeground": "#1e293b",
+      "muted": "#f8fafc",
+      "mutedForeground": "#64748b",
+      "accent": "#f1f5f9",
+      "accentForeground": "#0f172a",
+      "destructive": "#ef4444",
+      "destructiveForeground": "#ffffff",
+      "border": "#e2e8f0",
+      "input": "#e2e8f0",
+      "ring": "#4f46e5"
+    },
+    "status": {
+      "pending": {
+        "bg": "#fff7ed",
+        "text": "#c2410c",
+        "border": "#ffedd5"
+      },
+      "approved": {
+        "bg": "#f0fdf4",
+        "text": "#15803d",
+        "border": "#dcfce7"
+      },
+      "rejected": {
+        "bg": "#fef2f2",
+        "text": "#b91c1c",
+        "border": "#fee2e2"
+      }
+    },
+    "gradients": {
+      "subtle": "bg-gradient-to-b from-white to-slate-50"
+    }
+  },
+  "layout": {
+    "spacing": {
+      "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+      "section": "py-12",
+      "cardPadding": "p-6 or p-8"
+    },
+    "grid": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6",
+      "cards": "grid grid-cols-1 md:grid-cols-3 gap-6"
+    },
+    "sidebar": {
+      "width": "w-64",
+      "style": "border-r border-slate-100 bg-white h-screen sticky top-0"
+    }
+  },
+  "components": {
+    "cards": {
+      "style": "bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 rounded-xl",
+      "header": "border-b border-slate-50 pb-4 mb-4"
+    },
+    "buttons": {
+      "primary": "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm hover:shadow transition-all rounded-lg px-6 py-2.5 font-medium",
+      "secondary": "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-all rounded-lg px-6 py-2.5 font-medium",
+      "ghost": "hover:bg-slate-100 text-slate-600 hover:text-slate-900 rounded-lg px-4 py-2"
+    },
+    "inputs": {
+      "style": "border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 rounded-lg bg-white shadow-sm"
+    },
+    "badges": {
+      "style": "rounded-full px-2.5 py-0.5 text-xs font-medium border"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": {
+      "soft": "shadow-[0_2px_8px_rgba(0,0,0,0.04)]",
+      "hover": "shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+    },
+    "borders": {
+      "subtle": "border border-slate-100"
+    },
+    "glass": {
+      "header": "bg-white/80 backdrop-blur-md border-b border-slate-100/50"
+    }
+  },
+  "motion": {
+    "library": "framer-motion",
+    "transitions": {
+      "page": {
+        "initial": { "opacity": 0, "y": 10 },
+        "animate": { "opacity": 1, "y": 0 },
+        "exit": { "opacity": 0, "y": -10 },
+        "transition": { "duration": 0.3, "ease": "easeOut" }
+      },
+      "list": {
+        "container": {
+          "hidden": { "opacity": 0 },
+          "show": {
+            "opacity": 1,
+            "transition": { "staggerChildren": 0.05 }
+          }
+        },
+        "item": {
+          "hidden": { "opacity": 0, "y": 10 },
+          "show": { "opacity": 1, "y": 0 }
+        }
+      }
+    }
+  },
+  "images": {
+    "home_hero": {
+      "url": "https://images.unsplash.com/photo-1693596936248-8fab255a3de1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwb2ZmaWNlJTIwZGVzayUyMGNsZWFuJTIwd2hpdGUlMjBhZXN0aGV0aWN8ZW58MHx8fHwxNzY2MzQ0NTc2fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimalist clean workspace",
+      "usage": "Use as a subtle banner or welcome card background in the Home section."
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. SETUP: Install 'framer-motion', 'lucide-react', 'date-fns', 'recharts' (if needed for summary).",
+    "2. ROUTING: Use 'react-router-dom' for navigation between Home, Budgets, and Calendar.",
+    "3. LAYOUT: Create a 'Layout' component with a Sidebar (Left) and Main Content Area (Right).",
+    "4. HOME: Create a dashboard overview with quick links and a summary of pending budgets/upcoming events.",
+    "5. BUDGETS: Implement a data table with filtering (by status). Use a Dialog for Create/Edit. Store data in localStorage or mock state.",
+    "6. CALENDAR: Use 'react-day-picker' or a custom grid. Allow clicking a day to add an event. Show events as small dots or bars on the day cell.",
+    "7. THEME: Enforce the 'Godly Light' theme. No dark mode toggle needed (as per requirements).",
+    "8. ACCESSIBILITY: Ensure all text meets contrast ratios. Use semantic HTML.",
+    "9. DATA-TESTID: Add 'data-testid' to all interactive elements (buttons, inputs, links)."
+  ],
+  "universal_guidelines": [
+    "Do not use gradients for backgrounds, use solid white or very subtle gray.",
+    "Use 2-3x more padding than you think is necessary.",
+    "Avoid 'Inter' for headings; use 'Manrope'.",
+    "All interactive elements must have a hover state.",
+    "Use 'sonner' for notifications (success/error)."
+  ]
+}
