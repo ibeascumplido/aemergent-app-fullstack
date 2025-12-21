@@ -345,10 +345,10 @@ async def get_dashboard_stats():
     approved_budgets = await db.budget_templates.count_documents({"status": "approved"})
     rejected_budgets = await db.budget_templates.count_documents({"status": "rejected"})
     
-    # Get total amount of approved budgets
+    # Get total amount of approved budgets (SIN IVA - total_base)
     pipeline = [
         {"$match": {"status": "approved"}},
-        {"$group": {"_id": None, "total": {"$sum": "$total_con_iva"}}}
+        {"$group": {"_id": None, "total": {"$sum": "$total_base"}}}
     ]
     result = await db.budget_templates.aggregate(pipeline).to_list(1)
     total_approved_amount = result[0]["total"] if result else 0
