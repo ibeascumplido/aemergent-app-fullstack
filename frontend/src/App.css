@@ -42,3 +42,15 @@
 .calendar-event {
     @apply text-xs px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 truncate mb-0.5;
 }
+
+/* Ocultar spinners en inputs numéricos */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
