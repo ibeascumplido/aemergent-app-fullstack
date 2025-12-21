@@ -585,7 +585,7 @@ const BudgetTemplatePage = () => {
                       <td className="bg-slate-200 print:hidden" data-pdf-hide="true"></td>
                       
                       {/* Columnas auxiliares (NO se imprimen) */}
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                      <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                         <Input
                           value={material.precio_coste || ""}
                           onChange={(e) =>
@@ -599,7 +599,10 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-coste-${index}`}
                         />
                       </td>
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                      <td className="px-2 py-1 bg-amber-50 print:hidden text-right font-mono text-sm text-slate-700" data-pdf-hide="true">
+                        {costeTotal > 0 ? `${formatCurrency(costeTotal)} €` : ""}
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                         <Input
                           value={material.margen || "30"}
                           onChange={(e) =>
@@ -613,20 +616,7 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-margen-${index}`}
                         />
                       </td>
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
-                        <Input
-                          value={material.horas || ""}
-                          onChange={(e) =>
-                            handleMaterialChange(index, "horas", e.target.value)
-                          }
-                          placeholder="0"
-                          className="border-0 bg-transparent h-8 text-sm text-center"
-                          type="number"
-                          min="0"
-                          data-testid={`material-horas-${index}`}
-                        />
-                      </td>
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                      <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                         <Input
                           value={material.litros || ""}
                           onChange={(e) =>
@@ -640,7 +630,7 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-litros-${index}`}
                         />
                       </td>
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                      <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                         <Input
                           value={material.altura || ""}
                           onChange={(e) =>
@@ -654,7 +644,7 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-altura-${index}`}
                         />
                       </td>
-                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                      <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                         <Input
                           value={material.notas || ""}
                           onChange={(e) =>
