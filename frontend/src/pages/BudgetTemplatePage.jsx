@@ -872,6 +872,7 @@ const BudgetTemplatePage = () => {
           <p className="text-sm text-slate-500">Director Gerente</p>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 };
