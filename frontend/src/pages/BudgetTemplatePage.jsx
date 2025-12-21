@@ -830,7 +830,7 @@ const BudgetTemplatePage = () => {
                   </td>
                   <td className="bg-slate-200 print:hidden" data-pdf-hide="true"></td>
                   <td colSpan="6" className="bg-amber-100 print:hidden text-right px-2 font-mono font-semibold text-slate-700" data-pdf-hide="true">
-                    {formatCurrency(totales.totalCoste)} €
+                    {formatCurrency(totales.totalCosteMateriales)} €
                   </td>
                   <td className="print:hidden" data-pdf-hide="true"></td>
                 </tr>
