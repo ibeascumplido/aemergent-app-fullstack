@@ -26,8 +26,14 @@ const VAT_OPTIONS = [
 const emptyMaterialRow = {
   nombre: "",
   ud: "",
-  precio: "",
+  precio_coste: "", // precio de coste (columna auxiliar, no se imprime)
+  margen: "30", // margen de ganancia en % (columna auxiliar)
+  precio: "", // precio al público (calculado o manual)
   iva: "21",
+  horas: "", // columna auxiliar
+  litros: "", // columna auxiliar
+  altura: "", // columna auxiliar
+  notas: "", // columna auxiliar
 };
 
 const BudgetTemplatePage = () => {
@@ -112,7 +118,7 @@ const BudgetTemplatePage = () => {
     }
   };
 
-  // Calculate importe for a material row
+  // Calculate importe for a material row (PRECIO × UD)
   const calcularImporte = (ud, precio) => {
     const udNum = parseFloat(ud) || 0;
     const precioNum = parseFloat(precio) || 0;
@@ -124,6 +130,13 @@ const BudgetTemplatePage = () => {
     const importe = calcularImporte(ud, precio);
     const ivaNum = parseFloat(iva) || 0;
     return importe * (1 + ivaNum / 100);
+  };
+
+  // Calculate precio from coste + margen
+  const calcularPrecioDesdeCoste = (precioCoste, margen) => {
+    const coste = parseFloat(precioCoste) || 0;
+    const margenNum = parseFloat(margen) || 0;
+    return coste * (1 + margenNum / 100);
   };
 
   // Calculate totals
@@ -165,6 +178,16 @@ const BudgetTemplatePage = () => {
   const handleMaterialChange = (index, field, value) => {
     const newMateriales = [...materiales];
     newMateriales[index] = { ...newMateriales[index], [field]: value };
+    
+    // If changing precio_coste or margen, auto-calculate precio
+    if (field === "precio_coste" || field === "margen") {
+      const precioCoste = field === "precio_coste" ? value : newMateriales[index].precio_coste;
+      const margen = field === "margen" ? value : newMateriales[index].margen;
+      if (precioCoste) {
+        newMateriales[index].precio = calcularPrecioDesdeCoste(precioCoste, margen).toFixed(2);
+      }
+    }
+    
     setMateriales(newMateriales);
   };
 
@@ -244,7 +267,7 @@ const BudgetTemplatePage = () => {
   }
 
   return (
-    <div data-testid="budget-template-page" className="max-w-5xl mx-auto">
+    <div data-testid="budget-template-page" className="max-w-7xl mx-auto">
       {/* Actions Bar */}
       <div className="flex items-center justify-between mb-6 print:hidden">
         <Button
@@ -262,7 +285,7 @@ const BudgetTemplatePage = () => {
             data-testid="print-btn"
           >
             <Printer className="w-4 h-4 mr-2" />
-            Imprimir
+            Imprimir / PDF
           </Button>
           <Button
             onClick={handleSave}
@@ -314,7 +337,7 @@ const BudgetTemplatePage = () => {
         </div>
 
         {/* Client Info */}
-        <div className="grid grid-cols-1 gap-4 mb-8 bg-slate-50 p-4 rounded-lg">
+        <div className="grid grid-cols-1 gap-4 mb-8 bg-slate-50 p-4 rounded-lg print:bg-white print:border print:border-slate-200">
           <div className="grid grid-cols-[120px_1fr] items-center gap-2">
             <label className="text-sm font-medium text-slate-700">Cliente</label>
             <Input
@@ -386,25 +409,49 @@ const BudgetTemplatePage = () => {
             <table className="w-full" data-testid="materials-table">
               <thead className="bg-slate-100">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600 uppercase w-[40%]">
+                  {/* Columnas principales (se imprimen) */}
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-slate-600 uppercase w-[22%]">
                     NOMBRE
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600 uppercase w-[8%]">
+                  <th className="px-2 py-2 text-center text-xs font-semibold text-slate-600 uppercase w-[5%]">
                     UD
                   </th>
-                  <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[12%]">
+                  <th className="px-2 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[8%]">
                     PRECIO
                   </th>
-                  <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[12%]">
+                  <th className="px-2 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[8%]">
                     IMPORTE
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600 uppercase w-[10%]">
+                  <th className="px-2 py-2 text-center text-xs font-semibold text-slate-600 uppercase w-[6%]">
                     I.V.A
                   </th>
-                  <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[14%]">
+                  <th className="px-2 py-2 text-right text-xs font-semibold text-slate-600 uppercase w-[10%]">
                     IMPORTE + IVA
                   </th>
-                  <th className="px-3 py-2 w-[4%] print:hidden"></th>
+                  
+                  {/* Columnas auxiliares (NO se imprimen) - separador visual */}
+                  <th className="px-1 py-2 bg-slate-200 w-[1px] print:hidden"></th>
+                  
+                  {/* Columnas en minúscula - solo edición */}
+                  <th className="px-2 py-2 text-right text-xs font-normal text-slate-500 lowercase w-[7%] print:hidden bg-amber-50">
+                    precio coste
+                  </th>
+                  <th className="px-2 py-2 text-center text-xs font-normal text-slate-500 lowercase w-[5%] print:hidden bg-amber-50">
+                    margen %
+                  </th>
+                  <th className="px-2 py-2 text-center text-xs font-normal text-slate-500 lowercase w-[5%] print:hidden bg-amber-50">
+                    horas
+                  </th>
+                  <th className="px-2 py-2 text-center text-xs font-normal text-slate-500 lowercase w-[5%] print:hidden bg-amber-50">
+                    litros
+                  </th>
+                  <th className="px-2 py-2 text-center text-xs font-normal text-slate-500 lowercase w-[5%] print:hidden bg-amber-50">
+                    altura
+                  </th>
+                  <th className="px-2 py-2 text-left text-xs font-normal text-slate-500 lowercase w-[10%] print:hidden bg-amber-50">
+                    notas
+                  </th>
+                  <th className="px-2 py-2 w-[3%] print:hidden"></th>
                 </tr>
               </thead>
               <tbody>
@@ -421,7 +468,8 @@ const BudgetTemplatePage = () => {
                       className="border-t border-slate-100 hover:bg-slate-50"
                       data-testid={`material-row-${index}`}
                     >
-                      <td className="px-2 py-1">
+                      {/* Columnas principales */}
+                      <td className="px-1 py-1">
                         <Input
                           value={material.nombre}
                           onChange={(e) =>
@@ -432,7 +480,7 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-nombre-${index}`}
                         />
                       </td>
-                      <td className="px-2 py-1">
+                      <td className="px-1 py-1">
                         <Input
                           value={material.ud}
                           onChange={(e) =>
@@ -446,7 +494,7 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-ud-${index}`}
                         />
                       </td>
-                      <td className="px-2 py-1">
+                      <td className="px-1 py-1">
                         <Input
                           value={material.precio}
                           onChange={(e) =>
@@ -460,10 +508,10 @@ const BudgetTemplatePage = () => {
                           data-testid={`material-precio-${index}`}
                         />
                       </td>
-                      <td className="px-3 py-1 text-right font-mono text-sm text-slate-700">
+                      <td className="px-2 py-1 text-right font-mono text-sm text-slate-700">
                         {formatCurrency(importe)} €
                       </td>
-                      <td className="px-2 py-1">
+                      <td className="px-1 py-1">
                         <Select
                           value={material.iva}
                           onValueChange={(value) =>
@@ -485,10 +533,95 @@ const BudgetTemplatePage = () => {
                           </SelectContent>
                         </Select>
                       </td>
-                      <td className="px-3 py-1 text-right font-mono text-sm text-slate-900 font-medium">
+                      <td className="px-2 py-1 text-right font-mono text-sm text-slate-900 font-medium">
                         {formatCurrency(importeConIva)} €
                       </td>
-                      <td className="px-2 py-1 print:hidden">
+                      
+                      {/* Separador */}
+                      <td className="bg-slate-200 print:hidden"></td>
+                      
+                      {/* Columnas auxiliares (NO se imprimen) */}
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.precio_coste || ""}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "precio_coste", e.target.value)
+                          }
+                          placeholder="0,00"
+                          className="border-0 bg-transparent h-8 text-sm text-right font-mono"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          data-testid={`material-coste-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.margen || "30"}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "margen", e.target.value)
+                          }
+                          placeholder="30"
+                          className="border-0 bg-transparent h-8 text-sm text-center"
+                          type="number"
+                          min="0"
+                          step="1"
+                          data-testid={`material-margen-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.horas || ""}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "horas", e.target.value)
+                          }
+                          placeholder="0"
+                          className="border-0 bg-transparent h-8 text-sm text-center"
+                          type="number"
+                          min="0"
+                          data-testid={`material-horas-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.litros || ""}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "litros", e.target.value)
+                          }
+                          placeholder="0"
+                          className="border-0 bg-transparent h-8 text-sm text-center"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          data-testid={`material-litros-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.altura || ""}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "altura", e.target.value)
+                          }
+                          placeholder="0"
+                          className="border-0 bg-transparent h-8 text-sm text-center"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          data-testid={`material-altura-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 bg-amber-50 print:hidden">
+                        <Input
+                          value={material.notas || ""}
+                          onChange={(e) =>
+                            handleMaterialChange(index, "notas", e.target.value)
+                          }
+                          placeholder="Notas..."
+                          className="border-0 bg-transparent h-8 text-sm"
+                          data-testid={`material-notas-${index}`}
+                        />
+                      </td>
+                      <td className="px-1 py-1 print:hidden">
                         <Button
                           type="button"
                           variant="ghost"
@@ -507,8 +640,8 @@ const BudgetTemplatePage = () => {
 
                 {/* Porte Row */}
                 <tr className="border-t-2 border-slate-200 bg-slate-50">
-                  <td className="px-3 py-2 font-medium text-slate-700">Porte</td>
-                  <td className="px-2 py-1">
+                  <td className="px-2 py-2 font-medium text-slate-700">Porte</td>
+                  <td className="px-1 py-1">
                     <Input
                       value={porte.ud}
                       onChange={(e) =>
@@ -520,7 +653,7 @@ const BudgetTemplatePage = () => {
                       data-testid="porte-ud"
                     />
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-1 py-1">
                     <Input
                       value={porte.precio}
                       onChange={(e) =>
@@ -534,10 +667,10 @@ const BudgetTemplatePage = () => {
                       data-testid="porte-precio"
                     />
                   </td>
-                  <td className="px-3 py-1 text-right font-mono text-sm text-slate-700">
+                  <td className="px-2 py-1 text-right font-mono text-sm text-slate-700">
                     {formatCurrency(calcularImporte(porte.ud, porte.precio))} €
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-1 py-1">
                     <Select
                       value={porte.iva}
                       onValueChange={(value) =>
@@ -559,21 +692,24 @@ const BudgetTemplatePage = () => {
                       </SelectContent>
                     </Select>
                   </td>
-                  <td className="px-3 py-1 text-right font-mono text-sm text-slate-900 font-medium">
+                  <td className="px-2 py-1 text-right font-mono text-sm text-slate-900 font-medium">
                     {formatCurrency(
                       calcularImporteConIva(porte.ud, porte.precio, porte.iva)
                     )}{" "}
                     €
                   </td>
+                  {/* Celdas vacías para columnas auxiliares */}
+                  <td className="bg-slate-200 print:hidden"></td>
+                  <td colSpan="6" className="bg-amber-50/50 print:hidden"></td>
                   <td className="print:hidden"></td>
                 </tr>
 
                 {/* Mano de Obra Row */}
                 <tr className="border-t border-slate-200 bg-slate-50">
-                  <td className="px-3 py-2 font-medium text-slate-700">
+                  <td className="px-2 py-2 font-medium text-slate-700">
                     Mano de obra
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-1 py-1">
                     <Input
                       value={manoObra.ud}
                       onChange={(e) =>
@@ -585,7 +721,7 @@ const BudgetTemplatePage = () => {
                       data-testid="mano-obra-ud"
                     />
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-1 py-1">
                     <Input
                       value={manoObra.precio}
                       onChange={(e) =>
@@ -599,13 +735,13 @@ const BudgetTemplatePage = () => {
                       data-testid="mano-obra-precio"
                     />
                   </td>
-                  <td className="px-3 py-1 text-right font-mono text-sm text-slate-700">
+                  <td className="px-2 py-1 text-right font-mono text-sm text-slate-700">
                     {formatCurrency(
                       calcularImporte(manoObra.ud, manoObra.precio)
                     )}{" "}
                     €
                   </td>
-                  <td className="px-2 py-1">
+                  <td className="px-1 py-1">
                     <Select
                       value={manoObra.iva}
                       onValueChange={(value) =>
@@ -627,7 +763,7 @@ const BudgetTemplatePage = () => {
                       </SelectContent>
                     </Select>
                   </td>
-                  <td className="px-3 py-1 text-right font-mono text-sm text-slate-900 font-medium">
+                  <td className="px-2 py-1 text-right font-mono text-sm text-slate-900 font-medium">
                     {formatCurrency(
                       calcularImporteConIva(
                         manoObra.ud,
@@ -637,6 +773,9 @@ const BudgetTemplatePage = () => {
                     )}{" "}
                     €
                   </td>
+                  {/* Celdas vacías para columnas auxiliares */}
+                  <td className="bg-slate-200 print:hidden"></td>
+                  <td colSpan="6" className="bg-amber-50/50 print:hidden"></td>
                   <td className="print:hidden"></td>
                 </tr>
               </tbody>
@@ -665,10 +804,10 @@ const BudgetTemplatePage = () => {
                 {formatCurrency(totales.totalIva)} €
               </span>
             </div>
-            <div className="flex justify-between py-3 bg-indigo-50 px-3 rounded-lg">
-              <span className="font-bold text-indigo-900">TOTAL IVA INCLUIDO</span>
+            <div className="flex justify-between py-3 bg-indigo-50 px-3 rounded-lg print:bg-slate-100">
+              <span className="font-bold text-indigo-900 print:text-slate-900">TOTAL IVA INCLUIDO</span>
               <span
-                className="font-mono font-bold text-indigo-600 text-lg"
+                className="font-mono font-bold text-indigo-600 text-lg print:text-slate-900"
                 data-testid="total-con-iva"
               >
                 {formatCurrency(totales.totalConIva)} €
@@ -679,15 +818,15 @@ const BudgetTemplatePage = () => {
 
         {/* Observations */}
         <div className="mb-8">
-          <div className="bg-orange-100 border border-orange-200 rounded-lg p-4">
-            <h3 className="font-semibold text-orange-800 mb-2">
+          <div className="bg-orange-100 border border-orange-200 rounded-lg p-4 print:bg-white print:border-slate-200">
+            <h3 className="font-semibold text-orange-800 mb-2 print:text-slate-800">
               * OBSERVACIONES
             </h3>
             <Textarea
               value={observaciones}
               onChange={(e) => setObservaciones(e.target.value)}
               rows={3}
-              className="resize-none bg-white border-orange-200"
+              className="resize-none bg-white border-orange-200 print:border-slate-200"
               data-testid="observaciones-textarea"
             />
           </div>
