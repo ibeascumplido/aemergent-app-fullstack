@@ -397,11 +397,12 @@ const BudgetTemplatePage = () => {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => window.print()}
-            data-testid="print-btn"
+            onClick={() => setShowPreview(!showPreview)}
+            data-testid="preview-btn"
+            className={showPreview ? "bg-indigo-100 border-indigo-300" : ""}
           >
             <Printer className="w-4 h-4 mr-2" />
-            Vista previa / Imprimir
+            {showPreview ? "Ocultar vista previa" : "Ver vista previa PDF"}
           </Button>
           <Button
             variant="outline"
