@@ -318,11 +318,12 @@ const BudgetTemplatePage = () => {
       </div>
 
       {/* Budget Template */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white border border-slate-200 rounded-lg shadow-sm p-8 print:shadow-none print:border-0"
-      >
+      <div ref={pdfRef}>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white border border-slate-200 rounded-lg shadow-sm p-8"
+        >
         {/* Header */}
         <div className="flex justify-between items-start mb-8 border-b border-slate-200 pb-6">
           <div>
