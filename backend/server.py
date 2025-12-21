@@ -94,6 +94,23 @@ class CostItem(BaseModel):
     precio: str = ""
     iva: str = "21"
 
+# Modelo para cálculo de mano de obra
+class CalculoManoObra(BaseModel):
+    precioHora: str = ""
+    numOperarios: str = ""
+    horasJornada: str = ""
+    numDias: str = ""
+    dietasDia: str = ""
+    alojamientoDia: str = ""
+    extraDia: str = ""
+
+# Modelo para porte con coste
+class PorteItem(BaseModel):
+    ud: str = "1"
+    precio: str = ""
+    iva: str = "21"
+    precio_coste: str = ""
+
 class BudgetTemplateBase(BaseModel):
     budget_number: str
     budget_date: str
@@ -102,8 +119,9 @@ class BudgetTemplateBase(BaseModel):
     provincia: Optional[str] = ""
     servicios_descripcion: Optional[str] = ""
     materiales: List[MaterialItem] = []
-    porte: Optional[CostItem] = None
+    porte: Optional[PorteItem] = None
     mano_obra: Optional[CostItem] = None
+    calculo_mano_obra: Optional[CalculoManoObra] = None
     observaciones: Optional[str] = ""
     total_base: float = 0
     total_iva: float = 0
@@ -121,8 +139,9 @@ class BudgetTemplateUpdate(BaseModel):
     provincia: Optional[str] = None
     servicios_descripcion: Optional[str] = None
     materiales: Optional[List[MaterialItem]] = None
-    porte: Optional[CostItem] = None
+    porte: Optional[PorteItem] = None
     mano_obra: Optional[CostItem] = None
+    calculo_mano_obra: Optional[CalculoManoObra] = None
     observaciones: Optional[str] = None
     total_base: Optional[float] = None
     total_iva: Optional[float] = None
