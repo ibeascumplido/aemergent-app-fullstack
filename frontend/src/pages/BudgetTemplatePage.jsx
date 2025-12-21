@@ -70,6 +70,18 @@ const BudgetTemplatePage = () => {
   const [porte, setPorte] = useState({ ud: "1", precio: "", iva: "21" });
   const [manoObra, setManoObra] = useState({ ud: "1", precio: "", iva: "21" });
 
+  // Cálculo de mano de obra
+  const [calculoManoObra, setCalculoManoObra] = useState({
+    precioHora: "",
+    numOperarios: "",
+    horasJornada: "",
+    numDias: "",
+    dietasDia: "",
+    alojamientoDia: "",
+    horasExtra: "",
+    operariosHoraExtra: "",
+  });
+
   // Observations
   const [observaciones, setObservaciones] = useState(
     "• Precios sin IVA.\n• Este Presupuesto tiene una vigencia de 2 meses, a partir de la fecha del mismo."
