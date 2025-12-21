@@ -1154,6 +1154,145 @@ const BudgetTemplatePage = () => {
         </div>
       </motion.div>
       </div>
+
+      {/* Modal de Vista Previa PDF */}
+      {showPreview && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowPreview(false)}>
+          <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-slate-100 p-4 border-b flex justify-between items-center">
+              <h2 className="font-bold text-lg text-slate-800">Vista previa del PDF</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowPreview(false)}>✕</Button>
+            </div>
+            
+            <div className="p-8 bg-white">
+              {/* Header */}
+              <div className="flex justify-between items-start mb-6 border-b border-slate-200 pb-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-indigo-600">PRESUPUESTO</h1>
+                  <p className="text-slate-500 text-sm mt-1">Documento comercial</p>
+                </div>
+                <div className="text-right text-sm">
+                  <p><span className="text-slate-600">Presupuesto:</span> <span className="font-mono">{budgetNumber}</span></p>
+                  <p><span className="text-slate-600">Fecha:</span> {budgetDate}</p>
+                </div>
+              </div>
+
+              {/* Client Info */}
+              <div className="mb-6 bg-slate-50 p-4 rounded-lg text-sm">
+                <p><strong>Cliente:</strong> {cliente || "-"}</p>
+                <p><strong>Lugar de ejecución:</strong> {lugarEjecucion || "-"}</p>
+                <p><strong>Provincia:</strong> {provincia || "-"}</p>
+              </div>
+
+              {/* Services */}
+              {serviciosDescripcion && (
+                <div className="mb-6">
+                  <div className="bg-indigo-600 text-white px-3 py-2 rounded-t-lg text-sm font-medium">DESCRIPCIÓN DE LOS SERVICIOS</div>
+                  <div className="border border-t-0 border-slate-200 rounded-b-lg p-3 text-sm">{serviciosDescripcion}</div>
+                </div>
+              )}
+
+              {/* Materials Table - Solo columnas principales */}
+              <div className="mb-6">
+                <div className="bg-indigo-600 text-white px-3 py-2 rounded-t-lg text-sm font-medium">DESCRIPCIÓN DE LOS MATERIALES</div>
+                <div className="border border-t-0 border-slate-200 rounded-b-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600 uppercase">NOMBRE</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600 uppercase">UD</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase">PRECIO</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase">PRECIO SIN IVA</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600 uppercase">I.V.A</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600 uppercase">PRECIO CON IVA</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {materiales.filter(m => m.nombre).map((m, i) => {
+                        const importe = calcularImporte(m.ud, m.precio);
+                        const importeConIva = calcularImporteConIva(m.ud, m.precio, m.iva);
+                        return (
+                          <tr key={i}>
+                            <td className="px-3 py-2">{m.nombre}</td>
+                            <td className="px-3 py-2 text-center">{m.ud}</td>
+                            <td className="px-3 py-2 text-right font-mono">{m.precio ? `${formatCurrency(parseFloat(m.precio))} €` : "-"}</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatCurrency(importe)} €</td>
+                            <td className="px-3 py-2 text-center">{m.iva}%</td>
+                            <td className="px-3 py-2 text-right font-mono font-medium">{formatCurrency(importeConIva)} €</td>
+                          </tr>
+                        );
+                      })}
+                      {/* Porte */}
+                      {porte.precio && (
+                        <tr className="bg-slate-50">
+                          <td className="px-3 py-2 font-medium">Porte</td>
+                          <td className="px-3 py-2 text-center">{porte.ud}</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(parseFloat(porte.precio))} €</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(calcularImporte(porte.ud, porte.precio))} €</td>
+                          <td className="px-3 py-2 text-center">{porte.iva}%</td>
+                          <td className="px-3 py-2 text-right font-mono font-medium">{formatCurrency(calcularImporteConIva(porte.ud, porte.precio, porte.iva))} €</td>
+                        </tr>
+                      )}
+                      {/* Mano de obra */}
+                      {manoObra.precio && (
+                        <tr className="bg-slate-50">
+                          <td className="px-3 py-2 font-medium">Mano de obra</td>
+                          <td className="px-3 py-2 text-center">{manoObra.ud}</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(parseFloat(manoObra.precio))} €</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(calcularImporte(manoObra.ud, manoObra.precio))} €</td>
+                          <td className="px-3 py-2 text-center">{manoObra.iva}%</td>
+                          <td className="px-3 py-2 text-right font-mono font-medium">{formatCurrency(calcularImporteConIva(manoObra.ud, manoObra.precio, manoObra.iva))} €</td>
+                        </tr>
+                      )}
+                      {/* Totals row */}
+                      <tr className="bg-slate-200 font-semibold">
+                        <td colSpan="3" className="px-3 py-2 text-right">TOTALES:</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(totales.totalBase)} €</td>
+                        <td className="px-3 py-2"></td>
+                        <td className="px-3 py-2 text-right font-mono text-indigo-600">{formatCurrency(totales.totalConIva)} €</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Totals Summary */}
+              <div className="flex justify-end mb-6">
+                <div className="w-72 space-y-2 text-sm">
+                  <div className="flex justify-between py-2 border-b border-slate-200">
+                    <span className="font-medium">TOTAL PRESUPUESTO (sin IVA)</span>
+                    <span className="font-mono font-medium">{formatCurrency(totales.totalBase)} €</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-slate-200">
+                    <span className="text-slate-600">+ I.V.A</span>
+                    <span className="font-mono">{formatCurrency(totales.totalIva)} €</span>
+                  </div>
+                  <div className="flex justify-between py-3 bg-indigo-50 px-3 rounded-lg">
+                    <span className="font-bold text-indigo-900">TOTAL IVA INCLUIDO</span>
+                    <span className="font-mono font-bold text-indigo-600 text-lg">{formatCurrency(totales.totalConIva)} €</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Observations */}
+              {observaciones && (
+                <div className="mb-6">
+                  <div className="bg-orange-100 border border-orange-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-orange-800 mb-2 text-sm">* OBSERVACIONES</h3>
+                    <p className="text-sm whitespace-pre-wrap">{observaciones}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Signature */}
+              <div className="border-t border-slate-200 pt-6 text-center text-sm">
+                <p className="text-slate-600 mb-4">Fdo. _________________________</p>
+                <p className="text-slate-500">Director Gerente</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
