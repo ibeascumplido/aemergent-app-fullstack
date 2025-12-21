@@ -44,6 +44,7 @@ const BudgetTemplatePage = () => {
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   // Header fields
   const [budgetNumber, setBudgetNumber] = useState("");
