@@ -462,7 +462,7 @@ const BudgetTemplatePage = () => {
                   </th>
                   
                   {/* Columnas auxiliares (NO se imprimen) - separador visual */}
-                  <th className="px-1 py-2 bg-slate-200 w-[1px] print:hidden"></th>
+                  <th className="px-1 py-2 bg-slate-200 w-[1px] print:hidden" data-pdf-hide="true"></th>
                   
                   {/* Columnas en minúscula - solo edición */}
                   <th className="px-2 py-2 text-right text-xs font-normal text-slate-500 lowercase w-[7%] print:hidden bg-amber-50" data-pdf-hide="true">
