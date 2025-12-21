@@ -299,6 +299,8 @@ async def create_budget_template(template_data: BudgetTemplateCreate):
         doc['porte'] = doc['porte'] if isinstance(doc['porte'], dict) else doc['porte'].model_dump()
     if doc.get('mano_obra'):
         doc['mano_obra'] = doc['mano_obra'] if isinstance(doc['mano_obra'], dict) else doc['mano_obra'].model_dump()
+    if doc.get('calculo_mano_obra'):
+        doc['calculo_mano_obra'] = doc['calculo_mano_obra'] if isinstance(doc['calculo_mano_obra'], dict) else doc['calculo_mano_obra'].model_dump()
     await db.budget_templates.insert_one(doc)
     return template
 
@@ -313,7 +315,7 @@ async def update_budget_template(template_id: str, template_data: BudgetTemplate
         if v is not None:
             if k == 'materiales' and v:
                 update_data[k] = [m if isinstance(m, dict) else m.model_dump() for m in v]
-            elif k in ['porte', 'mano_obra'] and v:
+            elif k in ['porte', 'mano_obra', 'calculo_mano_obra'] and v:
                 update_data[k] = v if isinstance(v, dict) else v.model_dump()
             else:
                 update_data[k] = v
