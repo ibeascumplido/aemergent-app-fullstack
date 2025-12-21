@@ -332,6 +332,7 @@ const BudgetTemplatePage = () => {
         materiales: materiales.filter((m) => m.nombre.trim() !== ""),
         porte,
         mano_obra: manoObra,
+        calculo_mano_obra: calculoManoObra,
         observaciones,
         total_base: totales.totalBase,
         total_iva: totales.totalIva,
