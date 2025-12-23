@@ -804,9 +804,7 @@ const BudgetTemplatePage = () => {
                   <td className="px-1 py-1">
                     <Input
                       value={porte.precio}
-                      onChange={(e) =>
-                        setPorte({ ...porte, precio: e.target.value })
-                      }
+                      onChange={(e) => handlePorteChange("precio", e.target.value)}
                       placeholder="0,00"
                       className="border-0 bg-transparent h-8 text-sm text-right font-mono"
                       type="number"
@@ -821,9 +819,7 @@ const BudgetTemplatePage = () => {
                   <td className="px-1 py-1">
                     <Select
                       value={porte.iva}
-                      onValueChange={(value) =>
-                        setPorte({ ...porte, iva: value })
-                      }
+                      onValueChange={(value) => handlePorteChange("iva", value)}
                     >
                       <SelectTrigger
                         className="border-0 bg-transparent h-8 text-sm"
@@ -851,9 +847,7 @@ const BudgetTemplatePage = () => {
                   <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
                     <Input
                       value={porte.precio_coste || ""}
-                      onChange={(e) =>
-                        setPorte({ ...porte, precio_coste: e.target.value })
-                      }
+                      onChange={(e) => handlePorteChange("precio_coste", e.target.value)}
                       placeholder="0,00"
                       className="border-0 bg-transparent h-8 text-sm text-right font-mono"
                       type="number"
@@ -865,7 +859,19 @@ const BudgetTemplatePage = () => {
                   <td className="px-2 py-1 bg-amber-50 print:hidden text-right font-mono text-sm text-slate-700" data-pdf-hide="true">
                     {calcularImporte(porte.ud, porte.precio_coste) > 0 ? `${formatCurrency(calcularImporte(porte.ud, porte.precio_coste))} €` : ""}
                   </td>
-                  <td colSpan="4" className="bg-amber-50/50 print:hidden" data-pdf-hide="true"></td>
+                  <td className="px-1 py-1 bg-amber-50 print:hidden" data-pdf-hide="true">
+                    <Input
+                      value={porte.margen || "30"}
+                      onChange={(e) => handlePorteChange("margen", e.target.value)}
+                      placeholder="30"
+                      className="border-0 bg-transparent h-8 text-sm text-center"
+                      type="number"
+                      min="0"
+                      step="1"
+                      data-testid="porte-margen"
+                    />
+                  </td>
+                  <td colSpan="3" className="bg-amber-50/50 print:hidden" data-pdf-hide="true"></td>
                   <td className="print:hidden" data-pdf-hide="true"></td>
                 </tr>
 
