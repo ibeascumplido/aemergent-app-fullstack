@@ -76,6 +76,32 @@ class Event(EventBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+# Operario Model
+class OperarioBase(BaseModel):
+    nombre: str
+    abreviatura: str  # Max 2-3 caracteres
+    color: str  # Color hex como #FF0000
+
+class OperarioCreate(OperarioBase):
+    pass
+
+class Operario(OperarioBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    orden: int = 0  # Para ordenar los slots
+
+# Vacaciones Model
+class VacacionBase(BaseModel):
+    operario_id: str
+    fecha: str  # YYYY-MM-DD
+
+class VacacionCreate(VacacionBase):
+    pass
+
+class Vacacion(VacacionBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
 # Budget Template Models
 class MaterialItem(BaseModel):
     nombre: str = ""
