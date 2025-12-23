@@ -292,6 +292,22 @@ const BudgetTemplatePage = () => {
     setMateriales(newMateriales);
   };
 
+  // Handle porte change with auto-calculate
+  const handlePorteChange = (field, value) => {
+    const newPorte = { ...porte, [field]: value };
+    
+    // If changing precio_coste or margen, auto-calculate precio
+    if (field === "precio_coste" || field === "margen") {
+      const precioCoste = field === "precio_coste" ? value : newPorte.precio_coste;
+      const margen = field === "margen" ? value : newPorte.margen;
+      if (precioCoste) {
+        newPorte.precio = calcularPrecioDesdeCoste(precioCoste, margen).toFixed(2);
+      }
+    }
+    
+    setPorte(newPorte);
+  };
+
   // Add material row
   const addMaterialRow = () => {
     setMateriales([...materiales, { ...emptyMaterialRow }]);
