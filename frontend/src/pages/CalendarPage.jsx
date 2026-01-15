@@ -690,7 +690,7 @@ const CalendarPage = () => {
             <Button
               onClick={() => {
                 setEditingOperario(null);
-                setNewOperario({ nombre: "", abreviatura: "", color: "#3B82F6", dias_vacaciones: 22 });
+                setNewOperario({ nombre: "", abreviatura: "", color: "#3B82F6", dias_vacaciones: 22, dias_libres: 6 });
                 setShowAddOperarioModal(true);
               }}
               className="bg-indigo-600 hover:bg-indigo-700"
