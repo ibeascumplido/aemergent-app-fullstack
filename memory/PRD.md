@@ -18,12 +18,16 @@ Dashboard web con dos módulos principales: gestión de presupuestos tipo Excel 
 - Resumen de ganancias
 - Vista previa e impresión de PDF
 - Persistencia completa en base de datos
+- **Logo INICIA** en esquina superior izquierda (actualizado 15/01/2026)
+- **Colores corporativos rojos** en encabezados (actualizado 15/01/2026)
+- **Columna NOMBRE ampliada** para más caracteres (actualizado 15/01/2026)
+- **Fuentes optimizadas para PDF** (actualizado 15/01/2026)
 
 ### 2. Módulo de Calendario ✅ (COMPLETADO 15/01/2026)
 - Vista mensual con 12 slots por día
 - Gestión de operarios con colores
 - **Vacaciones**: Disponibles, Disfrutados, Restantes
-- **Días Libres**: Disponibles, Disfrutados, Restantes (NUEVO)
+- **Días Libres**: Disponibles, Disfrutados, Restantes
 - Marcado visual diferenciado (días libres con borde negro)
 - Inputs editables para ambos tipos de días
 - Formulario de operario con ambos campos
@@ -49,7 +53,7 @@ Dashboard web con dos módulos principales: gestión de presupuestos tipo Excel 
 ## Estado Actual
 ✅ MVP Completo
 ✅ Todas las funcionalidades solicitadas implementadas
-✅ Testing: 100% backend, 100% frontend
+✅ Estética corporativa INICIA implementada
 
 ## Backlog / Mejoras Futuras
 - P2: Refactorizar BudgetTemplatePage.jsx (>1100 líneas)
