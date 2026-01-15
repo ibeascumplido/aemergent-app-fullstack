@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 class DashboardAPITester:
-    def __init__(self, base_url="https://web-portal-budget.preview.emergentagent.com"):
+    def __init__(self, base_url="https://presupuesto-app-27.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0

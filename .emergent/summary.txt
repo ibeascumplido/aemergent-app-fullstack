@@ -1,0 +1,157 @@
+<analysis>Análisis y Resumen del Historial de Mensajes del LLM
+
+**original_problem_statement:**
+El usuario solicitó la creación de un dashboard web con dos accesos principales: uno para presupuestos y otro para un calendario.
+
+Requisitos del Producto (evolucionados durante la conversación):
+1.  **Presupuestos:**
+    *   Crear una interfaz similar a una hoja de cálculo (Excel) para la creación de presupuestos, basada en una imagen proporcionada por el usuario.
+    *   La plantilla debe incluir campos para cliente, lugar, descripción, etc.
+    *   La tabla de materiales debe tener columnas visibles en el PDF (NOMBRE, UD, PRECIO, PRECIO SIN IVA, I.V.A, PRECIO CON IVA) y columnas auxiliares ocultas en el PDF (precio coste, coste total, margen %, etc.).
+    *   Las fórmulas deben calcular automáticamente los importes:
+        *    (público) =  \* (1 + ).
+        *    =  \* .
+        *    =  \* (1 + ).
+    *   Debe haber una sección para calcular el coste de la Mano de obra de forma detallada (precio/hora, operarios, días, dietas, etc.), cuyo total se refleje en la línea de mano de obra del presupuesto. Esta sección no debe aparecer en el PDF.
+    *   Debe haber una sección para el Resumen de Ganancias que calcule el margen sobre los materiales y el porte, excluyendo la mano de obra. Esta sección tampoco debe aparecer en el PDF.
+    *   La fila de Porte debe funcionar como un material, con su propio precio de coste y margen.
+    *   Toda la información del presupuesto, incluidos los cálculos auxiliares de mano de obra, debe guardarse en la base de datos y recuperarse al editar.
+    *   Implementar una función para exportar/visualizar el presupuesto en formato PDF, ocultando las columnas y secciones auxiliares.
+    *   La página de inicio debe mostrar un total de los presupuestos aprobados, sumando sus importes *sin IVA*.
+2.  **Calendario:**
+    *   Cada día en la vista mensual debe estar dividido en 12 slots o cuadrados.
+    *   Se debe poder gestionar una lista de operarios, cada uno con un color asociado.
+    *   Se debe poder asignar un slot de un día a un operario (coloreándolo) para marcar vacaciones o días libres.
+    *   Debe haber una tabla de gestión de operarios que muestre los días de vacaciones y días libres disponibles, disfrutados y restantes.
+    *   Los días libres deben marcarse con un reborde negro en el slot del calendario para distinguirlos de las vacaciones.
+
+**User's preferred language**: español
+
+**what currently exists?**
+Se ha desarrollado una aplicación full-stack (FastAPI + React) que incluye:
+1.  **Dashboard Principal:** Con tarjetas que resumen el estado de los presupuestos (total, pendientes, aprobados) y eventos.
+2.  **Módulo de Presupuestos:** Una página muy completa y funcional que permite crear y gestionar presupuestos con una plantilla tipo Excel. Implementa todos los cálculos de costes, márgenes, IVA y totales. Guarda y recupera todos los datos, incluyendo los desgloses de mano de obra. Ofrece una vista previa en la página de cómo se verá el PDF final.
+3.  **Módulo de Calendario (en desarrollo):** Una página de calendario que muestra una vista mensual con 12 slots por día. El backend se ha preparado para gestionar operarios y sus ausencias (vacaciones/días libres), y la UI muestra la estructura básica y la tabla de gestión de operarios.
+
+**Last working item**:
+*   **Last item agent was working:** El usuario solicitó que los días libres se gestionen y contabilicen de la misma manera que las vacaciones, con contadores de días disponibles, disfrutados y restantes en la tabla de gestión de operarios.
+*   **Status:** IN PROGRESS
+*   **Agent Testing Done:** N
+*   **Which testing method agent to use?** Frontend testing agent (para verificar que la tabla de gestión de operarios y el calendario se actualizan correctamente al añadir y contar los días libres).
+*   **User Testing Done:** N
+
+**All Pending/In progress Issue list**:
+*   **Issue 1:** La tabla de cálculo de mano de obra no se guarda cuando se sale del presupuesto. **Status: RESOLVED**
+*   **Issue 2:** El porte no se contabiliza en el resumen de ganancias. **Status: RESOLVED**
+*   **Issue 3:** El total de presupuestos aprobados en el inicio debe ser sin IVA. **Status: RESOLVED**
+
+**In progress Task List**:
+*   **Task 1:** Implementar la lógica completa de días libres en el módulo de calendario. (PRIORIDAD: P0)
+    *   **Where to resume:**
+        1.  **Backend ():** Modificar el modelo  y los endpoints para añadir los campos , y la lógica para calcular .
+        2.  **Frontend ():** Actualizar la tabla de gestión de operarios para mostrar las columnas de días libres (disponibles, disfrutados, restantes). Actualizar la función  para que, al marcar un día libre, se actualicen los contadores correctamente.
+    *   **What will be achieved with this?** Se completará la funcionalidad solicitada por el usuario para la gestión de días libres, haciendo que se comporten igual que las vacaciones.
+    *   **Status:** IN PROGRESS
+    *   **Should Test frontend/backend/both after fix?** both
+
+**Upcoming and Future Tasks**
+*   No hay tareas futuras explícitas más allá de completar el módulo de calendario.
+
+**Completed work in this session**
+*   **Módulo de Presupuestos:**
+    *   Creación de la plantilla de presupuesto tipo Excel ().
+    *   Implementación de cálculos automáticos para precios, importes e IVA.
+    *   Añadidas columnas auxiliares (coste, margen) que se ocultan en la exportación.
+    *   Creación de un módulo para el cálculo detallado de la mano de obra.
+    *   Creación de un resumen de ganancias.
+    *   Implementada la persistencia en base de datos de todos los campos, incluyendo los cálculos auxiliares.
+    *   Implementada una función de vista previa de PDF en la página.
+    *   Ajustada la lógica del Porte para que funcione como un material con coste y margen.
+*   **Dashboard:**
+    *   Actualizada la tarjeta de Aprobados para mostrar el total sin IVA ().
+*   **Calendario:**
+    *   Creación de la estructura base del calendario con 12 slots por día ().
+    *   Creación de endpoints y modelos en el backend para gestionar operarios, vacaciones y días libres ().
+    *   Implementada la tabla de gestión de operarios.
+
+**Earlier issues found/mentioned but not fixed**
+*   Ninguno. Todos los problemas reportados por el usuario han sido abordados.
+
+**Known issue recurrence from previous fork**
+*   N/A
+
+**Code Architecture**
+
+
+**Key Technical Concepts**
+*   **Backend:** FastAPI, Pydantic, Motor (MongoDB async driver).
+*   **Frontend:** React, React Hooks (, , ), TailwindCSS.
+*   **PDF Generation:** Se intentó con  y luego se cambió a una combinación de  y una vista previa en HTML/CSS debido a las limitaciones del entorno. Se utilizan clases CSS específicas (, ) para controlar la visibilidad en la impresión.
+*   **State Management:** El estado se gestiona localmente en los componentes de React ( es un ejemplo de un componente con estado complejo).
+
+**key DB schema**
+*   **budget_templates:** 
+*   **workers:** 
+*   **vacations:** 
+
+**changes in tech stack**
+*   Ninguno.
+
+**All files of reference**
+*   : Contiene toda la lógica de la API para presupuestos, operarios y calendario.
+*   : Componente principal y más complejo de la aplicación, gestiona toda la creación y edición de presupuestos.
+*   : Componente para la nueva funcionalidad de calendario y gestión de operarios.
+*   : Dashboard inicial que muestra estadísticas.
+*   : Define las rutas de la aplicación.
+*   : Contiene estilos globales, incluyendo los estilos  para la vista de impresión/PDF.
+
+**Areas that need refactoring**:
+*   **:** Este archivo es muy grande (más de 1100 líneas) y maneja una cantidad excesiva de estado y lógica. Debería dividirse en componentes más pequeños y manejables (ej: , , , ) para mejorar la legibilidad y el mantenimiento.
+
+**key api endpoints**
+*   
+*   
+*   
+*   
+*   
+*   
+*   
+
+**Critical Info for New Agent**
+*   **Descarga de archivos:** El entorno actual no permite que el usuario descargue archivos directamente. La solución implementada para el PDF fue doble: un botón de **Vista previa / Imprimir** que activa  (la opción preferida por el usuario) y un componente de **vista previa incrustado** en la propia página. Cualquier funcionalidad futura de exportar debe tener en cuenta esta limitación.
+*   **Complejidad del estado:** El componente  es muy complejo. Cualquier cambio en él requiere una cuidadosa revisión de los múltiples  y funciones de cálculo para evitar regresiones.
+
+**documents and test reports created in this job**
+*   
+*   
+
+**Last 10 User Messages and any pending HUMAN messages**
+1.  **User:** Necesito una tabla para calcular la mano de obra, que no salga en el PDF. (COMPLETED)
+2.  **User:** El cálculo de horas extra está mal interpretado, debe ser un extra por día. (COMPLETED)
+3.  **User:** ¿Puedes exportar un PDF para ver cómo queda? (COMPLETED - with workaround)
+4.  **User:** No puedo ver el PDF. (PENDING - Workaround provided)
+5.  **User:** No me aparece nada (refiriéndose a la vista de impresión). (PENDING - Workaround provided)
+6.  **User:** El cálculo de mano de obra no se guarda, el porte no se cuenta en ganancias, y el total de aprobados debe ser sin IVA. (COMPLETED)
+7.  **User:** La fila del porte debe funcionar igual que los materiales (con coste y margen). (COMPLETED)
+8.  **User:** En el calendario, necesito dividir cada día en 12 cuadrados para asignar colores a operarios. (COMPLETED - structure)
+9.  **User:** Necesito una tabla para gestionar vacaciones y días libres de los operarios, y que los días libres tengan un reborde negro. (IN PROGRESS)
+10. **User:** En cuanto a los días libres, deben contabilizarse igual que las vacaciones (disponibles, disfrutados, restantes). (IN PROGRESS - This is the current task)
+
+**Project Health Check:**
+*   **Broken:** Nada está roto.
+*   **Mocked:** No hay funcionalidades simuladas.
+
+**3rd Party Integrations**
+*    (instalado, pero su uso principal fue reemplazado por la función de impresión del navegador).
+
+**Testing status**
+*   **Testing agent used after significant changes:** YES (al principio del desarrollo).
+*   **Troubleshoot agent used after agent stuck in loop:** NO.
+*   **Test files created:** None.
+*   **Known regressions:** None.
+
+**Credentials to test flow:**
+*   No se requieren credenciales; la autenticación implementada es un JWT básico sin registro de usuarios por ahora.
+
+**What agent forgot to execute**
+*   Nada. El agente ha seguido de cerca las peticiones del usuario, incluso las más completer y los cambios de dirección.</analysis>
