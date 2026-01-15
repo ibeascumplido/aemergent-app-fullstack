@@ -317,13 +317,14 @@ async def create_operario(operario_data: OperarioCreate):
     return operario
 
 @api_router.put("/operarios/{operario_id}", response_model=Operario)
-async def update_operario(operario_id: str, operario_data: OperarioCreate):
+async def update_operario(operario_id: str, operario_data: OperarioUpdate):
     existing = await db.operarios.find_one({"id": operario_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Operario not found")
     
-    update_data = operario_data.model_dump()
-    await db.operarios.update_one({"id": operario_id}, {"$set": update_data})
+    update_data = {k: v for k, v in operario_data.model_dump().items() if v is not None}
+    if update_data:
+        await db.operarios.update_one({"id": operario_id}, {"$set": update_data})
     
     updated = await db.operarios.find_one({"id": operario_id}, {"_id": 0})
     return updated
