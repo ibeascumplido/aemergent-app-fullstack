@@ -137,6 +137,15 @@ const MyCalendarPage = () => {
       return;
     }
 
+    // Check if there's an existing vacation
+    const existing = vacaciones.find(v => v.fecha === dateStr);
+    
+    // If approved, cannot modify
+    if (existing?.status === "approved") {
+      toast.error("No puedes modificar vacaciones aprobadas");
+      return;
+    }
+
     try {
       const response = await axios.post(`${API}/my-vacaciones`, null, {
         params: { fecha: dateStr, tipo: markMode }
@@ -144,18 +153,16 @@ const MyCalendarPage = () => {
       
       if (response.data.action === "deleted") {
         setVacaciones(prev => prev.filter(v => v.fecha !== dateStr));
-      } else if (response.data.action === "updated") {
-        setVacaciones(prev => prev.map(v => 
-          v.fecha === dateStr ? { ...v, tipo: response.data.tipo } : v
-        ));
-      } else {
+        toast.success("Solicitud cancelada");
+      } else if (response.data.action === "created") {
         setVacaciones(prev => [...prev, response.data.vacacion]);
+        toast.success("Solicitud enviada (pendiente de aprobación)");
       }
       
       fetchResumen();
     } catch (error) {
       console.error("Error toggling vacation:", error);
-      toast.error("Error al actualizar");
+      toast.error(error.response?.data?.detail || "Error al actualizar");
     }
   };
 
