@@ -495,14 +495,22 @@ const MyCalendarPage = () => {
       )}
 
       {/* Leyenda */}
-      <div className="mt-4 flex items-center justify-center gap-6 text-sm text-slate-500">
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded bg-amber-500"></div>
+          <span>Pendiente</span>
+        </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded" style={{ backgroundColor: user?.color || "#3B82F6" }}></div>
-          <span>Vacaciones</span>
+          <span>Aprobado</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded bg-red-500"></div>
+          <span>Rechazado</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded ring-2 ring-slate-900" style={{ backgroundColor: user?.color || "#3B82F6" }}></div>
-          <span>Día Libre</span>
+          <span>Día Libre (aprobado)</span>
         </div>
       </div>
     </div>
