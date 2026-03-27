@@ -1,15 +1,18 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
+import hashlib
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -24,6 +27,106 @@ app = FastAPI()
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+# ============ USER ROLE ENUM ============
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
+
+class UserStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+# ============ AUTH MODELS ============
+class UserBase(BaseModel):
+    email: str
+    name: str
+    picture: Optional[str] = ""
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    name: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    email: str
+    name: str
+    picture: Optional[str] = ""
+    role: UserRole = UserRole.USER
+    status: UserStatus = UserStatus.PENDING
+    dias_vacaciones: int = 32
+    dias_libres: int = 6
+    color: str = "#3B82F6"
+    abreviatura: str = ""
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[UserRole] = None
+    status: Optional[UserStatus] = None
+    dias_vacaciones: Optional[int] = None
+    dias_libres: Optional[int] = None
+    color: Optional[str] = None
+    abreviatura: Optional[str] = None
+
+# Helper function to hash passwords
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# Helper to get current user from session
+async def get_current_user(request: Request) -> dict:
+    # Check cookie first
+    session_token = request.cookies.get("session_token")
+    
+    # Then check Authorization header as fallback
+    if not session_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            session_token = auth_header.split(" ")[1]
+    
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Find session in database
+    session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    
+    # Check expiry with timezone awareness
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Session expired")
+    
+    # Get user
+    user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    return user
+
+# Helper to require admin role
+async def require_admin(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+# Helper to require approved user
+async def require_approved(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("status") != UserStatus.APPROVED and user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Account pending approval")
+    return user
 
 # Budget Status Enum
 class BudgetStatus(str, Enum):
