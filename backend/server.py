@@ -293,6 +293,283 @@ class BudgetTemplate(BudgetTemplateBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+# ============ AUTH ENDPOINTS ============
+
+# Google OAuth session exchange
+@api_router.post("/auth/session")
+async def exchange_session(request: Request, response: Response):
+    """Exchange Google OAuth session_id for our session"""
+    data = await request.json()
+    session_id = data.get("session_id")
+    
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    
+    # Call Emergent Auth to get user data
+    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    async with httpx.AsyncClient() as client_http:
+        try:
+            auth_response = await client_http.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": session_id}
+            )
+            if auth_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid session_id")
+            
+            user_data = auth_response.json()
+        except Exception as e:
+            logging.error(f"Auth error: {e}")
+            raise HTTPException(status_code=401, detail="Authentication failed")
+    
+    email = user_data.get("email")
+    name = user_data.get("name", "")
+    picture = user_data.get("picture", "")
+    google_session_token = user_data.get("session_token")
+    
+    # Check if user exists
+    existing_user = await db.users.find_one({"email": email}, {"_id": 0})
+    
+    if existing_user:
+        user_id = existing_user["user_id"]
+        # Update user info
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": name, "picture": picture}}
+        )
+        user = existing_user
+    else:
+        # Create new user (pending approval)
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        abreviatura = name[:3].upper() if name else email[:3].upper()
+        user = {
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "picture": picture,
+            "role": UserRole.USER,
+            "status": UserStatus.PENDING,
+            "dias_vacaciones": 32,
+            "dias_libres": 6,
+            "color": "#3B82F6",
+            "abreviatura": abreviatura,
+            "auth_type": "google",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.users.insert_one(user)
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60  # 7 days
+    )
+    
+    # Get fresh user data
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Email/Password Registration
+@api_router.post("/auth/register")
+async def register(user_data: UserCreate, response: Response):
+    """Register new user with email/password"""
+    # Check if email exists
+    existing = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create user
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    abreviatura = user_data.name[:3].upper() if user_data.name else user_data.email[:3].upper()
+    
+    user = {
+        "user_id": user_id,
+        "email": user_data.email,
+        "name": user_data.name,
+        "password_hash": hash_password(user_data.password),
+        "picture": "",
+        "role": UserRole.USER,
+        "status": UserStatus.PENDING,
+        "dias_vacaciones": 32,
+        "dias_libres": 6,
+        "color": "#3B82F6",
+        "abreviatura": abreviatura,
+        "auth_type": "email",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.users.insert_one(user)
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60
+    )
+    
+    # Remove password hash from response
+    user.pop("password_hash", None)
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Email/Password Login
+@api_router.post("/auth/login")
+async def login(user_data: UserLogin, response: Response):
+    """Login with email/password"""
+    user = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Check if user registered with Google
+    if user.get("auth_type") == "google":
+        raise HTTPException(status_code=400, detail="Please use Google login for this account")
+    
+    # Verify password
+    if user.get("password_hash") != hash_password(user_data.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user["user_id"],
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60
+    )
+    
+    # Remove password hash from response
+    user.pop("password_hash", None)
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Get current user
+@api_router.get("/auth/me")
+async def get_me(request: Request):
+    """Get current authenticated user"""
+    user = await get_current_user(request)
+    user.pop("password_hash", None)
+    return user
+
+# Logout
+@api_router.post("/auth/logout")
+async def logout(request: Request, response: Response):
+    """Logout and clear session"""
+    session_token = request.cookies.get("session_token")
+    
+    if session_token:
+        await db.user_sessions.delete_one({"session_token": session_token})
+    
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        secure=True,
+        samesite="none"
+    )
+    
+    return {"message": "Logged out successfully"}
+
+# ============ ADMIN: USER MANAGEMENT ============
+
+@api_router.get("/admin/users")
+async def get_all_users(request: Request):
+    """Get all users (admin only)"""
+    await require_admin(request)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users
+
+@api_router.get("/admin/users/pending")
+async def get_pending_users(request: Request):
+    """Get pending users (admin only)"""
+    await require_admin(request)
+    users = await db.users.find({"status": UserStatus.PENDING}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users
+
+@api_router.put("/admin/users/{user_id}")
+async def update_user(user_id: str, user_update: UserUpdate, request: Request):
+    """Update user (admin only)"""
+    await require_admin(request)
+    
+    existing = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_data = {k: v for k, v in user_update.model_dump().items() if v is not None}
+    if update_data:
+        await db.users.update_one({"user_id": user_id}, {"$set": update_data})
+    
+    updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
+@api_router.delete("/admin/users/{user_id}")
+async def delete_user(user_id: str, request: Request):
+    """Delete user (admin only)"""
+    admin = await require_admin(request)
+    
+    if admin["user_id"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    result = await db.users.delete_one({"user_id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete user sessions and vacations
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.vacaciones.delete_many({"user_id": user_id})
+    
+    return {"message": "User deleted successfully"}
+
 # Root endpoint
 @api_router.get("/")
 async def root():
