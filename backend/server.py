@@ -868,7 +868,7 @@ async def get_my_resumen(request: Request, year: Optional[int] = None):
 
 # Admin: Get all users' vacations (for admin calendar view)
 @api_router.get("/admin/vacaciones")
-async def get_all_vacaciones(request: Request, month: Optional[str] = None, year: Optional[int] = None):
+async def get_all_vacaciones(request: Request, month: Optional[str] = None, year: Optional[int] = None, status: Optional[str] = None):
     """Get all users' vacations (admin only)"""
     await require_admin(request)
     
@@ -877,9 +877,130 @@ async def get_all_vacaciones(request: Request, month: Optional[str] = None, year
         query["fecha"] = {"$regex": f"^{month}"}
     elif year:
         query["fecha"] = {"$regex": f"^{year}"}
+    if status:
+        query["status"] = status
     
     vacaciones = await db.vacaciones.find(query, {"_id": 0}).to_list(10000)
+    
+    # Enrich with user info
+    users_cache = {}
+    for v in vacaciones:
+        user_id = v.get("user_id")
+        if user_id not in users_cache:
+            user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+            users_cache[user_id] = user
+        user = users_cache.get(user_id)
+        if user:
+            v["user_name"] = user.get("name", "")
+            v["user_color"] = user.get("color", "#3B82F6")
+            v["user_abreviatura"] = user.get("abreviatura", "")
+            v["user_email"] = user.get("email", "")
+    
     return vacaciones
+
+# Admin: Get pending requests
+@api_router.get("/admin/vacaciones/pending")
+async def get_pending_vacaciones(request: Request):
+    """Get all pending vacation requests (admin only)"""
+    await require_admin(request)
+    
+    vacaciones = await db.vacaciones.find({"status": VacationStatus.PENDING}, {"_id": 0}).to_list(10000)
+    
+    # Enrich with user info
+    users_cache = {}
+    for v in vacaciones:
+        user_id = v.get("user_id")
+        if user_id not in users_cache:
+            user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+            users_cache[user_id] = user
+        user = users_cache.get(user_id)
+        if user:
+            v["user_name"] = user.get("name", "")
+            v["user_color"] = user.get("color", "#3B82F6")
+            v["user_abreviatura"] = user.get("abreviatura", "")
+            v["user_email"] = user.get("email", "")
+    
+    return vacaciones
+
+# Admin: Approve vacation request
+@api_router.post("/admin/vacaciones/{vacacion_id}/approve")
+async def approve_vacacion(vacacion_id: str, request: Request):
+    """Approve a vacation request (admin only)"""
+    admin = await require_admin(request)
+    
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+    
+    if vacacion.get("status") != VacationStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    await db.vacaciones.update_one(
+        {"id": vacacion_id},
+        {"$set": {
+            "status": VacationStatus.APPROVED,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": admin["user_id"]
+        }}
+    )
+    
+    return {"message": "Vacation approved successfully"}
+
+# Admin: Reject vacation request
+@api_router.post("/admin/vacaciones/{vacacion_id}/reject")
+async def reject_vacacion(vacacion_id: str, request: Request, comment: Optional[str] = None):
+    """Reject a vacation request (admin only)"""
+    admin = await require_admin(request)
+    
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+    
+    if vacacion.get("status") != VacationStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    await db.vacaciones.update_one(
+        {"id": vacacion_id},
+        {"$set": {
+            "status": VacationStatus.REJECTED,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": admin["user_id"],
+            "rejection_comment": comment
+        }}
+    )
+    
+    return {"message": "Vacation rejected successfully"}
+
+# Admin: Bulk approve/reject
+@api_router.post("/admin/vacaciones/bulk-action")
+async def bulk_action_vacaciones(request: Request):
+    """Bulk approve or reject vacation requests (admin only)"""
+    admin = await require_admin(request)
+    data = await request.json()
+    
+    ids = data.get("ids", [])
+    action = data.get("action")  # "approve" or "reject"
+    comment = data.get("comment")
+    
+    if not ids or action not in ["approve", "reject"]:
+        raise HTTPException(status_code=400, detail="Invalid request")
+    
+    new_status = VacationStatus.APPROVED if action == "approve" else VacationStatus.REJECTED
+    
+    update_data = {
+        "status": new_status,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_by": admin["user_id"]
+    }
+    if action == "reject" and comment:
+        update_data["rejection_comment"] = comment
+    
+    result = await db.vacaciones.update_many(
+        {"id": {"$in": ids}, "status": VacationStatus.PENDING},
+        {"$set": update_data}
+    )
+    
+    return {"message": f"{result.modified_count} requests {action}d successfully"}
 
 @api_router.get("/admin/vacaciones/resumen")
 async def get_all_resumen(request: Request, year: Optional[int] = None):
