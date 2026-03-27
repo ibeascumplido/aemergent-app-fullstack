@@ -8,6 +8,9 @@ import {
   Sun,
   Palmtree,
   AlertCircle,
+  Clock,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +24,13 @@ const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
+
+// Status colors
+const STATUS_COLORS = {
+  pending: "#F59E0B",   // Yellow/Amber
+  approved: null,       // Use user's color
+  rejected: "#EF4444",  // Red
+};
 
 const MyCalendarPage = () => {
   const { user, isPending } = useAuth();
