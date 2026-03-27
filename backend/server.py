@@ -50,6 +50,109 @@ class VacationStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
 
+# ============ NOTIFICATION TYPE ============
+class NotificationType(str, Enum):
+    VACATION_APPROVED = "vacation_approved"
+    VACATION_REJECTED = "vacation_rejected"
+    USER_APPROVED = "user_approved"
+    USER_REJECTED = "user_rejected"
+
+# ============ EMAIL HELPER FUNCTIONS ============
+async def send_notification_email(to_email: str, subject: str, html_content: str):
+    """Send email notification using Resend"""
+    if not resend.api_key or resend.api_key == 're_demo_key':
+        logging.warning(f"Email not sent (demo mode): {subject} to {to_email}")
+        return None
+    
+    try:
+        params = {
+            "from": SENDER_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content
+        }
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        logging.info(f"Email sent to {to_email}: {subject}")
+        return result
+    except Exception as e:
+        logging.error(f"Failed to send email: {str(e)}")
+        return None
+
+def create_vacation_email_html(user_name: str, fecha: str, tipo: str, status: str, comment: str = None):
+    """Create HTML email for vacation notification"""
+    tipo_text = "vacaciones" if tipo == "vacacion" else "día libre"
+    status_text = "aprobada" if status == "approved" else "rechazada"
+    status_color = "#10B981" if status == "approved" else "#EF4444"
+    status_emoji = "✅" if status == "approved" else "❌"
+    
+    fecha_formatted = datetime.strptime(fecha, "%Y-%m-%d").strftime("%d de %B de %Y")
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">INICIA</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Gestión de Vacaciones</p>
+        </div>
+        
+        <div style="background: #f8fafc; padding: 30px; border: 1px solid #e2e8f0; border-top: none;">
+            <h2 style="color: #1e293b; margin-top: 0;">Hola {user_name},</h2>
+            
+            <p style="color: #475569; font-size: 16px; line-height: 1.6;">
+                Tu solicitud de <strong>{tipo_text}</strong> para el día <strong>{fecha_formatted}</strong> ha sido:
+            </p>
+            
+            <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; border: 2px solid {status_color};">
+                <span style="font-size: 36px;">{status_emoji}</span>
+                <p style="font-size: 20px; font-weight: bold; color: {status_color}; margin: 10px 0 0 0; text-transform: uppercase;">
+                    {status_text}
+                </p>
+            </div>
+    """
+    
+    if comment:
+        html += f"""
+            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0; color: #92400e;"><strong>Comentario del administrador:</strong></p>
+                <p style="margin: 10px 0 0 0; color: #78350f;">{comment}</p>
+            </div>
+        """
+    
+    html += """
+            <p style="color: #64748b; font-size: 14px; margin-top: 30px;">
+                Puedes ver el estado de todas tus solicitudes en tu calendario personal.
+            </p>
+        </div>
+        
+        <div style="background: #1e293b; padding: 20px; border-radius: 0 0 10px 10px; text-align: center;">
+            <p style="color: #94a3b8; margin: 0; font-size: 12px;">
+                Este es un mensaje automático del sistema de gestión INICIA.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+async def create_notification(user_id: str, notification_type: str, title: str, message: str, data: dict = None):
+    """Create in-app notification"""
+    notification = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "data": data or {},
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.notifications.insert_one(notification.copy())
+    return notification
+
 # ============ AUTH MODELS ============
 class UserBase(BaseModel):
     email: str
