@@ -50,7 +50,7 @@ function App() {
               } />
               <Route path="calendar" element={
                 <ProtectedRoute requireAdmin>
-                  <CalendarPage />
+                  <AdminCalendarPage />
                 </ProtectedRoute>
               } />
               <Route path="admin/users" element={
