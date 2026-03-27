@@ -31,10 +31,10 @@ const AuthCallback = () => {
       try {
         // Exchange session_id for our session
         const response = await axios.post(`${API}/auth/session`, 
-          { session_id: sessionId },
-          { withCredentials: true }
+          { session_id: sessionId }
         );
 
+        localStorage.setItem('session_token', response.data.session_token);
         setUser(response.data.user);
         
         // Clear hash and redirect to dashboard
