@@ -1,5 +1,8 @@
 {
-        "buildCommand": "cd frontend && yarn install && CI=false yarn build",
-        "outputDirectory": "frontend/build",
-        "devCommand": "cd frontend && yarn start"
+          "buildCommand": "cd frontend && yarn install && CI=false yarn build",
+          "outputDirectory": "frontend/build",
+          "devCommand": "cd frontend && yarn start",
+          "rewrites": [
+                      { "source": "/(.*)", "destination": "/" }
+          ]
 }
