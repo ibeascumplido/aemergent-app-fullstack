@@ -56,6 +56,8 @@ class NotificationType(str, Enum):
     VACATION_REJECTED = "vacation_rejected"
     USER_APPROVED = "user_approved"
     USER_REJECTED = "user_rejected"
+    NEW_USER_REQUEST = "new_user_request"
+    VACATION_REQUEST = "vacation_request"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -152,6 +154,18 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
     }
     await db.notifications.insert_one(notification.copy())
     return notification
+
+async def notify_admins(notification_type: str, title: str, message: str, data: dict = None):
+    """Send an in-app notification to every admin user."""
+    admins = await db.users.find({"role": UserRole.ADMIN}, {"_id": 0, "user_id": 1}).to_list(1000)
+    for admin in admins:
+        await create_notification(
+            user_id=admin["user_id"],
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            data=data or {}
+        )
 
 # ============ AUTH MODELS ============
 class UserBase(BaseModel):
@@ -471,6 +485,12 @@ async def exchange_session(request: Request, response: Response):
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(user.copy())
+        await notify_admins(
+            notification_type=NotificationType.NEW_USER_REQUEST,
+            title="Nueva solicitud de acceso 🔔",
+            message=f"{name} ({email}) se ha registrado y espera tu aprobación.",
+            data={"user_id": user_id}
+        )
     
     # Create session
     session_token = f"session_{uuid.uuid4().hex}"
@@ -531,6 +551,12 @@ async def register(user_data: UserCreate, response: Response):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user.copy())
+    await notify_admins(
+        notification_type=NotificationType.NEW_USER_REQUEST,
+        title="Nueva solicitud de acceso 🔔",
+        message=f"{user_data.name} ({user_data.email}) se ha registrado y espera tu aprobación.",
+        data={"user_id": user_id}
+    )
     
     # Create session
     session_token = f"session_{uuid.uuid4().hex}"
@@ -955,6 +981,19 @@ async def create_my_vacacion(request: Request, fecha: str, tipo: str = "vacacion
         "rejection_comment": None
     }
     await db.vacaciones.insert_one(vacacion.copy())  # Insert copy to avoid _id mutation
+    
+    # Notify admins of the new vacation request
+    tipo_text = "vacaciones" if tipo == "vacacion" else "día libre"
+    try:
+        fecha_fmt = datetime.strptime(fecha, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        fecha_fmt = fecha
+    await notify_admins(
+        notification_type=NotificationType.VACATION_REQUEST,
+        title="Nueva solicitud de vacaciones 📅",
+        message=f"{user.get('name', '')} ha solicitado {tipo_text} para el {fecha_fmt}.",
+        data={"user_id": user["user_id"], "fecha": fecha, "tipo": tipo}
+    )
     
     # Add user info for response
     vacacion["user_name"] = user.get("name", "")
