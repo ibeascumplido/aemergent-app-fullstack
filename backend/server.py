@@ -38,6 +38,7 @@ api_router = APIRouter(prefix="/api")
 class UserRole(str, Enum):
     ADMIN = "admin"
     USER = "user"
+    FACTURACION = "facturacion"
 
 class UserStatus(str, Enum):
     PENDING = "pending"
@@ -263,6 +264,20 @@ class BudgetStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
 
+# Estado del trabajo (control de trabajos jardineria)
+class EstadoTrabajo(str, Enum):
+    PENDIENTE_EJECUTAR = "pendiente_ejecutar"
+    EJECUTADO = "ejecutado"
+    FACTURADO = "facturado"
+    ENVIADO = "enviado"
+    MANTENIMIENTO = "mantenimiento"
+
+# Estado del pedido a proveedor / parte (columna facturacion)
+class PedidoPar(str, Enum):
+    NINGUNO = "ninguno"
+    ENVIADO = "enviado"
+    PENDIENTE = "pendiente"
+
 # Models
 class BudgetBase(BaseModel):
     title: str
@@ -387,6 +402,22 @@ class BudgetTemplateBase(BaseModel):
     lugar_ejecucion: Optional[str] = ""
     provincia: Optional[str] = ""
     servicios_descripcion: Optional[str] = ""
+    # ===== Campos Control de Trabajos (Excel) =====
+    anio: Optional[int] = None
+    num_orden: Optional[int] = None
+    titulo: Optional[str] = ""
+    centro: Optional[str] = ""
+    solicitud_trabajo: Optional[str] = ""
+    fecha_ejecucion: Optional[str] = ""
+    estado_trabajo: EstadoTrabajo = EstadoTrabajo.PENDIENTE_EJECUTAR
+    # ----- Columnas Facturacion -----
+    pedido_cliente: Optional[str] = ""
+    factura_inicio: Optional[str] = ""
+    factura_proveedor: Optional[str] = ""
+    importe_proveedor: Optional[float] = 0
+    facturado: Optional[bool] = False
+    pedido_par: PedidoPar = PedidoPar.NINGUNO
+    anotaciones_facturacion: Optional[str] = ""
     materiales: List[MaterialItem] = []
     porte: Optional[PorteItem] = None
     mano_obra: Optional[CostItem] = None
@@ -407,6 +438,21 @@ class BudgetTemplateUpdate(BaseModel):
     lugar_ejecucion: Optional[str] = None
     provincia: Optional[str] = None
     servicios_descripcion: Optional[str] = None
+    # ===== Campos Control de Trabajos (Excel) =====
+    anio: Optional[int] = None
+    num_orden: Optional[int] = None
+    titulo: Optional[str] = None
+    centro: Optional[str] = None
+    solicitud_trabajo: Optional[str] = None
+    fecha_ejecucion: Optional[str] = None
+    estado_trabajo: Optional[EstadoTrabajo] = None
+    pedido_cliente: Optional[str] = None
+    factura_inicio: Optional[str] = None
+    factura_proveedor: Optional[str] = None
+    importe_proveedor: Optional[float] = None
+    facturado: Optional[bool] = None
+    pedido_par: Optional[PedidoPar] = None
+    anotaciones_facturacion: Optional[str] = None
     materiales: Optional[List[MaterialItem]] = None
     porte: Optional[PorteItem] = None
     mano_obra: Optional[CostItem] = None
