@@ -97,6 +97,8 @@ export const AuthProvider = ({ children }) => {
   };
 
   const isAdmin = user?.role === 'admin';
+  const isFacturacion = user?.role === 'facturacion';
+  const canBudgets = isAdmin || isFacturacion;
   const isApproved = user?.status === 'approved' || isAdmin;
   const isPending = user?.status === 'pending';
 
@@ -107,6 +109,8 @@ export const AuthProvider = ({ children }) => {
       loading,
       isAuthenticated,
       isAdmin,
+      isFacturacion,
+      canBudgets,
       isApproved,
       isPending,
       login,
