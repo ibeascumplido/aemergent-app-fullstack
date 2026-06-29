@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import NotificationBell from "./NotificationBell";
 
 const Layout = () => {
-  const { user, isAdmin, isPending, logout } = useAuth();
+  const { user, isAdmin, isPending, canBudgets, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -18,7 +18,7 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true },
-    { to: "/budgets", icon: FileText, label: "Presupuestos", show: isAdmin },
+    { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets },
     { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin },
   ].filter(item => item.show);
