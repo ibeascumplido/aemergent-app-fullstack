@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Plus, Pencil, Trash2, Search, Filter, Eye } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  Eye,
+  ChevronRight,
+  ChevronLeft,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,25 +34,43 @@ import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const statusLabels = {
-  pending: "Pendiente",
-  approved: "Aprobado",
-  rejected: "Rechazado",
+// ===== Estado del trabajo: etiquetas + colores (como el Excel) =====
+const estadoTrabajoConfig = {
+  pendiente_ejecutar: { label: "Pendiente ejecutar", className: "bg-orange-100 text-orange-700" },
+  ejecutado: { label: "Ejecutado", className: "bg-green-100 text-green-700" },
+  facturado: { label: "Facturado", className: "bg-yellow-100 text-yellow-700" },
+  enviado: { label: "Enviado", className: "bg-blue-100 text-blue-700" },
+  mantenimiento: { label: "Mantenimiento", className: "bg-slate-200 text-slate-700" },
 };
+const estadoTrabajoOrder = [
+  "pendiente_ejecutar",
+  "ejecutado",
+  "facturado",
+  "enviado",
+  "mantenimiento",
+];
+
+// ===== Pedido/Par: etiquetas + colores =====
+const pedidoParConfig = {
+  ninguno: { label: "—", className: "text-slate-400" },
+  enviado: { label: "Enviado", className: "bg-blue-100 text-blue-700" },
+  pendiente: { label: "Pendiente", className: "bg-orange-100 text-orange-700" },
+};
+const pedidoParOrder = ["ninguno", "enviado", "pendiente"];
 
 const BudgetsPage = () => {
   const navigate = useNavigate();
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedBudget, setSelectedBudget] = useState(null);
+  // Columnas de facturación (azules) colapsadas por defecto
+  const [showFacturacion, setShowFacturacion] = useState(false);
 
   const fetchBudgets = async () => {
     try {
-      const params = statusFilter !== "all" ? { status: statusFilter } : {};
-      const response = await axios.get(`${API}/budget-templates`, { params });
+      const response = await axios.get(`${API}/budget-templates`);
       setBudgets(response.data);
     } catch (error) {
       console.error("Error fetching budgets:", error);
@@ -56,7 +82,7 @@ const BudgetsPage = () => {
 
   useEffect(() => {
     fetchBudgets();
-  }, [statusFilter]);
+  }, []);
 
   const handleDelete = async () => {
     try {
@@ -71,47 +97,56 @@ const BudgetsPage = () => {
     }
   };
 
-  const handleStatusChange = async (budgetId, newStatus) => {
+  // Actualiza un campo simple del presupuesto (estado, pedido/par, facturado)
+  const patchBudget = async (budgetId, payload, okMsg) => {
     try {
-      await axios.put(`${API}/budget-templates/${budgetId}`, { status: newStatus });
-      toast.success("Estado actualizado correctamente");
+      await axios.put(`${API}/budget-templates/${budgetId}`, payload);
+      if (okMsg) toast.success(okMsg);
       fetchBudgets();
     } catch (error) {
-      console.error("Error updating status:", error);
-      toast.error("Error al actualizar el estado");
+      console.error("Error updating budget:", error);
+      toast.error("Error al actualizar");
     }
   };
 
-  const filteredBudgets = budgets.filter(
-    (budget) =>
-      budget.cliente?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      budget.budget_number?.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredBudgets = budgets.filter((b) => {
+    const q = searchTerm.toLowerCase();
+    return (
+      b.cliente?.toLowerCase().includes(q) ||
+      b.budget_number?.toLowerCase().includes(q) ||
+      b.titulo?.toLowerCase().includes(q) ||
+      b.centro?.toLowerCase().includes(q)
+    );
+  });
+
+  const formatCurrency = (amount) =>
+    new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(
+      amount || 0
+    );
+
+  // Total facturado = suma de Venta (Base Imponible) = total_base
+  const totalFacturado = filteredBudgets.reduce(
+    (acc, b) => acc + (Number(b.total_base) || 0),
+    0
   );
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("es-ES", {
-      style: "currency",
-      currency: "EUR",
-    }).format(amount || 0);
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "-";
-    return new Date(dateStr).toLocaleDateString("es-ES", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  const th =
+    "px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap";
+  const thBlue =
+    "px-4 py-3 text-left text-xs font-semibold text-sky-700 uppercase tracking-wider whitespace-nowrap bg-sky-50";
+  const td = "px-4 py-3 text-sm text-slate-700 whitespace-nowrap";
+  const tdBlue = "px-4 py-3 text-sm text-slate-700 whitespace-nowrap bg-sky-50/60";
 
   return (
     <div data-testid="budgets-page">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight font-['Manrope']">
-            Presupuestos
+            Control de Trabajos
           </h1>
-          <p className="text-slate-500 mt-1">Gestiona todos tus presupuestos</p>
+          <p className="text-slate-500 mt-1">
+            Vista global de presupuestos y trabajos
+          </p>
         </div>
         <Button
           onClick={() => navigate("/budgets/new")}
@@ -123,43 +158,38 @@ const BudgetsPage = () => {
         </Button>
       </div>
 
-      {/* Filters */}
+      {/* Barra superior: búsqueda + toggle facturación */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
           <Input
-            placeholder="Buscar por número o cliente..."
+            placeholder="Buscar por nº, cliente, centro o título..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10 border-slate-200"
             data-testid="search-input"
           />
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="border-slate-200" data-testid="filter-dropdown">
-              <Filter className="w-4 h-4 mr-2" />
-              {statusFilter === "all" ? "Todos" : statusLabels[statusFilter]}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setStatusFilter("all")} data-testid="filter-all">
-              Todos
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setStatusFilter("pending")} data-testid="filter-pending">
-              Pendientes
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setStatusFilter("approved")} data-testid="filter-approved">
-              Aprobados
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setStatusFilter("rejected")} data-testid="filter-rejected">
-              Rechazados
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button
+          variant="outline"
+          onClick={() => setShowFacturacion((v) => !v)}
+          className="border-sky-200 text-sky-700 hover:bg-sky-50"
+          data-testid="toggle-facturacion"
+        >
+          {showFacturacion ? (
+            <>
+              <ChevronLeft className="w-4 h-4 mr-2" />
+              Ocultar Facturación
+            </>
+          ) : (
+            <>
+              <ChevronRight className="w-4 h-4 mr-2" />
+              Mostrar Facturación
+            </>
+          )}
+        </Button>
       </div>
 
-      {/* Budgets Table */}
       <Card className="border-slate-100 shadow-sm">
         <CardContent className="p-0">
           {loading ? (
@@ -175,140 +205,238 @@ const BudgetsPage = () => {
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-100">
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Nº Presupuesto
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Cliente
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Total
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Estado
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Fecha
-                    </th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      Acciones
-                    </th>
+                    {/* ===== Columnas blancas (Jardinería) ===== */}
+                    <th className={th}>Año</th>
+                    <th className={th}>Nº</th>
+                    <th className={th}>Nº Presup.</th>
+                    <th className={th}>Estado</th>
+                    <th className={th}>Fecha Ejec.</th>
+                    <th className={th}>Cliente</th>
+                    <th className={th}>Centro</th>
+                    <th className={th}>Solicitud</th>
+                    <th className={th}>Título</th>
+                    <th className={th}>Venta (B.I.)</th>
+                    {/* ===== Columnas azules (Facturación) ===== */}
+                    {showFacturacion && (
+                      <>
+                        <th className={thBlue}>Pedido Cliente</th>
+                        <th className={thBlue}>Factura Inicio</th>
+                        <th className={thBlue}>Factura Prov.</th>
+                        <th className={thBlue}>Importe Prov.</th>
+                        <th className={thBlue}>Facturación</th>
+                        <th className={thBlue}>Pedido/Par</th>
+                        <th className={thBlue}>Anotaciones Fact.</th>
+                      </>
+                    )}
+                    <th className={`${th} text-right`}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredBudgets.map((budget) => (
-                    <motion.tr
-                      key={budget.id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="hover:bg-slate-50 transition-colors"
-                      data-testid={`budget-row-${budget.id}`}
-                    >
-                      <td className="px-6 py-4">
-                        <span className="font-mono font-medium text-indigo-600">
-                          {budget.budget_number}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="font-medium text-slate-900">{budget.cliente}</p>
-                          {budget.lugar_ejecucion && (
-                            <p className="text-sm text-slate-500 truncate max-w-xs">
-                              {budget.lugar_ejecucion}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-medium text-slate-900">
-                        {formatCurrency(budget.total_con_iva)}
-                      </td>
-                      <td className="px-6 py-4">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              className={`status-badge status-${budget.status} cursor-pointer hover:opacity-80`}
-                              data-testid={`status-badge-${budget.id}`}
+                  {filteredBudgets.map((b) => {
+                    const est =
+                      estadoTrabajoConfig[b.estado_trabajo] ||
+                      estadoTrabajoConfig.pendiente_ejecutar;
+                    const par =
+                      pedidoParConfig[b.pedido_par] || pedidoParConfig.ninguno;
+                    return (
+                      <motion.tr
+                        key={b.id}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="hover:bg-slate-50 transition-colors"
+                        data-testid={`budget-row-${b.id}`}
+                      >
+                        <td className={td}>{b.anio || "-"}</td>
+                        <td className={td}>{b.num_orden || "-"}</td>
+                        <td className={`${td} font-mono font-medium text-indigo-600`}>
+                          {b.budget_number}
+                        </td>
+                        {/* Estado: desplegable con colores */}
+                        <td className={td}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className={`px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${est.className}`}
+                                data-testid={`estado-${b.id}`}
+                              >
+                                {est.label}
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              {estadoTrabajoOrder.map((key) => (
+                                <DropdownMenuItem
+                                  key={key}
+                                  onClick={() =>
+                                    patchBudget(
+                                      b.id,
+                                      { estado_trabajo: key },
+                                      "Estado actualizado"
+                                    )
+                                  }
+                                >
+                                  {estadoTrabajoConfig[key].label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                        <td className={td}>{b.fecha_ejecucion || "-"}</td>
+                        <td className={`${td} font-medium text-slate-900`}>
+                          {b.cliente}
+                        </td>
+                        <td className={td}>{b.centro || b.lugar_ejecucion || "-"}</td>
+                        <td className={td}>{b.solicitud_trabajo || "-"}</td>
+                        <td className={`${td} max-w-xs truncate`} title={b.titulo}>
+                          {b.titulo || b.servicios_descripcion || "-"}
+                        </td>
+                        <td className={`${td} font-mono font-medium text-slate-900`}>
+                          {formatCurrency(b.total_base)}
+                        </td>
+
+                        {/* ===== Columnas azules ===== */}
+                        {showFacturacion && (
+                          <>
+                            <td className={tdBlue}>{b.pedido_cliente || "-"}</td>
+                            <td className={tdBlue}>{b.factura_inicio || "-"}</td>
+                            <td className={tdBlue}>{b.factura_proveedor || "-"}</td>
+                            <td className={`${tdBlue} font-mono`}>
+                              {b.importe_proveedor
+                                ? formatCurrency(b.importe_proveedor)
+                                : "-"}
+                            </td>
+                            {/* Facturación Sí/No toggle */}
+                            <td className={tdBlue}>
+                              <button
+                                onClick={() =>
+                                  patchBudget(
+                                    b.id,
+                                    { facturado: !b.facturado },
+                                    "Facturación actualizada"
+                                  )
+                                }
+                                className={`px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${
+                                  b.facturado
+                                    ? "bg-green-100 text-green-700"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                                data-testid={`facturado-${b.id}`}
+                              >
+                                {b.facturado ? "Sí" : "No"}
+                              </button>
+                            </td>
+                            {/* Pedido/Par desplegable */}
+                            <td className={tdBlue}>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    className={`px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80 ${par.className}`}
+                                    data-testid={`pedidopar-${b.id}`}
+                                  >
+                                    {par.label}
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent>
+                                  {pedidoParOrder.map((key) => (
+                                    <DropdownMenuItem
+                                      key={key}
+                                      onClick={() =>
+                                        patchBudget(
+                                          b.id,
+                                          { pedido_par: key },
+                                          "Pedido actualizado"
+                                        )
+                                      }
+                                    >
+                                      {pedidoParConfig[key].label}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </td>
+                            <td
+                              className={`${tdBlue} max-w-xs truncate`}
+                              title={b.anotaciones_facturacion}
                             >
-                              {statusLabels[budget.status]}
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem
-                              onClick={() => handleStatusChange(budget.id, "pending")}
+                              {b.anotaciones_facturacion || "-"}
+                            </td>
+                          </>
+                        )}
+
+                        {/* Acciones */}
+                        <td className={`${td} text-right`}>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/budgets/${b.id}`)}
+                              className="text-slate-600 hover:text-slate-900"
+                              data-testid={`view-budget-${b.id}`}
                             >
-                              Pendiente
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleStatusChange(budget.id, "approved")}
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/budgets/${b.id}`)}
+                              className="text-slate-600 hover:text-slate-900"
+                              data-testid={`edit-budget-${b.id}`}
                             >
-                              Aprobado
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleStatusChange(budget.id, "rejected")}
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedBudget(b);
+                                setIsDeleteDialogOpen(true);
+                              }}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              data-testid={`delete-budget-${b.id}`}
                             >
-                              Rechazado
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                      <td className="px-6 py-4 text-slate-500 text-sm">
-                        {formatDate(budget.budget_date)}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => navigate(`/budgets/${budget.id}`)}
-                            className="text-slate-600 hover:text-slate-900"
-                            data-testid={`view-budget-${budget.id}`}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => navigate(`/budgets/${budget.id}`)}
-                            className="text-slate-600 hover:text-slate-900"
-                            data-testid={`edit-budget-${budget.id}`}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedBudget(budget);
-                              setIsDeleteDialogOpen(true);
-                            }}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            data-testid={`delete-budget-${budget.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </motion.tr>
-                  ))}
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
                 </tbody>
+                {/* Fila TOTAL FACTURADO */}
+                <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                  <tr>
+                    <td
+                      className="px-4 py-4 text-sm font-bold text-slate-900 text-right"
+                      colSpan={9}
+                    >
+                      TOTAL FACTURADO
+                    </td>
+                    <td className="px-4 py-4 text-sm font-bold text-slate-900 font-mono">
+                      {formatCurrency(totalFacturado)}
+                    </td>
+                    {showFacturacion && <td colSpan={7} className="bg-sky-50/60" />}
+                    <td />
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Delete Confirmation */}
+      {/* Confirmación de borrado */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent data-testid="delete-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar presupuesto?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará permanentemente el presupuesto
-              "{selectedBudget?.budget_number}".
+              Esta acción no se puede deshacer. Se eliminará permanentemente el
+              presupuesto "{selectedBudget?.budget_number}".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel data-testid="cancel-delete-btn">Cancelar</AlertDialogCancel>
+            <AlertDialogCancel data-testid="cancel-delete-btn">
+              Cancelar
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               className="bg-red-600 hover:bg-red-700"
