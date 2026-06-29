@@ -2,14 +2,17 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
 
-const ProtectedRoute = ({ children, requireAdmin = false }) => {
-  const { user, loading, isAuthenticated, isAdmin } = useAuth();
+const ProtectedRoute = ({ children, requireAdmin = false, requireBudgets = false }) => {
+  const { user, loading, isAuthenticated, isAdmin, canBudgets } = useAuth();
   const location = useLocation();
 
   // If user data was passed from AuthCallback, use it immediately
   if (location.state?.user) {
     const passedUser = location.state.user;
     if (requireAdmin && passedUser.role !== 'admin') {
+      return <Navigate to="/" replace />;
+    }
+    if (requireBudgets && passedUser.role !== 'admin' && passedUser.role !== 'facturacion') {
       return <Navigate to="/" replace />;
     }
     return children;
@@ -31,6 +34,10 @@ const ProtectedRoute = ({ children, requireAdmin = false }) => {
   }
 
   if (requireAdmin && !isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (requireBudgets && !canBudgets) {
     return <Navigate to="/" replace />;
   }
 
