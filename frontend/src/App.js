@@ -34,17 +34,17 @@ function App() {
               
               {/* Admin only routes */}
               <Route path="budgets" element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute requireBudgets>
                   <BudgetsPage />
                 </ProtectedRoute>
               } />
               <Route path="budgets/new" element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute requireBudgets>
                   <BudgetTemplatePage />
                 </ProtectedRoute>
               } />
               <Route path="budgets/:id" element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute requireBudgets>
                   <BudgetTemplatePage />
                 </ProtectedRoute>
               } />
