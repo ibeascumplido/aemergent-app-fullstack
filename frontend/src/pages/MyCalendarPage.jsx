@@ -194,6 +194,15 @@ const MyCalendarPage = () => {
       if (status === "rejected") return STATUS_COLORS.rejected;
       return user?.color || "#3B82F6"; // approved uses user color
     };
+
+    // Helper: ring style for días libres (always visible, any status)
+    const getLibreRingStyle = (vacInfo) => {
+      if (!vacInfo || vacInfo.tipo !== "libre") return {};
+      const status = vacInfo.status || "pending";
+      if (status === "approved") return { outline: "3px solid #0f172a", outlineOffset: "-3px" };
+      if (status === "rejected") return { outline: "3px solid #b91c1c", outlineOffset: "-3px" };
+      return { outline: "3px solid #d97706", outlineOffset: "-3px" };
+    };
     
     return (
       <div className={compact ? "" : "border border-slate-200 rounded-lg overflow-hidden"}>
@@ -236,7 +245,7 @@ const MyCalendarPage = () => {
                   } ${isLibre && isApproved ? "ring-1 ring-inset ring-slate-900" : ""} ${
                     isPendingVac && hasAny ? "animate-pulse" : ""
                   }`}
-                  style={hasAny ? { backgroundColor: bgColor } : {}}
+                  style={hasAny ? { backgroundColor: bgColor, ...getLibreRingStyle(vacInfo) } : {}}
                 >
                   {day.date}
                 </button>
@@ -253,8 +262,8 @@ const MyCalendarPage = () => {
                   isWeekend ? "bg-slate-50/50" : "bg-white hover:bg-slate-50"
                 } ${isTodayDate ? "ring-2 ring-red-400 ring-inset" : ""} ${
                   hasAny ? "text-white" : ""
-                } ${isLibre && isApproved ? "ring-2 ring-slate-900 ring-inset" : ""}`}
-                style={hasAny ? { backgroundColor: bgColor } : {}}
+                }`}
+                style={hasAny ? { backgroundColor: bgColor, ...getLibreRingStyle(vacInfo) } : {}}
                 title={vacInfo?.rejection_comment ? `Rechazado: ${vacInfo.rejection_comment}` : ""}
               >
                 <span className={`text-sm font-medium ${hasAny ? "text-white" : ""}`}>
@@ -502,15 +511,23 @@ const MyCalendarPage = () => {
         </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded" style={{ backgroundColor: user?.color || "#3B82F6" }}></div>
-          <span>Aprobado</span>
+          <span>Vacaciones aprobadas</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded bg-red-500"></div>
           <span>Rechazado</span>
         </div>
+        <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+          <div className="w-4 h-4 rounded bg-amber-500" style={{ outline: "3px solid #d97706", outlineOffset: "-3px" }}></div>
+          <span>Día libre pendiente</span>
+        </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded ring-2 ring-slate-900" style={{ backgroundColor: user?.color || "#3B82F6" }}></div>
-          <span>Día Libre (aprobado)</span>
+          <div className="w-4 h-4 rounded" style={{ backgroundColor: user?.color || "#3B82F6", outline: "3px solid #0f172a", outlineOffset: "-3px" }}></div>
+          <span>Día libre aprobado</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded bg-red-500" style={{ outline: "3px solid #b91c1c", outlineOffset: "-3px" }}></div>
+          <span>Día libre rechazado</span>
         </div>
       </div>
     </div>

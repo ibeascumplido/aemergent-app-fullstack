@@ -298,8 +298,18 @@ const AdminCalendarPage = () => {
                 className={`h-[5px] w-full rounded-sm transition-all ${
                   isPending ? "animate-pulse cursor-pointer hover:h-[7px]" : 
                   isRejected ? "opacity-40 cursor-default" : "cursor-default"
-                } ${v.tipo === "libre" ? "ring-1 ring-inset ring-white/50" : ""}`}
-                style={{ backgroundColor: bgColor }}
+                }`}
+                style={{
+                  backgroundColor: bgColor,
+                  ...(v.tipo === "libre" ? {
+                    outline: isPending
+                      ? "2px solid #d97706"
+                      : isRejected
+                      ? "2px solid #b91c1c"
+                      : "2px solid #0f172a",
+                    outlineOffset: "-1px",
+                  } : {}),
+                }}
                 title={`${v.user_name || u.name} - ${v.tipo === "vacacion" ? "Vacaciones" : "Día Libre"} (${v.status})`}
               />
             );
