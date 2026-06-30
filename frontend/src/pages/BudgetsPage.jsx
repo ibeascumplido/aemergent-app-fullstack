@@ -205,6 +205,7 @@ const BudgetsPage = () => {
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-100">
                   <tr>
+                    <th className={`${th} text-left`}>Acciones</th>
                     {/* ===== Columnas blancas (Jardinería) ===== */}
                     <th className={th}>Año</th>
                     <th className={th}>Nº</th>
@@ -228,7 +229,6 @@ const BudgetsPage = () => {
                         <th className={thBlue}>Anotaciones Fact.</th>
                       </>
                     )}
-                    <th className={`${th} text-right`}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -246,6 +246,41 @@ const BudgetsPage = () => {
                         className="hover:bg-slate-50 transition-colors"
                         data-testid={`budget-row-${b.id}`}
                       >
+                        {/* Acciones (izquierda) */}
+                        <td className={td}>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/budgets/${b.id}`)}
+                              className="text-slate-600 hover:text-slate-900"
+                              data-testid={`view-budget-${b.id}`}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/budgets/${b.id}`)}
+                              className="text-slate-600 hover:text-slate-900"
+                              data-testid={`edit-budget-${b.id}`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedBudget(b);
+                                setIsDeleteDialogOpen(true);
+                              }}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              data-testid={`delete-budget-${b.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </td>
                         <td className={td}>{b.anio || "-"}</td>
                         <td className={td}>{b.num_orden || "-"}</td>
                         <td className={`${td} font-mono font-medium text-indigo-600`}>
@@ -362,41 +397,6 @@ const BudgetsPage = () => {
                           </>
                         )}
 
-                        {/* Acciones */}
-                        <td className={`${td} text-right`}>
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/budgets/${b.id}`)}
-                              className="text-slate-600 hover:text-slate-900"
-                              data-testid={`view-budget-${b.id}`}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/budgets/${b.id}`)}
-                              className="text-slate-600 hover:text-slate-900"
-                              data-testid={`edit-budget-${b.id}`}
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedBudget(b);
-                                setIsDeleteDialogOpen(true);
-                              }}
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                              data-testid={`delete-budget-${b.id}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </td>
                       </motion.tr>
                     );
                   })}
@@ -404,6 +404,7 @@ const BudgetsPage = () => {
                 {/* Fila TOTAL FACTURADO */}
                 <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                   <tr>
+                    <td />
                     <td
                       className="px-4 py-4 text-sm font-bold text-slate-900 text-right"
                       colSpan={9}
@@ -414,7 +415,6 @@ const BudgetsPage = () => {
                       {formatCurrency(totalFacturado)}
                     </td>
                     {showFacturacion && <td colSpan={7} className="bg-sky-50/60" />}
-                    <td />
                   </tr>
                 </tfoot>
               </table>
