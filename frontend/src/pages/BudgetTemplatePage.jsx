@@ -118,6 +118,20 @@ const BudgetTemplatePage = () => {
     setBudgetNumber(`P-${random}/${year}`);
   };
 
+  // Genera el Nº de presupuesto a partir de la fecha: patrón J-DDMM/AA (ej. J-3006/26)
+  const numeroDesdeFecha = (fechaStr) => {
+    if (!fechaStr) return "";
+    const [yyyy, mm, dd] = fechaStr.split("-");
+    if (!yyyy || !mm || !dd) return "";
+    return `J-${dd}${mm}/${yyyy.slice(-2)}`;
+  };
+
+  // Al cambiar la fecha: actualiza fecha y regenera el Nº (sigue siendo editable a mano)
+  const handleBudgetDateChange = (fechaStr) => {
+    setBudgetDate(fechaStr);
+    setBudgetNumber(numeroDesdeFecha(fechaStr));
+  };
+
   const fetchBudget = async () => {
     setLoading(true);
     try {
@@ -529,7 +543,7 @@ const BudgetTemplatePage = () => {
               <Input
                 type="date"
                 value={budgetDate}
-                onChange={(e) => setBudgetDate(e.target.value)}
+                onChange={(e) => handleBudgetDateChange(e.target.value)}
                 className="w-40 text-sm"
                 data-testid="budget-date-input"
               />
