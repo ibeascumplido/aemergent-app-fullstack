@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users } from "lucide-react";
+import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users, Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
@@ -335,6 +335,15 @@ const HomePage = () => {
                     <div>
                       <p className="font-medium">Ver Calendarios</p>
                       <p className="text-xs text-slate-500">Gestionar vacaciones de todos</p>
+                    </div>
+                  </Button>
+                </Link>
+                <Link to="/clients">
+                  <Button variant="outline" className="w-full justify-start h-14 text-left">
+                    <Building2 className="w-5 h-5 mr-3 text-sky-500" />
+                    <div>
+                      <p className="font-medium">Clientes</p>
+                      <p className="text-xs text-slate-500">Fichas, fotos, partes e incidencias</p>
                     </div>
                   </Button>
                 </Link>
