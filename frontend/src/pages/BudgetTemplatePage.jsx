@@ -55,6 +55,20 @@ const BudgetTemplatePage = () => {
   const [lugarEjecucion, setLugarEjecucion] = useState("");
   const [provincia, setProvincia] = useState("");
 
+  // Campos Control de Trabajos (Excel) - blancos
+  const [anio, setAnio] = useState("");
+  const [numOrden, setNumOrden] = useState("");
+  const [titulo, setTitulo] = useState("");
+  const [centro, setCentro] = useState("");
+  const [solicitudTrabajo, setSolicitudTrabajo] = useState("");
+  const [fechaEjecucion, setFechaEjecucion] = useState("");
+  // Campos Facturación - azules
+  const [pedidoCliente, setPedidoCliente] = useState("");
+  const [facturaInicio, setFacturaInicio] = useState("");
+  const [facturaProveedor, setFacturaProveedor] = useState("");
+  const [importeProveedor, setImporteProveedor] = useState("");
+  const [anotacionesFacturacion, setAnotacionesFacturacion] = useState("");
+
   // Services description
   const [serviciosDescripcion, setServiciosDescripcion] = useState("");
 
@@ -115,6 +129,17 @@ const BudgetTemplatePage = () => {
       setLugarEjecucion(data.lugar_ejecucion || "");
       setProvincia(data.provincia || "");
       setServiciosDescripcion(data.servicios_descripcion || "");
+      setAnio(data.anio ?? "");
+      setNumOrden(data.num_orden ?? "");
+      setTitulo(data.titulo || "");
+      setCentro(data.centro || "");
+      setSolicitudTrabajo(data.solicitud_trabajo || "");
+      setFechaEjecucion(data.fecha_ejecucion || "");
+      setPedidoCliente(data.pedido_cliente || "");
+      setFacturaInicio(data.factura_inicio || "");
+      setFacturaProveedor(data.factura_proveedor || "");
+      setImporteProveedor(data.importe_proveedor ?? "");
+      setAnotacionesFacturacion(data.anotaciones_facturacion || "");
       setMateriales(
         data.materiales?.length > 0
           ? data.materiales
@@ -345,6 +370,17 @@ const BudgetTemplatePage = () => {
         lugar_ejecucion: lugarEjecucion,
         provincia,
         servicios_descripcion: serviciosDescripcion,
+        anio: anio === "" ? null : Number(anio),
+        num_orden: numOrden === "" ? null : Number(numOrden),
+        titulo,
+        centro,
+        solicitud_trabajo: solicitudTrabajo,
+        fecha_ejecucion: fechaEjecucion,
+        pedido_cliente: pedidoCliente,
+        factura_inicio: facturaInicio,
+        factura_proveedor: facturaProveedor,
+        importe_proveedor: importeProveedor === "" ? null : Number(importeProveedor),
+        anotaciones_facturacion: anotacionesFacturacion,
         materiales: materiales.filter((m) => m.nombre.trim() !== ""),
         porte,
         mano_obra: manoObra,
@@ -534,6 +570,68 @@ const BudgetTemplatePage = () => {
               className="bg-white"
               data-testid="provincia-input"
             />
+          </div>
+        </div>
+
+        {/* Datos de Control de Trabajos (Jardinería) */}
+        <div className="mb-8">
+          <div className="bg-slate-600 text-white px-4 py-2 rounded-t-lg font-medium">
+            DATOS DE CONTROL DE TRABAJOS
+          </div>
+          <div className="border border-t-0 border-slate-200 rounded-b-lg p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Título</label>
+              <Input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Título del trabajo" data-testid="titulo-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Centro</label>
+              <Input value={centro} onChange={(e) => setCentro(e.target.value)} placeholder="Centro / sede" data-testid="centro-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Solicitud</label>
+              <Input value={solicitudTrabajo} onChange={(e) => setSolicitudTrabajo(e.target.value)} placeholder="Persona de contacto" data-testid="solicitud-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Fecha ejec.</label>
+              <Input value={fechaEjecucion} onChange={(e) => setFechaEjecucion(e.target.value)} placeholder="Fecha o nota de ejecución" data-testid="fechaejec-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Año</label>
+              <Input type="number" value={anio} onChange={(e) => setAnio(e.target.value)} placeholder="26" data-testid="anio-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Nº orden</label>
+              <Input type="number" value={numOrden} onChange={(e) => setNumOrden(e.target.value)} placeholder="29" data-testid="numorden-input" />
+            </div>
+          </div>
+        </div>
+
+        {/* Datos de Facturación (departamento facturación) */}
+        <div className="mb-8">
+          <div className="bg-sky-600 text-white px-4 py-2 rounded-t-lg font-medium">
+            DATOS DE FACTURACIÓN
+          </div>
+          <div className="border border-t-0 border-sky-200 rounded-b-lg p-4 grid grid-cols-1 md:grid-cols-2 gap-4 bg-sky-50/40">
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Pedido cliente</label>
+              <Input value={pedidoCliente} onChange={(e) => setPedidoCliente(e.target.value)} placeholder="PO del cliente" className="bg-white" data-testid="pedidocliente-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Factura inicio</label>
+              <Input value={facturaInicio} onChange={(e) => setFacturaInicio(e.target.value)} placeholder="Nº factura" className="bg-white" data-testid="facturainicio-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Factura prov.</label>
+              <Input value={facturaProveedor} onChange={(e) => setFacturaProveedor(e.target.value)} placeholder="Factura proveedor" className="bg-white" data-testid="facturaprov-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+              <label className="text-sm font-medium text-slate-700">Importe prov.</label>
+              <Input type="number" value={importeProveedor} onChange={(e) => setImporteProveedor(e.target.value)} placeholder="0.00" className="bg-white" data-testid="importeprov-input" />
+            </div>
+            <div className="grid grid-cols-[120px_1fr] items-start gap-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700 pt-2">Anotaciones</label>
+              <Textarea value={anotacionesFacturacion} onChange={(e) => setAnotacionesFacturacion(e.target.value)} placeholder="Anotaciones de facturación..." rows={2} className="resize-none bg-white" data-testid="anotacionesfact-textarea" />
+            </div>
           </div>
         </div>
 
