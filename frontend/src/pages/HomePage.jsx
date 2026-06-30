@@ -280,8 +280,8 @@ const HomePage = () => {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Presupuestos Recientes</CardTitle>
                   <Link to="/budgets">
-                    <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600" data-testid="view-all-budgets">
-                      Ver todos <ArrowRight className="w-4 h-4 ml-1" />
+                    <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white shadow-sm px-4" data-testid="view-all-budgets">
+                      Ver todos <ArrowRight className="w-4 h-4 ml-1.5" />
                     </Button>
                   </Link>
                 </div>
