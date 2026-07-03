@@ -1,9 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Building2, Search, ChevronRight, Image, FileText, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
 
 // Clientes iniciales (más adelante pasarán a base de datos con su ficha completa)
 const CLIENTES_INICIALES = [
@@ -26,14 +26,14 @@ const colorDe = (nombre) => {
 
 const ClientsPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
+  const navigate = useNavigate();
 
   const filtrados = CLIENTES_INICIALES.filter((c) =>
     c.nombre.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const abrirFicha = (cliente) => {
-    // La ficha individual (fotos, partes de trabajo, incidencias) se implementará después
-    toast.info(`La ficha de ${cliente.nombre} estará disponible próximamente`);
+    navigate(`/clients/${cliente.id}`);
   };
 
   const container = {
