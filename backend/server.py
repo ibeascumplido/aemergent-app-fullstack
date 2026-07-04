@@ -399,6 +399,10 @@ class BudgetTemplateBase(BaseModel):
     budget_number: str
     budget_date: str
     cliente: str
+    # ID del cliente en la coleccion Client (opcional). Vinculacion Fase 4:
+    # los presupuestos nuevos deberian traer este campo; los historicos se
+    # localizan tambien por el texto de `cliente` (filtro OR en el endpoint).
+    client_id: Optional[str] = None
     lugar_ejecucion: Optional[str] = ""
     provincia: Optional[str] = ""
     servicios_descripcion: Optional[str] = ""
@@ -435,6 +439,7 @@ class BudgetTemplateUpdate(BaseModel):
     budget_number: Optional[str] = None
     budget_date: Optional[str] = None
     cliente: Optional[str] = None
+    client_id: Optional[str] = None
     lugar_ejecucion: Optional[str] = None
     provincia: Optional[str] = None
     servicios_descripcion: Optional[str] = None
@@ -1690,6 +1695,70 @@ async def delete_client(client_id: str, _: dict = Depends(require_admin)):
         {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
     )
     return {"ok": True}
+
+
+
+# ---------------------------------------------------------------------
+# Presupuestos asociados a un cliente (Fase 4)
+# ---------------------------------------------------------------------
+# Filtro hibrido: por client_id (nuevos) OR por texto de `cliente`
+# case-insensitive contra el nombre del cliente (historicos sin migrar).
+# Asi cubrimos ambos casos sin necesidad de migrar la base de datos.
+
+def _budgets_query_for_client(cliente_doc: dict) -> dict:
+    """Construye la query MongoDB con el filtro OR cliente_id / texto."""
+    nombre = (cliente_doc.get("nombre") or "").strip()
+    # Escape de regex para el nombre (por si contiene caracteres especiales)
+    safe = re.escape(nombre)
+    return {
+        "$or": [
+            {"client_id": cliente_doc["id"]},
+            # ^...$ con anclas + case-insensitive + strip previo
+            {"cliente": {"$regex": f"^\\s*{safe}\\s*$", "$options": "i"}},
+        ]
+    }
+
+
+@api_router.get("/clients/{slug}/budgets", response_model=List[BudgetTemplate])
+async def list_client_budgets(slug: str, _: dict = Depends(require_approved)):
+    """Lista de presupuestos asociados al cliente, mas recientes primero."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    query = _budgets_query_for_client(cliente)
+    cursor = db.budget_templates.find(query).sort("budget_date", -1)
+    return [BudgetTemplate(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}/budgets/summary")
+async def client_budgets_summary(slug: str, _: dict = Depends(require_approved)):
+    """Totales agregados por cliente en base imponible.
+
+    - total_facturado: suma de total_base de presupuestos con facturado=True
+    - total_pendiente: suma de total_base de presupuestos con facturado=False
+    - count: numero total de presupuestos asociados
+    """
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    query = _budgets_query_for_client(cliente)
+    total_facturado = 0.0
+    total_pendiente = 0.0
+    count = 0
+    async for doc in db.budget_templates.find(query, {"total_base": 1, "facturado": 1}):
+        count += 1
+        base = float(doc.get("total_base") or 0)
+        if doc.get("facturado"):
+            total_facturado += base
+        else:
+            total_pendiente += base
+    return {
+        "count": count,
+        "total_facturado": round(total_facturado, 2),
+        "total_pendiente": round(total_pendiente, 2),
+    }
 
 
 # Include the router in the main app
