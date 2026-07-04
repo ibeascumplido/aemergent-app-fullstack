@@ -1524,6 +1524,174 @@ async def get_dashboard_stats():
         "upcoming_events": upcoming_events
     }
 
+# =====================================================================
+# CLIENTES (Fase 2)
+# ---------------------------------------------------------------------
+# Modelo Client + endpoints REST.
+# Los 7 clientes iniciales se auto-siembran al arrancar la app si la
+# colección está vacía (ver seed_clients_if_empty).
+#
+# NOTA DE ARQUITECTURA (logo):
+# En esta fase el logo se guarda como data-URI base64 dentro del propio
+# documento (campo logo_url). Es aceptable para logos pequeños (<200KB).
+# Cuando lleguen las fotografías de cliente (Fase 6) se migrará a un
+# servicio externo tipo Cloudinary/S3, porque MongoDB no debe usarse
+# como almacén de binarios grandes ni de volumen.
+#
+# NOTA DE SEGURIDAD:
+# Lectura permitida a cualquier usuario aprobado (mismo patrón que
+# budget-templates: la restricción admin+facturación se aplica en el
+# frontend). Escritura restringida a admin.
+# =====================================================================
+
+import re
+
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+class ClientBase(BaseModel):
+    slug: str = Field(..., description="Identificador URL-friendly, único y estable")
+    nombre: str = Field(..., min_length=1, max_length=120)
+    logo_url: Optional[str] = Field(None, description="Data-URI base64 o URL externa")
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class ClientCreate(ClientBase):
+    pass
+
+
+class ClientUpdate(BaseModel):
+    # Todos opcionales: PUT parcial. El slug NO se puede cambiar una vez creado
+    # (rompería URLs y referencias futuras desde otras colecciones).
+    nombre: Optional[str] = Field(None, min_length=1, max_length=120)
+    logo_url: Optional[str] = None
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Client(ClientBase):
+    id: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+def _validate_slug(slug: str) -> str:
+    slug = (slug or "").strip().lower()
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(
+            status_code=400,
+            detail="slug inválido: usa minúsculas, números y guiones (ej. 'leroy-merlin')",
+        )
+    return slug
+
+
+# Los 7 clientes iniciales que el frontend usaba hardcodeados.
+# Los slugs coinciden EXACTAMENTE con los ids del array del frontend
+# para que URLs ya en uso (/clients/sanitas, etc.) sigan resolviendo.
+_SEED_CLIENTS = [
+    {"slug": "sanitas", "nombre": "SANITAS"},
+    {"slug": "leroy-merlin", "nombre": "LEROY MERLIN"},
+    {"slug": "ikea", "nombre": "IKEA"},
+    {"slug": "iberdrola", "nombre": "IBERDROLA"},
+    {"slug": "style-outlet", "nombre": "STYLE OUTLET"},
+    {"slug": "clarins", "nombre": "CLARINS"},
+    {"slug": "galp", "nombre": "GALP"},
+]
+
+
+async def seed_clients_if_empty() -> None:
+    """Inserta los 7 clientes iniciales si la colección está vacía. Idempotente."""
+    count = await db.clients.count_documents({})
+    if count > 0:
+        return
+    now = datetime.now(timezone.utc)
+    docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "slug": c["slug"],
+            "nombre": c["nombre"],
+            "logo_url": None,
+            "notas": "",
+            "activo": True,
+            "creado_en": now,
+            "actualizado_en": now,
+        }
+        for c in _SEED_CLIENTS
+    ]
+    await db.clients.insert_many(docs)
+
+
+@api_router.get("/clients", response_model=List[Client])
+async def list_clients(_: dict = Depends(require_approved)):
+    """Lista de clientes activos, orden alfabético por nombre."""
+    cursor = db.clients.find({"activo": True}).sort("nombre", 1)
+    return [Client(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}", response_model=Client)
+async def get_client(slug: str, _: dict = Depends(require_approved)):
+    slug = _validate_slug(slug)
+    doc = await db.clients.find_one({"slug": slug, "activo": True})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return Client(**doc)
+
+
+@api_router.post("/clients", response_model=Client)
+async def create_client(payload: ClientCreate, _: dict = Depends(require_admin)):
+    slug = _validate_slug(payload.slug)
+    existing = await db.clients.find_one({"slug": slug})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe un cliente con ese slug")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "slug": slug,
+        "nombre": payload.nombre.strip(),
+        "logo_url": payload.logo_url,
+        "notas": (payload.notas or "").strip(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.clients.insert_one(doc)
+    return Client(**doc)
+
+
+@api_router.put("/clients/{client_id}", response_model=Client)
+async def update_client(
+    client_id: str, payload: ClientUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.clients.find_one({"id": client_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return Client(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+    if "notas" in updates and updates["notas"] is not None:
+        updates["notas"] = updates["notas"].strip()
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.clients.update_one({"id": client_id}, {"$set": updates})
+    doc = await db.clients.find_one({"id": client_id})
+    return Client(**doc)
+
+
+@api_router.delete("/clients/{client_id}")
+async def delete_client(client_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False, no borra datos históricos."""
+    doc = await db.clients.find_one({"id": client_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -1541,6 +1709,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def on_startup():
+    # Auto-siembra de datos base al arrancar (idempotente).
+    await seed_clients_if_empty()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
