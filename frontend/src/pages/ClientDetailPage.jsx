@@ -11,6 +11,7 @@ import {
   Users,
   ListTodo,
   MessageSquare,
+  ChevronRight,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,13 +51,6 @@ const SECCIONES = [
     descripcion: "Registros de intervenciones",
     icon: ClipboardList,
     color: "indigo",
-  },
-  {
-    key: "presupuestos",
-    titulo: "Presupuestos asociados",
-    descripcion: "Presupuestos vinculados a este cliente",
-    icon: FileText,
-    color: "red",
   },
   {
     key: "contactos",
@@ -131,6 +125,44 @@ const ClientDetailPage = () => {
     })();
     return () => { cancelado = true; };
   }, [slug]);
+
+  // Presupuestos asociados + totales por cliente (Fase 4)
+  const [presupuestos, setPresupuestos] = useState([]);
+  const [summary, setSummary] = useState({ count: 0, total_facturado: 0, total_pendiente: 0 });
+  const [loadingBudgets, setLoadingBudgets] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    setLoadingBudgets(true);
+    (async () => {
+      try {
+        const [resList, resSummary] = await Promise.all([
+          axios.get(`${API}/clients/${slug}/budgets`),
+          axios.get(`${API}/clients/${slug}/budgets/summary`),
+        ]);
+        if (!cancelado) {
+          setPresupuestos(resList.data);
+          setSummary(resSummary.data);
+        }
+      } catch (err) {
+        // Silencioso: si no hay cliente, ya lo maneja el fetch principal.
+        // Un 404 aqui solo pasa si se llama con slug invalido.
+        if (err?.response?.status !== 404) {
+          console.error("Error cargando presupuestos del cliente:", err);
+        }
+      } finally {
+        if (!cancelado) setLoadingBudgets(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [slug]);
+
+  // Formateador de euros (es-ES, base imponible)
+  const fmtEur = (n) =>
+    new Intl.NumberFormat("es-ES", {
+      style: "currency",
+      currency: "EUR",
+    }).format(Number(n) || 0);
 
   // Estado de carga inicial.
   if (loading) {
@@ -212,7 +244,111 @@ const ClientDetailPage = () => {
         </div>
       </div>
 
-      {/* Grid de secciones */}
+      {/* Tarjeta especial: Presupuestos asociados con totales reales */}
+      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-presupuestos">
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-red-500" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Presupuestos asociados</p>
+                <p className="text-sm text-slate-500">
+                  {loadingBudgets
+                    ? "Cargando..."
+                    : `${summary.count} ${summary.count === 1 ? "presupuesto" : "presupuestos"} en total`}
+                </p>
+              </div>
+            </div>
+            {!loadingBudgets && summary.count > 0 && (
+              <button
+                type="button"
+                onClick={() => navigate(`/budgets?cliente=${encodeURIComponent(slug)}`)}
+                className="text-sm text-indigo-600 hover:text-indigo-700 font-medium inline-flex items-center gap-1"
+                data-testid="ver-todos-presupuestos"
+              >
+                Ver todos <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Totales facturado + pendiente */}
+          {!loadingBudgets && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="rounded-lg bg-green-50 border border-green-100 p-4">
+                <p className="text-xs uppercase tracking-wider text-green-700 font-medium">
+                  Facturado
+                </p>
+                <p className="text-2xl font-bold text-green-900 font-['JetBrains_Mono'] mt-1">
+                  {fmtEur(summary.total_facturado)}
+                </p>
+                <p className="text-xs text-green-700 mt-1">base imponible</p>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 p-4">
+                <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">
+                  Pendiente por facturar
+                </p>
+                <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
+                  {fmtEur(summary.total_pendiente)}
+                </p>
+                <p className="text-xs text-amber-700 mt-1">base imponible</p>
+              </div>
+            </div>
+          )}
+
+          {/* Lista compacta de presupuestos recientes */}
+          {loadingBudgets ? (
+            <p className="text-sm text-slate-400 text-center py-4">Cargando presupuestos...</p>
+          ) : presupuestos.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-4" data-testid="no-presupuestos">
+              Este cliente aun no tiene presupuestos vinculados
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-100 border-t border-slate-100">
+              {presupuestos.slice(0, 5).map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => navigate(`/budgets/${b.id}`)}
+                  className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
+                  data-testid={`presupuesto-row-${b.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-medium text-indigo-600 text-sm">
+                        {b.budget_number}
+                      </span>
+                      <span className="text-xs text-slate-400">{b.budget_date}</span>
+                      {b.facturado && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                          Facturado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-700 truncate mt-0.5">
+                      {b.titulo || b.servicios_descripcion || "Sin titulo"}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-mono font-medium text-slate-900 text-sm">
+                      {fmtEur(b.total_base)}
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              ))}
+              {presupuestos.length > 5 && (
+                <p className="text-xs text-slate-400 text-center pt-3">
+                  Mostrando 5 de {presupuestos.length}. Pulsa "Ver todos" para el listado completo.
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Grid con las 6 secciones restantes (todas siguen en modo Proximamente) */}
       <motion.div
         variants={container}
         initial="hidden"
