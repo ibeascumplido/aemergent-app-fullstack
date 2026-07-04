@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -15,18 +15,9 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import axios from "axios";
 
-// TEMP: espejo de la lista hardcodeada de ClientsPage.
-// Se sustituirá por fetch al backend cuando exista el modelo Client (Entrega 2).
-const CLIENTES_INICIALES = [
-  { id: "sanitas", nombre: "SANITAS" },
-  { id: "leroy-merlin", nombre: "LEROY MERLIN" },
-  { id: "ikea", nombre: "IKEA" },
-  { id: "iberdrola", nombre: "IBERDROLA" },
-  { id: "style-outlet", nombre: "STYLE OUTLET" },
-  { id: "clarins", nombre: "CLARINS" },
-  { id: "galp", nombre: "GALP" },
-];
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Mismo esquema de color estable por nombre que en ClientsPage.
 const COLORES = ["#0ea5e9", "#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -108,12 +99,50 @@ const container = {
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
 const ClientDetailPage = () => {
-  const { id } = useParams();
+  // El parámetro de ruta es el slug del cliente (URL-friendly, estable).
+  const { id: slug } = useParams();
   const navigate = useNavigate();
-  const cliente = CLIENTES_INICIALES.find((c) => c.id === id);
+  const [cliente, setCliente] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [logoOk, setLogoOk] = useState(true);
 
-  // Fallback si alguien entra a una url de cliente inexistente.
-  if (!cliente) {
+  useEffect(() => {
+    let cancelado = false;
+    setLoading(true);
+    setNotFound(false);
+    setLogoOk(true);
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/clients/${slug}`);
+        if (!cancelado) setCliente(res.data);
+      } catch (err) {
+        if (!cancelado) {
+          if (err?.response?.status === 404) {
+            setNotFound(true);
+          } else {
+            console.error("Error cargando cliente:", err);
+            toast.error("Error al cargar el cliente");
+          }
+        }
+      } finally {
+        if (!cancelado) setLoading(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [slug]);
+
+  // Estado de carga inicial.
+  if (loading) {
+    return (
+      <div data-testid="client-detail-loading" className="p-8 text-center text-slate-400">
+        Cargando cliente...
+      </div>
+    );
+  }
+
+  // Cliente inexistente en la base de datos.
+  if (notFound || !cliente) {
     return (
       <div data-testid="client-not-found">
         <Button
@@ -126,17 +155,16 @@ const ClientDetailPage = () => {
         </Button>
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-500">
-            No se encontró el cliente <span className="font-mono">{id}</span>.
+            No se encontró el cliente <span className="font-mono">{slug}</span>.
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  // Logo: intenta cargar /logos/<id>.png y si falla muestra el icono Building2 con color.
-  // Los logos los subirá el usuario después a frontend/public/logos/.
-  const [logoOk, setLogoOk] = useState(true);
-  const logoUrl = `/logos/${cliente.id}.png`;
+  // Logo real del cliente: viene del backend en cliente.logo_url (data-URI base64 o URL).
+  // Si no hay o falla la carga, mostramos el icono Building2 con color de marca.
+  const logoUrl = cliente.logo_url || null;
 
   const abrirSeccion = (seccion) => {
     // Entregas siguientes engancharán rutas reales por sección.
@@ -161,9 +189,9 @@ const ClientDetailPage = () => {
         <div className="flex items-center gap-5">
           <div
             className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 shadow-sm"
-            style={{ backgroundColor: logoOk ? "#fff" : colorDe(cliente.nombre) }}
+            style={{ backgroundColor: logoUrl && logoOk ? "#fff" : colorDe(cliente.nombre) }}
           >
-            {logoOk ? (
+            {logoUrl && logoOk ? (
               <img
                 src={logoUrl}
                 alt={cliente.nombre}

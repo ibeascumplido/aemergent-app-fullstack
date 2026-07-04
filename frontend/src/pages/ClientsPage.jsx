@@ -1,20 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Building2, Search, ChevronRight, Image, FileText, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import axios from "axios";
 
-// Clientes iniciales (más adelante pasarán a base de datos con su ficha completa)
-const CLIENTES_INICIALES = [
-  { id: "sanitas", nombre: "SANITAS" },
-  { id: "leroy-merlin", nombre: "LEROY MERLIN" },
-  { id: "ikea", nombre: "IKEA" },
-  { id: "iberdrola", nombre: "IBERDROLA" },
-  { id: "style-outlet", nombre: "STYLE OUTLET" },
-  { id: "clarins", nombre: "CLARINS" },
-  { id: "galp", nombre: "GALP" },
-];
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Color de avatar derivado del nombre (estable por cliente)
 const COLORES = ["#0ea5e9", "#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -26,14 +18,32 @@ const colorDe = (nombre) => {
 
 const ClientsPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
+  const [clientes, setClientes] = useState([]);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  const filtrados = CLIENTES_INICIALES.filter((c) =>
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/clients`);
+        if (!cancelado) setClientes(res.data);
+      } catch (err) {
+        console.error("Error cargando clientes:", err);
+      } finally {
+        if (!cancelado) setLoading(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, []);
+
+  const filtrados = clientes.filter((c) =>
     c.nombre.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const abrirFicha = (cliente) => {
-    navigate(`/clients/${cliente.id}`);
+    // Navegamos por slug (id URL-friendly, estable, coincide con el modelo de backend).
+    navigate(`/clients/${cliente.slug}`);
   };
 
   const container = {
@@ -64,9 +74,15 @@ const ClientsPage = () => {
         />
       </div>
 
-      {filtrados.length === 0 ? (
+      {loading ? (
+        <div className="p-8 text-center text-slate-400" data-testid="loading-clients">
+          Cargando clientes...
+        </div>
+      ) : filtrados.length === 0 ? (
         <div className="p-8 text-center text-slate-400" data-testid="no-clients">
-          No hay clientes que coincidan con la búsqueda
+          {clientes.length === 0
+            ? "No hay clientes disponibles"
+            : "No hay clientes que coincidan con la búsqueda"}
         </div>
       ) : (
         <motion.div
@@ -76,19 +92,23 @@ const ClientsPage = () => {
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
         >
           {filtrados.map((c) => (
-            <motion.div key={c.id} variants={item}>
+            <motion.div key={c.slug} variants={item}>
               <Card
                 className="border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group"
                 onClick={() => abrirFicha(c)}
-                data-testid={`client-card-${c.id}`}
+                data-testid={`client-card-${c.slug}`}
               >
                 <CardContent className="p-5">
                   <div className="flex items-center gap-4">
                     <div
-                      className="w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0"
-                      style={{ backgroundColor: colorDe(c.nombre) }}
+                      className="w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0 overflow-hidden"
+                      style={{ backgroundColor: c.logo_url ? "#fff" : colorDe(c.nombre) }}
                     >
-                      <Building2 className="w-6 h-6" />
+                      {c.logo_url ? (
+                        <img src={c.logo_url} alt={c.nombre} className="w-full h-full object-contain" />
+                      ) : (
+                        <Building2 className="w-6 h-6" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900 truncate">{c.nombre}</p>
