@@ -1761,6 +1761,178 @@ async def client_budgets_summary(slug: str, _: dict = Depends(require_approved))
     }
 
 
+# =====================================================================
+# CATALOGO DE TAREAS DE TRABAJO (Fase 5A.1)
+# ---------------------------------------------------------------------
+# Modelo WorkTask + endpoints.
+# Las 10 tareas tipicas de jardineria se autosiembran al arrancar
+# si la coleccion esta vacia (ver seed_work_tasks_if_empty).
+#
+# El campo `en_top10` marca las tareas que aparecen como checkbox
+# rapido en el formulario de sesion. El resto quedan disponibles
+# en un buscador/desplegable. La propiedad es editable por admin
+# y facturacion desde la pagina /admin/work-tasks.
+#
+# Cualquier usuario aprobado puede crear tareas al vuelo desde el
+# formulario del parte. Solo admin+facturacion pueden editar o
+# borrar tareas existentes (para no ensuciar el catalogo).
+# =====================================================================
+
+
+class WorkTaskBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=80)
+    en_top10: bool = False
+    orden: int = 100
+
+
+class WorkTaskCreate(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=80)
+    # en_top10 y orden solo pueden asignarse en creacion por admin/facturacion.
+    # Un usuario normal creando al vuelo solo indica el nombre.
+    en_top10: Optional[bool] = False
+    orden: Optional[int] = 100
+
+
+class WorkTaskUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=80)
+    en_top10: Optional[bool] = None
+    orden: Optional[int] = None
+    activo: Optional[bool] = None
+
+
+class WorkTask(WorkTaskBase):
+    id: str
+    activo: bool = True
+    uso_count: int = 0
+    creado_en: datetime
+
+
+# Tareas iniciales tipicas de jardineria. Las 10 estan marcadas como top10.
+_SEED_WORK_TASKS = [
+    {"nombre": "Poda", "orden": 10, "en_top10": True},
+    {"nombre": "Siega", "orden": 20, "en_top10": True},
+    {"nombre": "Desbroce", "orden": 30, "en_top10": True},
+    {"nombre": "Riego", "orden": 40, "en_top10": True},
+    {"nombre": "Abonado", "orden": 50, "en_top10": True},
+    {"nombre": "Tratamiento fitosanitario", "orden": 60, "en_top10": True},
+    {"nombre": "Limpieza", "orden": 70, "en_top10": True},
+    {"nombre": "Recogida de restos", "orden": 80, "en_top10": True},
+    {"nombre": "Plantacion", "orden": 90, "en_top10": True},
+    {"nombre": "Trasplante", "orden": 100, "en_top10": True},
+]
+
+
+async def seed_work_tasks_if_empty() -> None:
+    """Inserta las 10 tareas iniciales si la coleccion esta vacia. Idempotente."""
+    count = await db.work_tasks.count_documents({})
+    if count > 0:
+        return
+    now = datetime.now(timezone.utc)
+    docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "nombre": t["nombre"],
+            "orden": t["orden"],
+            "en_top10": t["en_top10"],
+            "activo": True,
+            "uso_count": 0,
+            "creado_en": now,
+        }
+        for t in _SEED_WORK_TASKS
+    ]
+    await db.work_tasks.insert_many(docs)
+
+
+@api_router.get("/work-tasks", response_model=List[WorkTask])
+async def list_work_tasks(_: dict = Depends(require_approved)):
+    """Catalogo de tareas activas, orden ascendente por 'orden' y luego nombre."""
+    cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    return [WorkTask(**doc) async for doc in cursor]
+
+
+@api_router.post("/work-tasks", response_model=WorkTask)
+async def create_work_task(
+    payload: WorkTaskCreate, current_user: dict = Depends(require_approved)
+):
+    """Crea una tarea nueva. Cualquier usuario aprobado puede crearla al vuelo.
+
+    Si el usuario NO es admin/facturacion, se ignora `en_top10` y `orden`
+    para evitar que un operario ensucie el catalogo desde el formulario.
+    """
+    nombre = payload.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Nombre obligatorio")
+    # Comprobar duplicado case-insensitive
+    existing = await db.work_tasks.find_one(
+        {"nombre": {"$regex": f"^{re.escape(nombre)}$", "$options": "i"}}
+    )
+    if existing:
+        # Devolvemos la existente (idempotente): si la reactivamos si estaba inactiva
+        if not existing.get("activo", True):
+            await db.work_tasks.update_one(
+                {"id": existing["id"]}, {"$set": {"activo": True}}
+            )
+            existing = await db.work_tasks.find_one({"id": existing["id"]})
+        return WorkTask(**existing)
+
+    is_admin_like = current_user.get("role") in ("admin", "facturacion")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": nombre,
+        "orden": (payload.orden if is_admin_like and payload.orden is not None else 100),
+        "en_top10": (bool(payload.en_top10) if is_admin_like else False),
+        "activo": True,
+        "uso_count": 0,
+        "creado_en": now,
+    }
+    await db.work_tasks.insert_one(doc)
+    return WorkTask(**doc)
+
+
+@api_router.patch("/work-tasks/{task_id}", response_model=WorkTask)
+async def update_work_task(
+    task_id: str, payload: WorkTaskUpdate, _: dict = Depends(require_admin)
+):
+    """Editar tarea o mover en/fuera del top10 (solo admin).
+
+    Nota: la restriccion admin+facturacion se aplicara desde el frontend
+    si en el futuro se decide relajar. De momento solo admin para evitar
+    conflictos con el catalogo.
+    """
+    doc = await db.work_tasks.find_one({"id": task_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkTask(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+        if not updates["nombre"]:
+            raise HTTPException(status_code=400, detail="Nombre no puede estar vacio")
+        # Duplicado con otra tarea distinta
+        dup = await db.work_tasks.find_one(
+            {
+                "nombre": {"$regex": f"^{re.escape(updates['nombre'])}$", "$options": "i"},
+                "id": {"$ne": task_id},
+            }
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail="Ya existe una tarea con ese nombre")
+    await db.work_tasks.update_one({"id": task_id}, {"$set": updates})
+    doc = await db.work_tasks.find_one({"id": task_id})
+    return WorkTask(**doc)
+
+
+@api_router.delete("/work-tasks/{task_id}")
+async def delete_work_task(task_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False. Los partes que la usaron conservan la referencia."""
+    doc = await db.work_tasks.find_one({"id": task_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.work_tasks.update_one({"id": task_id}, {"$set": {"activo": False}})
+    return {"ok": True}
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -1783,6 +1955,7 @@ logger = logging.getLogger(__name__)
 async def on_startup():
     # Auto-siembra de datos base al arrancar (idempotente).
     await seed_clients_if_empty()
+    await seed_work_tasks_if_empty()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
