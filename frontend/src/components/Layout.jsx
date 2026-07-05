@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2 } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, ClipboardList } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ const Layout = () => {
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets },
+    { to: "/admin/work-tasks", icon: ClipboardList, label: "Cat. Tareas", show: canBudgets },
     { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin },
   ].filter(item => item.show);
