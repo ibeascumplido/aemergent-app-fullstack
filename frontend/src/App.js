@@ -10,6 +10,7 @@ import AdminCalendarPage from "@/pages/AdminCalendarPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import ClientsPage from "@/pages/ClientsPage";
+import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
 import LoginPage from "@/components/auth/LoginPage";
 import AuthCallback from "@/components/auth/AuthCallback";
@@ -68,6 +69,11 @@ function App() {
               <Route path="clients" element={
                 <ProtectedRoute requireBudgets>
                   <ClientsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/work-tasks" element={
+                <ProtectedRoute requireBudgets>
+                  <WorkTasksAdminPage />
                 </ProtectedRoute>
               } />
             </Route>
