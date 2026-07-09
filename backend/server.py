@@ -1933,6 +1933,386 @@ async def delete_work_task(task_id: str, _: dict = Depends(require_admin)):
     await db.work_tasks.update_one({"id": task_id}, {"$set": {"activo": False}})
     return {"ok": True}
 
+# =====================================================================
+# PARTES DE TRABAJO (Fase 5A.2 parte 1)
+# ---------------------------------------------------------------------
+# Modelos WorkOrder + WorkSession con endpoints REST completos.
+#
+# Un WorkOrder es la cabecera del parte asociado a un cliente y
+# opcionalmente a un presupuesto. Puede tener multiples sesiones
+# diarias (WorkSession). Las firmas se anadiran en Fase 5A.3.
+#
+# Denormalizacion consciente:
+# - En work_orders guardamos client_slug y budget_number para no
+#   tener que hacer joins costosos en cada listado. Si el cliente
+#   se renombra, ejecutar un script de recalculo (Fase futura).
+# - Las sesiones NO estan embebidas en el work_order: coleccion
+#   separada work_sessions con work_order_id como referencia. Esto
+#   permite que un parte con muchos dias no crezca sin limite en
+#   un solo documento (limite Mongo: 16MB por documento).
+#
+# Permisos:
+# - Lectura y creacion de partes/sesiones: cualquier usuario aprobado
+#   (los operarios registran su trabajo).
+# - Modificar/borrar parte cerrado: solo admin (via reopen en 5A.3).
+# - Modificar parte propio abierto: cualquier aprobado.
+# =====================================================================
+
+
+ESTADOS_WORK_ORDER = ("abierto", "cerrado", "archivado")
+
+
+class WorkOrderBase(BaseModel):
+    client_id: str = Field(..., description="ID del cliente al que pertenece el parte")
+    budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
+    titulo: str = Field(..., min_length=1, max_length=200)
+    notas: Optional[str] = Field("", max_length=4000)
+
+
+class WorkOrderCreate(WorkOrderBase):
+    pass
+
+
+class WorkOrderUpdate(BaseModel):
+    titulo: Optional[str] = Field(None, min_length=1, max_length=200)
+    notas: Optional[str] = Field(None, max_length=4000)
+    budget_template_id: Optional[str] = None
+    estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
+
+
+class WorkOrder(WorkOrderBase):
+    id: str
+    client_slug: str
+    budget_number: Optional[str] = None
+    estado: str = "abierto"
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+    cerrado_en: Optional[datetime] = None
+
+
+class WorkSessionBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    hora_inicio: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    hora_fin: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    operarios_ids: List[str] = Field(default_factory=list)
+    operarios_texto_libre: Optional[str] = Field("", max_length=500)
+    firmante_responsable_id: Optional[str] = None
+    firmante_responsable_texto: Optional[str] = Field("", max_length=200)
+    tareas_ids: List[str] = Field(default_factory=list)
+    tareas_libres: List[str] = Field(default_factory=list)
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class WorkSessionCreate(WorkSessionBase):
+    pass
+
+
+class WorkSessionUpdate(BaseModel):
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    hora_inicio: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    hora_fin: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    operarios_ids: Optional[List[str]] = None
+    operarios_texto_libre: Optional[str] = None
+    firmante_responsable_id: Optional[str] = None
+    firmante_responsable_texto: Optional[str] = None
+    tareas_ids: Optional[List[str]] = None
+    tareas_libres: Optional[List[str]] = None
+    notas: Optional[str] = None
+
+
+class WorkSession(WorkSessionBase):
+    id: str
+    work_order_id: str
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class WorkOrderWithSessions(WorkOrder):
+    sessions: List[WorkSession] = Field(default_factory=list)
+
+
+def _horas_de_sesion(hora_inicio: str, hora_fin: str) -> float:
+    """Duracion en horas de una sesion. Devuelve 0 si algo raro."""
+    try:
+        h1, m1 = map(int, hora_inicio.split(":"))
+        h2, m2 = map(int, hora_fin.split(":"))
+        minutos = (h2 * 60 + m2) - (h1 * 60 + m1)
+        if minutos <= 0:
+            return 0.0
+        return round(minutos / 60.0, 2)
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+async def _cargar_cliente_por_id(client_id: str) -> dict:
+    doc = await db.clients.find_one({"id": client_id, "activo": True})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return doc
+
+
+async def _cargar_parte(work_order_id: str) -> dict:
+    doc = await db.work_orders.find_one({"id": work_order_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Parte no encontrado")
+    return doc
+
+
+@api_router.get("/work-orders", response_model=List[WorkOrder])
+async def list_work_orders(
+    client_id: Optional[str] = None,
+    estado: Optional[str] = None,
+    _: dict = Depends(require_approved),
+):
+    """Lista de partes con filtros opcionales."""
+    query = {}
+    if client_id:
+        query["client_id"] = client_id
+    if estado:
+        if estado not in ESTADOS_WORK_ORDER:
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.work_orders.find(query).sort("creado_en", -1)
+    return [WorkOrder(**doc) async for doc in cursor]
+
+
+@api_router.get("/work-orders/{work_order_id}", response_model=WorkOrderWithSessions)
+async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)):
+    """Detalle del parte incluyendo todas sus sesiones ordenadas por fecha."""
+    doc = await _cargar_parte(work_order_id)
+    sessions_cursor = db.work_sessions.find({"work_order_id": work_order_id}).sort(
+        [("fecha", 1), ("hora_inicio", 1)]
+    )
+    sessions = [WorkSession(**s) async for s in sessions_cursor]
+    return WorkOrderWithSessions(**doc, sessions=sessions)
+
+
+@api_router.post("/work-orders", response_model=WorkOrder)
+async def create_work_order(
+    payload: WorkOrderCreate, current_user: dict = Depends(require_approved)
+):
+    """Crea la cabecera de un parte. Valida cliente (obligatorio) y presupuesto (opcional)."""
+    cliente = await _cargar_cliente_por_id(payload.client_id)
+
+    budget_number = None
+    if payload.budget_template_id:
+        bud = await db.budget_templates.find_one({"id": payload.budget_template_id})
+        if not bud:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+        budget_number = bud.get("budget_number")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cliente["id"],
+        "client_slug": cliente["slug"],
+        "budget_template_id": payload.budget_template_id,
+        "budget_number": budget_number,
+        "titulo": payload.titulo.strip(),
+        "notas": (payload.notas or "").strip(),
+        "estado": "abierto",
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+        "cerrado_en": None,
+    }
+    await db.work_orders.insert_one(doc)
+    return WorkOrder(**doc)
+
+
+@api_router.patch("/work-orders/{work_order_id}", response_model=WorkOrder)
+async def update_work_order(
+    work_order_id: str,
+    payload: WorkOrderUpdate,
+    current_user: dict = Depends(require_approved),
+):
+    """Editar cabecera. Si esta cerrado solo admin puede tocar."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] == "cerrado" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte esta cerrado")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkOrder(**doc)
+
+    if "titulo" in updates and updates["titulo"] is not None:
+        updates["titulo"] = updates["titulo"].strip()
+    if "notas" in updates and updates["notas"] is not None:
+        updates["notas"] = updates["notas"].strip()
+
+    if "budget_template_id" in updates:
+        if updates["budget_template_id"]:
+            bud = await db.budget_templates.find_one({"id": updates["budget_template_id"]})
+            if not bud:
+                raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+            updates["budget_number"] = bud.get("budget_number")
+        else:
+            updates["budget_number"] = None
+
+    if "estado" in updates:
+        if updates["estado"] not in ESTADOS_WORK_ORDER:
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        # Solo admin puede archivar; cerrar sera via /close en 5A.3
+        if updates["estado"] == "archivado" and current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede archivar")
+
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": updates})
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
+@api_router.delete("/work-orders/{work_order_id}")
+async def delete_work_order(
+    work_order_id: str, current_user: dict = Depends(require_approved)
+):
+    """Borrar solo si abierto y sin sesiones. Es hard delete: un parte
+    sin datos no aporta nada. Los partes cerrados nunca se borran."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="Solo se pueden borrar partes abiertos")
+    count = await db.work_sessions.count_documents({"work_order_id": work_order_id})
+    if count > 0:
+        raise HTTPException(status_code=400, detail="El parte tiene sesiones registradas")
+    await db.work_orders.delete_one({"id": work_order_id})
+    return {"ok": True}
+
+
+# --- Sesiones -------------------------------------------------------------
+
+
+@api_router.post("/work-orders/{work_order_id}/sessions", response_model=WorkSession)
+async def create_session(
+    work_order_id: str,
+    payload: WorkSessionCreate,
+    current_user: dict = Depends(require_approved),
+):
+    """Anadir una sesion diaria al parte. Solo si el parte esta abierto."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+
+    now = datetime.now(timezone.utc)
+    session_doc = {
+        "id": str(uuid.uuid4()),
+        "work_order_id": work_order_id,
+        **payload.model_dump(),
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.work_sessions.insert_one(session_doc)
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": now}}
+    )
+    return WorkSession(**session_doc)
+
+
+@api_router.patch(
+    "/work-orders/{work_order_id}/sessions/{session_id}", response_model=WorkSession
+)
+async def update_session(
+    work_order_id: str,
+    session_id: str,
+    payload: WorkSessionUpdate,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    session_doc = await db.work_sessions.find_one(
+        {"id": session_id, "work_order_id": work_order_id}
+    )
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Sesion no encontrada")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkSession(**session_doc)
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.work_sessions.update_one({"id": session_id}, {"$set": updates})
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": updates["actualizado_en"]}}
+    )
+    session_doc = await db.work_sessions.find_one({"id": session_id})
+    return WorkSession(**session_doc)
+
+
+@api_router.delete("/work-orders/{work_order_id}/sessions/{session_id}")
+async def delete_session(
+    work_order_id: str,
+    session_id: str,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    result = await db.work_sessions.delete_one(
+        {"id": session_id, "work_order_id": work_order_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Sesion no encontrada")
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": datetime.now(timezone.utc)}}
+    )
+    return {"ok": True}
+
+
+# --- Endpoints ficha del cliente ------------------------------------------
+
+
+@api_router.get(
+    "/clients/{slug}/work-orders", response_model=List[WorkOrder]
+)
+async def list_client_work_orders(slug: str, _: dict = Depends(require_approved)):
+    """Lista de partes del cliente, mas recientes primero."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cursor = db.work_orders.find({"client_id": cliente["id"]}).sort("creado_en", -1)
+    return [WorkOrder(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}/work-orders/summary")
+async def client_work_orders_summary(slug: str, _: dict = Depends(require_approved)):
+    """Totales del cliente: contador por estado + horas acumuladas."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    counters = {"abierto": 0, "cerrado": 0, "archivado": 0}
+    ids_por_estado: dict = {"abierto": [], "cerrado": [], "archivado": []}
+    async for doc in db.work_orders.find(
+        {"client_id": cliente["id"]}, {"id": 1, "estado": 1}
+    ):
+        estado = doc.get("estado", "abierto")
+        if estado in counters:
+            counters[estado] += 1
+            ids_por_estado[estado].append(doc["id"])
+
+    todos_ids = ids_por_estado["abierto"] + ids_por_estado["cerrado"] + ids_por_estado["archivado"]
+    total_horas = 0.0
+    if todos_ids:
+        async for s in db.work_sessions.find(
+            {"work_order_id": {"$in": todos_ids}},
+            {"hora_inicio": 1, "hora_fin": 1},
+        ):
+            total_horas += _horas_de_sesion(
+                s.get("hora_inicio", ""), s.get("hora_fin", "")
+            )
+
+    return {
+        "total": sum(counters.values()),
+        "abiertos": counters["abierto"],
+        "cerrados": counters["cerrado"],
+        "archivados": counters["archivado"],
+        "total_horas": round(total_horas, 2),
+    }
+
 # Include the router in the main app
 app.include_router(api_router)
 
