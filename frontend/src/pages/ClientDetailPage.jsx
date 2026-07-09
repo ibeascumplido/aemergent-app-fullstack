@@ -12,9 +12,27 @@ import {
   ListTodo,
   MessageSquare,
   ChevronRight,
+  Plus,
+  Clock,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -44,13 +62,6 @@ const SECCIONES = [
     descripcion: "Problemas y avisos abiertos",
     icon: AlertTriangle,
     color: "orange",
-  },
-  {
-    key: "partes",
-    titulo: "Partes de trabajo",
-    descripcion: "Registros de intervenciones",
-    icon: ClipboardList,
-    color: "indigo",
   },
   {
     key: "contactos",
@@ -163,6 +174,96 @@ const ClientDetailPage = () => {
       style: "currency",
       currency: "EUR",
     }).format(Number(n) || 0);
+
+  // ==============================
+  // Partes de trabajo (Fase 5A.2 parte 1)
+  // ==============================
+  const [partes, setPartes] = useState([]);
+  const [partesSummary, setPartesSummary] = useState({
+    total: 0,
+    abiertos: 0,
+    cerrados: 0,
+    archivados: 0,
+    total_horas: 0,
+  });
+  const [loadingPartes, setLoadingPartes] = useState(true);
+
+  const [dialogNuevoParte, setDialogNuevoParte] = useState(false);
+  const [nuevoParteForm, setNuevoParteForm] = useState({
+    titulo: "",
+    budget_template_id: "",
+  });
+  const [creandoParte, setCreandoParte] = useState(false);
+
+  const fetchPartes = async () => {
+    try {
+      setLoadingPartes(true);
+      const [resList, resSummary] = await Promise.all([
+        axios.get(`${API}/clients/${slug}/work-orders`),
+        axios.get(`${API}/clients/${slug}/work-orders/summary`),
+      ]);
+      setPartes(resList.data);
+      setPartesSummary(resSummary.data);
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        console.error("Error cargando partes:", err);
+      }
+    } finally {
+      setLoadingPartes(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPartes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  const abrirNuevoParte = () => {
+    setNuevoParteForm({ titulo: "", budget_template_id: "" });
+    setDialogNuevoParte(true);
+  };
+
+  const guardarNuevoParte = async () => {
+    const titulo = nuevoParteForm.titulo.trim();
+    if (!titulo) {
+      toast.error("El titulo es obligatorio");
+      return;
+    }
+    if (!cliente?.id) {
+      toast.error("Cliente no cargado");
+      return;
+    }
+    setCreandoParte(true);
+    try {
+      const payload = { client_id: cliente.id, titulo };
+      if (nuevoParteForm.budget_template_id) {
+        payload.budget_template_id = nuevoParteForm.budget_template_id;
+      }
+      const res = await axios.post(`${API}/work-orders`, payload);
+      toast.success("Parte creado");
+      setDialogNuevoParte(false);
+      navigate(`/work-orders/${res.data.id}`);
+    } catch (err) {
+      console.error("Error creando parte:", err);
+      const status = err?.response?.status;
+      if (status === 404) toast.error("Cliente o presupuesto no encontrado");
+      else toast.error("Error al crear el parte");
+    } finally {
+      setCreandoParte(false);
+    }
+  };
+
+  const estadoBadge = (estado) => {
+    const map = {
+      abierto: { txt: "Abierto", cls: "bg-emerald-100 text-emerald-700" },
+      cerrado: { txt: "Cerrado", cls: "bg-slate-200 text-slate-700" },
+      archivado: { txt: "Archivado", cls: "bg-amber-100 text-amber-700" },
+    };
+    const b = map[estado] || map.abierto;
+    return (
+      <span className={`text-xs px-1.5 py-0.5 rounded ${b.cls}`}>{b.txt}</span>
+    );
+  };
 
   // Estado de carga inicial.
   if (loading) {
@@ -348,7 +449,176 @@ const ClientDetailPage = () => {
         </CardContent>
       </Card>
 
-      {/* Grid con las 6 secciones restantes (todas siguen en modo Proximamente) */}
+      {/* Tarjeta especial: Partes de trabajo (Fase 5A.2 parte 1) */}
+      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-partes">
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
+                <ClipboardList className="w-6 h-6 text-indigo-500" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Partes de trabajo</p>
+                <p className="text-sm text-slate-500">
+                  {loadingPartes
+                    ? "Cargando..."
+                    : `${partesSummary.total} ${partesSummary.total === 1 ? "parte" : "partes"} · ${partesSummary.total_horas} h totales`}
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={abrirNuevoParte}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+              size="sm"
+              data-testid="btn-nuevo-parte"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Nuevo parte
+            </Button>
+          </div>
+
+          {!loadingPartes && partesSummary.total > 0 && (
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
+                <p className="text-xs uppercase tracking-wider text-emerald-700 font-medium">
+                  Abiertos
+                </p>
+                <p className="text-2xl font-bold text-emerald-900 font-['JetBrains_Mono'] mt-1">
+                  {partesSummary.abiertos}
+                </p>
+              </div>
+              <div className="rounded-lg bg-slate-100 border border-slate-200 p-3 text-center">
+                <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">
+                  Cerrados
+                </p>
+                <p className="text-2xl font-bold text-slate-800 font-['JetBrains_Mono'] mt-1">
+                  {partesSummary.cerrados}
+                </p>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-center">
+                <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">
+                  Archivados
+                </p>
+                <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
+                  {partesSummary.archivados}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {loadingPartes ? (
+            <p className="text-sm text-slate-400 text-center py-4">Cargando partes...</p>
+          ) : partes.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-4" data-testid="no-partes">
+              Este cliente aun no tiene partes de trabajo
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-100 border-t border-slate-100">
+              {partes.slice(0, 5).map((wo) => (
+                <button
+                  key={wo.id}
+                  type="button"
+                  onClick={() => navigate(`/work-orders/${wo.id}`)}
+                  className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
+                  data-testid={`parte-row-${wo.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-slate-900 text-sm truncate max-w-xs">
+                        {wo.titulo}
+                      </span>
+                      {estadoBadge(wo.estado)}
+                      {wo.budget_number && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-mono">
+                          {wo.budget_number}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Creado {new Date(wo.creado_en).toLocaleDateString("es-ES")}
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                </button>
+              ))}
+              {partes.length > 5 && (
+                <p className="text-xs text-slate-400 text-center pt-3">
+                  Mostrando 5 de {partes.length}
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Modal: Nuevo parte de trabajo */}
+      <Dialog open={dialogNuevoParte} onOpenChange={setDialogNuevoParte}>
+        <DialogContent data-testid="dialog-nuevo-parte">
+          <DialogHeader>
+            <DialogTitle>Nuevo parte de trabajo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="parte-titulo">Titulo</Label>
+              <Input
+                id="parte-titulo"
+                value={nuevoParteForm.titulo}
+                onChange={(e) =>
+                  setNuevoParteForm((f) => ({ ...f, titulo: e.target.value }))
+                }
+                placeholder="Ej. Mantenimiento marzo 2026"
+                data-testid="parte-titulo-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Presupuesto asociado (opcional)</Label>
+              <Select
+                value={nuevoParteForm.budget_template_id || "none"}
+                onValueChange={(v) =>
+                  setNuevoParteForm((f) => ({
+                    ...f,
+                    budget_template_id: v === "none" ? "" : v,
+                  }))
+                }
+              >
+                <SelectTrigger data-testid="parte-budget-select">
+                  <SelectValue placeholder="Sin presupuesto" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin presupuesto (trabajo puntual)</SelectItem>
+                  {presupuestos.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.budget_number} · {p.titulo || p.servicios_descripcion || "Sin titulo"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-400">
+                Vinculalo a un presupuesto para trazabilidad, o dejalo suelto si es un trabajo puntual.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setDialogNuevoParte(false)}
+              disabled={creandoParte}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={guardarNuevoParte}
+              disabled={creandoParte}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="parte-save-btn"
+            >
+              {creandoParte ? "Creando..." : "Crear y abrir"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Grid con las 5 secciones restantes (todas siguen en modo Proximamente) */}
       <motion.div
         variants={container}
         initial="hidden"
