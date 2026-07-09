@@ -12,6 +12,7 @@ import AdminUsersPage from "@/pages/AdminUsersPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
+import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
 import LoginPage from "@/components/auth/LoginPage";
 import AuthCallback from "@/components/auth/AuthCallback";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
@@ -74,6 +75,11 @@ function App() {
               <Route path="admin/work-tasks" element={
                 <ProtectedRoute requireBudgets>
                   <WorkTasksAdminPage />
+                </ProtectedRoute>
+              } />
+              <Route path="work-orders/:id" element={
+                <ProtectedRoute requireBudgets>
+                  <WorkOrderDetailPage />
                 </ProtectedRoute>
               } />
             </Route>
