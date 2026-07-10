@@ -4,8 +4,11 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import io
+import base64
 import logging
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict
 import uuid
@@ -16,6 +19,17 @@ import secrets
 import httpx
 import asyncio
 import resend
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Image as RLImage,
+    HRFlowable,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2376,6 +2390,151 @@ async def firmar_parte_publico(token: str, payload: FirmaClientePayload):
         },
     )
     return {"ok": True}
+
+
+# --- PDF del parte (Fase 5A.3 parte 2b) -------------------------------------
+# Reutiliza _construir_vista_publica: mismo contenido y misma logica de
+# visibilidad que ve el cliente en el enlace publico, asi que nunca pueden
+# desincronizarse. Todo texto dinamico pasa por _p() (escape XML) porque
+# reportlab interpreta Paragraph como markup; sin escapar, un nombre o nota
+# con "&", "<" o ">" rompe la generacion del PDF.
+
+_MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _p(texto: Optional[str]) -> str:
+    return xml_escape(texto or "")
+
+
+def _formatear_fecha_es(fecha_str: str) -> str:
+    try:
+        d = datetime.strptime(fecha_str, "%Y-%m-%d")
+        return f"{d.day} de {_MESES_ES[d.month - 1]} de {d.year}"
+    except (ValueError, TypeError):
+        return fecha_str
+
+
+def _decode_firma_pdf(data_url: Optional[str], max_width_cm: float = 6.0):
+    if not data_url:
+        return None
+    try:
+        b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+        raw = base64.b64decode(b64)
+        img = RLImage(io.BytesIO(raw))
+        max_w = max_width_cm * cm
+        if img.drawWidth > max_w:
+            ratio = max_w / img.drawWidth
+            img.drawWidth = max_w
+            img.drawHeight = img.drawHeight * ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo decodificar una firma para el PDF", exc_info=True)
+        return None
+
+
+def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+        leftMargin=2 * cm,
+        rightMargin=2 * cm,
+        title=vista.titulo,
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "TituloParte", parent=styles["Heading1"], fontSize=16, spaceAfter=4
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=12,
+    )
+    sesion_titulo_style = ParagraphStyle(
+        "SesionTitulo", parent=styles["Heading3"], fontSize=12,
+        spaceBefore=10, spaceAfter=4,
+    )
+    normal_style = ParagraphStyle(
+        "NormalP", parent=styles["Normal"], fontSize=9.5, leading=13
+    )
+    etiqueta_style = ParagraphStyle(
+        "Etiqueta", parent=styles["Normal"], fontSize=8,
+        textColor=colors.HexColor("#94a3b8"), spaceAfter=4,
+    )
+
+    story = [
+        Paragraph(_p(vista.titulo), titulo_style),
+        Paragraph(
+            f"{_p(vista.cliente_nombre)} &nbsp;&middot;&nbsp; Estado: {_p(vista.estado)}",
+            subtitulo_style,
+        ),
+        HRFlowable(width="100%", color=colors.HexColor("#e2e8f0"), thickness=1),
+        Spacer(1, 12),
+    ]
+
+    if not vista.sessions:
+        story.append(Paragraph("Todavia no hay sesiones registradas en este parte.", normal_style))
+
+    for s in vista.sessions:
+        titulo_sesion = _formatear_fecha_es(s.fecha)
+        if s.hora_inicio and s.hora_fin:
+            titulo_sesion += f"  &nbsp;&nbsp;  {s.hora_inicio} - {s.hora_fin}"
+        story.append(Paragraph(titulo_sesion, sesion_titulo_style))
+
+        if s.operarios:
+            story.append(Paragraph(f"<b>Operarios:</b> {_p(', '.join(s.operarios))}", normal_style))
+        if s.tareas:
+            story.append(Paragraph(f"<b>Tareas:</b> {_p(', '.join(s.tareas))}", normal_style))
+        if s.notas:
+            story.append(Paragraph(f"<b>Notas:</b> {_p(s.notas)}", normal_style))
+
+        if s.firmante:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(f"Responsable de la jornada: {_p(s.firmante)}", etiqueta_style))
+        firma_img = _decode_firma_pdf(s.firma_responsable, max_width_cm=4.5)
+        if firma_img:
+            story.append(firma_img)
+
+        story.append(Spacer(1, 8))
+        story.append(HRFlowable(width="100%", color=colors.HexColor("#f1f5f9"), thickness=0.5))
+        story.append(Spacer(1, 4))
+
+    story.append(Spacer(1, 16))
+    story.append(Paragraph("Firma del cliente", sesion_titulo_style))
+    if vista.firma_cliente:
+        fecha_txt = (
+            vista.firma_cliente_en.strftime("%d/%m/%Y %H:%M") if vista.firma_cliente_en else ""
+        )
+        story.append(
+            Paragraph(f"Firmado por {_p(vista.firma_cliente_nombre)} el {fecha_txt}", etiqueta_style)
+        )
+        firma_img = _decode_firma_pdf(vista.firma_cliente, max_width_cm=6.0)
+        if firma_img:
+            story.append(firma_img)
+    else:
+        story.append(Paragraph("Pendiente de firma.", normal_style))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+@api_router.get("/work-orders/{work_order_id}/pdf")
+async def descargar_pdf_parte(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    doc = await _cargar_parte(work_order_id)
+    vista = await _construir_vista_publica(doc)
+    pdf_bytes = _generar_pdf_parte(vista)
+    filename = f"parte-{doc['id'][:8]}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # --- Sesiones -------------------------------------------------------------
