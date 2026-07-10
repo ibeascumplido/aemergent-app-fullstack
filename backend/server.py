@@ -2026,7 +2026,12 @@ class WorkSessionBase(BaseModel):
     notas: Optional[str] = Field("", max_length=2000)
     visibilidad: Dict[str, bool] = Field(
         default_factory=dict,
-        description="Preparado para Fase 5A.3 (toggles de visibilidad al cliente). Sin UI todavia.",
+        description="Toggles de visibilidad al cliente por campo (Fase 5A.3). Claves: operarios, horas, tareas, notas. Si una clave no esta presente se considera visible.",
+    )
+    firma_responsable: Optional[str] = Field(
+        None,
+        max_length=270000,
+        description="PNG en base64 (data URL) de la firma del operario responsable, capturada en el propio parte.",
     )
 
 
@@ -2046,6 +2051,7 @@ class WorkSessionUpdate(BaseModel):
     tareas_libres: Optional[List[str]] = None
     notas: Optional[str] = None
     visibilidad: Optional[Dict[str, bool]] = None
+    firma_responsable: Optional[str] = Field(None, max_length=270000)
 
 
 class WorkSession(WorkSessionBase):
@@ -2054,6 +2060,7 @@ class WorkSession(WorkSessionBase):
     creado_por: str
     creado_en: datetime
     actualizado_en: datetime
+    firma_responsable_en: Optional[datetime] = None
 
 
 class WorkOrderWithSessions(WorkOrder):
@@ -2229,6 +2236,7 @@ async def create_session(
         "creado_por": current_user.get("id") or current_user.get("email") or "?",
         "creado_en": now,
         "actualizado_en": now,
+        "firma_responsable_en": now if payload.firma_responsable else None,
     }
     await db.work_sessions.insert_one(session_doc)
     await db.work_orders.update_one(
@@ -2258,6 +2266,10 @@ async def update_session(
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
     if not updates:
         return WorkSession(**session_doc)
+    if "firma_responsable" in updates:
+        updates["firma_responsable_en"] = (
+            datetime.now(timezone.utc) if updates["firma_responsable"] else None
+        )
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.work_sessions.update_one({"id": session_id}, {"$set": updates})
     await db.work_orders.update_one(
