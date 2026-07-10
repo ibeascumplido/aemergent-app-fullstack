@@ -40,6 +40,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
@@ -106,6 +113,8 @@ const WorkOrderDetailPage = () => {
 
   const [accionando, setAccionando] = useState(false);
   const [generandoEnlace, setGenerandoEnlace] = useState(false);
+  const [enlaceGenerado, setEnlaceGenerado] = useState(null);
+  const [dialogEnlaceOpen, setDialogEnlaceOpen] = useState(false);
 
   const fetchParte = async () => {
     try {
@@ -241,14 +250,35 @@ const WorkOrderDetailPage = () => {
     }
   };
 
+  const copiarAlPortapapeles = async (texto, avisarSiFalla) => {
+    if (!navigator.clipboard?.writeText) {
+      if (avisarSiFalla) {
+        toast.error("Tu navegador no permite copiar automaticamente. Selecciona el enlace y copialo.");
+      }
+      return;
+    }
+    try {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000));
+      await Promise.race([navigator.clipboard.writeText(texto), timeout]);
+      toast.success("Enlace copiado al portapapeles");
+    } catch {
+      if (avisarSiFalla) {
+        toast.error("No se pudo copiar. Selecciona el enlace y copialo manualmente.");
+      }
+    }
+  };
+
   const handleGenerarEnlace = async () => {
     setGenerandoEnlace(true);
     try {
       const res = await axios.post(`${API}/work-orders/${id}/generar-enlace-firma`);
       const url = `${window.location.origin}/firmar/${res.data.token}`;
-      await navigator.clipboard.writeText(url);
-      toast.success("Enlace copiado al portapapeles");
+      setEnlaceGenerado(url);
+      setDialogEnlaceOpen(true);
       if (!parte.firma_cliente_token) await fetchParte();
+      // Intento de copia en segundo plano, nunca bloquea el boton ni el flujo:
+      // el dialogo con el enlace visible es la red de seguridad real.
+      copiarAlPortapapeles(url, false);
     } catch (err) {
       console.error("Error generando enlace de firma:", err);
       toast.error("No se pudo generar el enlace");
@@ -494,7 +524,7 @@ const WorkOrderDetailPage = () => {
           data-testid="generar-enlace-firma-btn"
         >
           <Link2 className="w-4 h-4 mr-2" />
-          {generandoEnlace ? "Generando..." : "Copiar enlace de firma"}
+          {generandoEnlace ? "Generando..." : "Generar enlace de firma"}
         </Button>
         {parteAbierto && (
           <Button
@@ -779,6 +809,44 @@ const WorkOrderDetailPage = () => {
           })}
         </div>
       )}
+
+      {/* Dialogo: enlace de firma generado */}
+      <Dialog open={dialogEnlaceOpen} onOpenChange={setDialogEnlaceOpen}>
+        <DialogContent className="max-w-md" data-testid="enlace-firma-dialog">
+          <DialogHeader>
+            <DialogTitle>Enlace de firma</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">
+              Comparte este enlace con el cliente (WhatsApp, email...) para que revise el
+              parte y firme. No necesita crear cuenta ni iniciar sesion.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                readOnly
+                value={enlaceGenerado || ""}
+                onFocus={(e) => e.target.select()}
+                className="font-mono text-xs"
+                data-testid="enlace-firma-input"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => copiarAlPortapapeles(enlaceGenerado, true)}
+                className="border-slate-200 shrink-0"
+                data-testid="copiar-enlace-btn"
+              >
+                Copiar
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialogEnlaceOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialogo crear/editar sesion */}
       <SessionDialog
