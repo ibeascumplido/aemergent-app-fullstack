@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import SignaturePad from "@/components/SignaturePad";
 import {
   Popover,
   PopoverContent,
@@ -22,11 +24,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { X, Plus, Search, UserPlus, Users, Check } from "lucide-react";
+import { X, Plus, Search, UserPlus, Users, Check, Eye } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+// Campos que el cliente vera (o no) en el PDF/vista publica (Fase 5A.3).
+// Si una clave no esta presente en visibilidad, se considera visible.
+const CAMPOS_VISIBILIDAD = [
+  { key: "operarios", label: "Operarios" },
+  { key: "horas", label: "Horario" },
+  { key: "tareas", label: "Tareas realizadas" },
+  { key: "notas", label: "Notas" },
+];
 
 // Horas en pasos de 15 minutos: "00:00" .. "23:45"
 const HORAS_15MIN = Array.from({ length: 96 }, (_, i) => {
@@ -105,6 +116,10 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
   const [creandoTarea, setCreandoTarea] = useState(false);
 
   const [notas, setNotas] = useState("");
+  const [visibilidad, setVisibilidad] = useState(
+    Object.fromEntries(CAMPOS_VISIBILIDAD.map((c) => [c.key, true]))
+  );
+  const [firmaResponsable, setFirmaResponsable] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
   // Cargar catalogos (operarios + tareas) cada vez que se abre
@@ -158,6 +173,11 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
       }
       setTareasIds(session.tareas_ids || []);
       setNotas(session.notas || "");
+      setVisibilidad({
+        ...Object.fromEntries(CAMPOS_VISIBILIDAD.map((c) => [c.key, true])),
+        ...(session.visibilidad || {}),
+      });
+      setFirmaResponsable(session.firma_responsable || null);
     } else {
       const hi = horaRedondeadaAhora();
       setFecha(hoyISO());
@@ -168,6 +188,8 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
       setFirmanteTipo("none");
       setTareasIds([]);
       setNotas("");
+      setVisibilidad(Object.fromEntries(CAMPOS_VISIBILIDAD.map((c) => [c.key, true])));
+      setFirmaResponsable(null);
     }
     setMostrarInputLibre(false);
     setNombreLibre("");
@@ -202,6 +224,14 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opcionesFirmante]);
+
+  // Sin responsable seleccionado no tiene sentido conservar una firma
+  useEffect(() => {
+    if (firmanteTipo === "none" && firmaResponsable) {
+      setFirmaResponsable(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firmanteTipo]);
 
   const toggleOperario = (userId) => {
     setOperariosIds((prev) =>
@@ -303,6 +333,8 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
         tareas_ids: tareasIds,
         tareas_libres: [],
         notas: notas.trim(),
+        visibilidad,
+        firma_responsable: firmaResponsable,
       };
       if (editing) {
         await axios.patch(
@@ -548,9 +580,20 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-slate-400">
-              La firma digital llegara en la siguiente fase (5A.3)
-            </p>
+
+            {firmanteTipo === "none" ? (
+              <p className="text-xs text-slate-400">
+                Selecciona un responsable para poder firmar la sesion
+              </p>
+            ) : (
+              <div className="pt-1">
+                <SignaturePad
+                  value={firmaResponsable}
+                  onChange={setFirmaResponsable}
+                  disabled={guardando}
+                />
+              </div>
+            )}
           </div>
 
           {/* Tareas */}
@@ -658,6 +701,32 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
                 )}
               </>
             )}
+          </div>
+
+          {/* Visibilidad para el cliente */}
+          <div className="space-y-2">
+            <Label className="inline-flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 text-slate-400" />
+              Visibilidad para el cliente
+            </Label>
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+              {CAMPOS_VISIBILIDAD.map((c) => (
+                <div key={c.key} className="flex items-center justify-between px-3 py-2">
+                  <span className="text-sm text-slate-700">{c.label}</span>
+                  <Switch
+                    checked={visibilidad[c.key] !== false}
+                    onCheckedChange={(v) =>
+                      setVisibilidad((prev) => ({ ...prev, [c.key]: v }))
+                    }
+                    data-testid={`visibilidad-${c.key}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400">
+              Controla que vera el cliente en el PDF/enlace de firma (la fecha del parte
+              siempre es visible)
+            </p>
           </div>
 
           {/* Notas */}
