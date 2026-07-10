@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 import hashlib
+import secrets
 import httpx
 import asyncio
 import resend
@@ -2011,6 +2012,14 @@ class WorkOrder(WorkOrderBase):
     creado_en: datetime
     actualizado_en: datetime
     cerrado_en: Optional[datetime] = None
+    firma_cliente_token: Optional[str] = Field(
+        None, description="Token del enlace publico de firma (Fase 5A.3 parte 2)."
+    )
+    firma_cliente: Optional[str] = Field(
+        None, max_length=270000, description="PNG en base64 (data URL) de la firma del cliente."
+    )
+    firma_cliente_nombre: Optional[str] = None
+    firma_cliente_en: Optional[datetime] = None
 
 
 class WorkSessionBase(BaseModel):
@@ -2065,6 +2074,38 @@ class WorkSession(WorkSessionBase):
 
 class WorkOrderWithSessions(WorkOrder):
     sessions: List[WorkSession] = Field(default_factory=list)
+
+
+class SesionPublica(BaseModel):
+    """Vista de una sesion tal como la ve el cliente, ya filtrada por visibilidad."""
+
+    fecha: str
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    operarios: Optional[List[str]] = None
+    tareas: Optional[List[str]] = None
+    notas: Optional[str] = None
+    firmante: Optional[str] = None
+    firma_responsable: Optional[str] = None
+
+
+class WorkOrderPublicView(BaseModel):
+    """Lo minimo necesario para que el cliente revise y firme, sin exponer
+    IDs internos, datos de otros clientes ni el propio token."""
+
+    titulo: str
+    cliente_nombre: str
+    estado: str
+    creado_en: datetime
+    sessions: List[SesionPublica]
+    firma_cliente: Optional[str] = None
+    firma_cliente_nombre: Optional[str] = None
+    firma_cliente_en: Optional[datetime] = None
+
+
+class FirmaClientePayload(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    firma: str = Field(..., max_length=270000)
 
 
 def _horas_de_sesion(hora_inicio: str, hora_fin: str) -> float:
@@ -2211,6 +2252,129 @@ async def delete_work_order(
     if count > 0:
         raise HTTPException(status_code=400, detail="El parte tiene sesiones registradas")
     await db.work_orders.delete_one({"id": work_order_id})
+    return {"ok": True}
+
+
+@api_router.post("/work-orders/{work_order_id}/generar-enlace-firma")
+async def generar_enlace_firma(
+    work_order_id: str, current_user: dict = Depends(require_approved)
+):
+    """Genera (una sola vez) el token del enlace publico de firma del cliente.
+    Si ya existe, se devuelve el mismo para no invalidar enlaces ya compartidos."""
+    doc = await _cargar_parte(work_order_id)
+    token = doc.get("firma_cliente_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        await db.work_orders.update_one(
+            {"id": work_order_id}, {"$set": {"firma_cliente_token": token}}
+        )
+    return {"token": token}
+
+
+async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
+    """Arma la vista publica de un parte: resuelve nombres de operarios/tareas
+    y filtra cada sesion segun su campo visibilidad."""
+    cliente = await db.clients.find_one({"id": doc["client_id"]})
+    sessions_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort(
+        [("fecha", 1), ("hora_inicio", 1)]
+    )
+    sessions = [s async for s in sessions_cursor]
+
+    operario_ids, tarea_ids = set(), set()
+    for s in sessions:
+        operario_ids.update(s.get("operarios_ids", []))
+        tarea_ids.update(s.get("tareas_ids", []))
+        if s.get("firmante_responsable_id"):
+            operario_ids.add(s["firmante_responsable_id"])
+
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    tareas_map = {}
+    if tarea_ids:
+        async for t in db.work_tasks.find(
+            {"id": {"$in": list(tarea_ids)}}, {"_id": 0, "id": 1, "nombre": 1}
+        ):
+            tareas_map[t["id"]] = t["nombre"]
+
+    sessions_publicas = []
+    for s in sessions:
+        vis = s.get("visibilidad") or {}
+        item = {"fecha": s["fecha"]}
+
+        if vis.get("horas", True):
+            item["hora_inicio"] = s["hora_inicio"]
+            item["hora_fin"] = s["hora_fin"]
+
+        if vis.get("operarios", True):
+            nombres = [operarios_map.get(uid, "Operario") for uid in s.get("operarios_ids", [])]
+            libres = s.get("operarios_texto_libre") or ""
+            nombres += [n.strip() for n in libres.split(",") if n.strip()]
+            item["operarios"] = nombres
+
+        if vis.get("tareas", True):
+            item["tareas"] = [
+                tareas_map[tid] for tid in s.get("tareas_ids", []) if tid in tareas_map
+            ]
+
+        if vis.get("notas", True) and s.get("notas"):
+            item["notas"] = s["notas"]
+
+        if s.get("firmante_responsable_id"):
+            item["firmante"] = operarios_map.get(s["firmante_responsable_id"], "Operario")
+        elif s.get("firmante_responsable_texto"):
+            item["firmante"] = s["firmante_responsable_texto"]
+
+        if s.get("firma_responsable"):
+            item["firma_responsable"] = s["firma_responsable"]
+
+        sessions_publicas.append(SesionPublica(**item))
+
+    return WorkOrderPublicView(
+        titulo=doc["titulo"],
+        cliente_nombre=cliente["nombre"] if cliente else "",
+        estado=doc["estado"],
+        creado_en=doc["creado_en"],
+        sessions=sessions_publicas,
+        firma_cliente=doc.get("firma_cliente"),
+        firma_cliente_nombre=doc.get("firma_cliente_nombre"),
+        firma_cliente_en=doc.get("firma_cliente_en"),
+    )
+
+
+# --- Enlace publico de firma (Fase 5A.3 parte 2) ---------------------------
+# Sin autenticacion a proposito: el cliente accede via un token largo e
+# impredecible (secrets.token_urlsafe), no via login. No se expone aqui
+# ningun ID interno, dato de otros clientes, ni el propio token.
+
+
+@api_router.get("/public/firma/{token}", response_model=WorkOrderPublicView)
+async def ver_parte_publico(token: str):
+    doc = await db.work_orders.find_one({"firma_cliente_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Enlace no valido")
+    return await _construir_vista_publica(doc)
+
+
+@api_router.post("/public/firma/{token}")
+async def firmar_parte_publico(token: str, payload: FirmaClientePayload):
+    doc = await db.work_orders.find_one({"firma_cliente_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Enlace no valido")
+    await db.work_orders.update_one(
+        {"id": doc["id"]},
+        {
+            "$set": {
+                "firma_cliente": payload.firma,
+                "firma_cliente_nombre": payload.nombre.strip(),
+                "firma_cliente_en": datetime.now(timezone.utc),
+            }
+        },
+    )
     return {"ok": True}
 
 
