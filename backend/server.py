@@ -7,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -1934,6 +1934,28 @@ async def delete_work_task(task_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 # =====================================================================
+# OPERARIOS (Fase 5A.2 parte 2)
+# ---------------------------------------------------------------------
+# Endpoint ligero para poblar el desplegable de operarios registrados
+# en el modal de sesion. Deliberadamente NO reutiliza /admin/users
+# (protegido por require_admin): cualquier operario aprobado necesita
+# poder ver a sus companeros para rellenar un parte, no solo el admin.
+# Expone solo lo imprescindible (id, nombre, email) - nunca password_hash
+# ni otros campos sensibles.
+# =====================================================================
+
+
+@api_router.get("/users/operarios")
+async def list_operarios(_: dict = Depends(require_approved)):
+    """Usuarios con rol 'user' y estado 'approved', para selects de operarios."""
+    cursor = db.users.find(
+        {"role": UserRole.USER, "status": UserStatus.APPROVED},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1},
+    ).sort("name", 1)
+    return await cursor.to_list(1000)
+
+
+# =====================================================================
 # PARTES DE TRABAJO (Fase 5A.2 parte 1)
 # ---------------------------------------------------------------------
 # Modelos WorkOrder + WorkSession con endpoints REST completos.
@@ -2002,6 +2024,10 @@ class WorkSessionBase(BaseModel):
     tareas_ids: List[str] = Field(default_factory=list)
     tareas_libres: List[str] = Field(default_factory=list)
     notas: Optional[str] = Field("", max_length=2000)
+    visibilidad: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Preparado para Fase 5A.3 (toggles de visibilidad al cliente). Sin UI todavia.",
+    )
 
 
 class WorkSessionCreate(WorkSessionBase):
@@ -2019,6 +2045,7 @@ class WorkSessionUpdate(BaseModel):
     tareas_ids: Optional[List[str]] = None
     tareas_libres: Optional[List[str]] = None
     notas: Optional[str] = None
+    visibilidad: Optional[Dict[str, bool]] = None
 
 
 class WorkSession(WorkSessionBase):
