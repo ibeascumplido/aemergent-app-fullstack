@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   UserCheck,
   Link2,
+  Download,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -115,6 +116,7 @@ const WorkOrderDetailPage = () => {
   const [generandoEnlace, setGenerandoEnlace] = useState(false);
   const [enlaceGenerado, setEnlaceGenerado] = useState(null);
   const [dialogEnlaceOpen, setDialogEnlaceOpen] = useState(false);
+  const [descargandoPdf, setDescargandoPdf] = useState(false);
 
   const fetchParte = async () => {
     try {
@@ -284,6 +286,26 @@ const WorkOrderDetailPage = () => {
       toast.error("No se pudo generar el enlace");
     } finally {
       setGenerandoEnlace(false);
+    }
+  };
+
+  const handleDescargarPdf = async () => {
+    setDescargandoPdf(true);
+    try {
+      const res = await axios.get(`${API}/work-orders/${id}/pdf`, { responseType: "blob" });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `parte-${id.slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("Error descargando PDF:", err);
+      toast.error("No se pudo generar el PDF");
+    } finally {
+      setDescargandoPdf(false);
     }
   };
 
@@ -525,6 +547,17 @@ const WorkOrderDetailPage = () => {
         >
           <Link2 className="w-4 h-4 mr-2" />
           {generandoEnlace ? "Generando..." : "Generar enlace de firma"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDescargarPdf}
+          disabled={descargandoPdf}
+          className="border-slate-200"
+          data-testid="descargar-pdf-btn"
+        >
+          <Download className="w-4 h-4 mr-2" />
+          {descargandoPdf ? "Generando PDF..." : "Descargar PDF"}
         </Button>
         {parteAbierto && (
           <Button
