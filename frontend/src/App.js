@@ -13,6 +13,7 @@ import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
 import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
+import PublicSignPage from "@/pages/PublicSignPage";
 import LoginPage from "@/components/auth/LoginPage";
 import AuthCallback from "@/components/auth/AuthCallback";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
@@ -26,6 +27,7 @@ function App() {
             {/* Public routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/firmar/:token" element={<PublicSignPage />} />
             
             {/* Protected routes */}
             <Route path="/" element={
