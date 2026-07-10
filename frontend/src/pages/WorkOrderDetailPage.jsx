@@ -559,6 +559,16 @@ const WorkOrderDetailPage = () => {
           <Download className="w-4 h-4 mr-2" />
           {descargandoPdf ? "Generando PDF..." : "Descargar PDF"}
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => navigate("/admin/work-tasks")}
+          className="border-slate-200"
+          data-testid="cat-tareas-btn"
+        >
+          <ClipboardList className="w-4 h-4 mr-2" />
+          Cat. Tareas
+        </Button>
         {parteAbierto && (
           <Button
             variant="outline"
