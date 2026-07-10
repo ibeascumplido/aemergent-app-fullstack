@@ -16,6 +16,7 @@ import {
   RotateCcw,
   CheckCircle2,
   UserCheck,
+  Link2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -104,6 +105,7 @@ const WorkOrderDetailPage = () => {
   const [confirmarEliminarParte, setConfirmarEliminarParte] = useState(false);
 
   const [accionando, setAccionando] = useState(false);
+  const [generandoEnlace, setGenerandoEnlace] = useState(false);
 
   const fetchParte = async () => {
     try {
@@ -236,6 +238,22 @@ const WorkOrderDetailPage = () => {
       else toast.error("Error al cambiar el estado del parte");
     } finally {
       setAccionando(false);
+    }
+  };
+
+  const handleGenerarEnlace = async () => {
+    setGenerandoEnlace(true);
+    try {
+      const res = await axios.post(`${API}/work-orders/${id}/generar-enlace-firma`);
+      const url = `${window.location.origin}/firmar/${res.data.token}`;
+      await navigator.clipboard.writeText(url);
+      toast.success("Enlace copiado al portapapeles");
+      if (!parte.firma_cliente_token) await fetchParte();
+    } catch (err) {
+      console.error("Error generando enlace de firma:", err);
+      toast.error("No se pudo generar el enlace");
+    } finally {
+      setGenerandoEnlace(false);
     }
   };
 
@@ -466,7 +484,18 @@ const WorkOrderDetailPage = () => {
       </div>
 
       {/* Acciones de estado */}
-      <div className="flex flex-wrap items-center gap-2 mb-6">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleGenerarEnlace}
+          disabled={generandoEnlace}
+          className="border-slate-200"
+          data-testid="generar-enlace-firma-btn"
+        >
+          <Link2 className="w-4 h-4 mr-2" />
+          {generandoEnlace ? "Generando..." : "Copiar enlace de firma"}
+        </Button>
         {parteAbierto && (
           <Button
             variant="outline"
@@ -520,6 +549,23 @@ const WorkOrderDetailPage = () => {
           </Button>
         )}
       </div>
+
+      {parte.firma_cliente_token && (
+        <div className="mb-6">
+          {parte.firma_cliente ? (
+            <div className="inline-flex items-center gap-2 text-sm text-emerald-700 font-medium bg-emerald-50 px-3 py-1.5 rounded-lg">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              Firmado por el cliente: {parte.firma_cliente_nombre} (
+              {new Date(parte.firma_cliente_en).toLocaleDateString("es-ES")})
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-2 text-sm text-amber-700 font-medium bg-amber-50 px-3 py-1.5 rounded-lg">
+              <Link2 className="w-4 h-4 shrink-0" />
+              Enlace de firma generado, pendiente de que firme el cliente
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Resumen rapido */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
