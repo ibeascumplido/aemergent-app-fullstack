@@ -708,9 +708,19 @@ const WorkOrderDetailPage = () => {
                   )}
 
                   {firmante && (
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-500">
-                      <UserCheck className="w-3.5 h-3.5" />
-                      Responsable: {firmante}
+                    <div className="flex items-center gap-1.5 mt-2 text-xs">
+                      <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-slate-500">Responsable: {firmante}</span>
+                      {s.firma_responsable ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Firmado
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 font-medium">
+                          Pendiente de firma
+                        </span>
+                      )}
                     </div>
                   )}
 
