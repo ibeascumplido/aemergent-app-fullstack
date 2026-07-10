@@ -23,10 +23,6 @@ const SignaturePad = ({ value, onChange, disabled = false, height = 160 }) => {
 
   const [modoFirma, setModoFirma] = useState(!value);
 
-  useEffect(() => {
-    setModoFirma(!value);
-  }, [value]);
-
   const configurarContexto = (ctx) => {
     ctx.lineWidth = 2.2;
     ctx.lineCap = "round";
@@ -105,7 +101,6 @@ const SignaturePad = ({ value, onChange, disabled = false, height = 160 }) => {
           className="border border-slate-200 rounded-lg bg-white p-2 flex items-center justify-center"
           style={{ height }}
         >
-          {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
           <img src={value} alt="Firma" className="max-h-full max-w-full" />
         </div>
         {!disabled && (
