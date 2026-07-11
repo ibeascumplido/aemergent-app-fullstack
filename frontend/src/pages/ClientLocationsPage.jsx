@@ -352,7 +352,20 @@ const ClientLocationsPage = () => {
                         >
                           {u.visitas_realizadas_ano}/{u.visitas_objetivo_ano} este año
                         </span>
-                        <span>{u.horas_por_visita} h/visita</span>
+                        <span>{u.horas_por_visita} h/visita (estimado)</span>
+                        {u.visitas_realizadas_ano > 0 && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full font-medium ${
+                              u.horas_realizadas_ano > u.horas_estimadas_ano
+                                ? "bg-red-50 text-red-700"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                            title={`Estimado para las ${u.visitas_realizadas_ano} visitas ya hechas: ${u.horas_estimadas_ano}h`}
+                            data-testid={`horas-estimadas-reales-${u.id}`}
+                          >
+                            {u.horas_estimadas_ano}h est. · {u.horas_realizadas_ano}h real
+                          </span>
+                        )}
                         {u.responsable_id ? (
                           <span>{operariosPorId[u.responsable_id] || "Operario"}</span>
                         ) : (
@@ -361,6 +374,23 @@ const ClientLocationsPage = () => {
                       </div>
                       {u.direccion && (
                         <p className="text-xs text-slate-400 mt-1 truncate">{u.direccion}</p>
+                      )}
+                      {u.visitas_detalle?.length > 0 && (
+                        <p
+                          className="text-[11px] text-slate-400 mt-1.5 leading-relaxed"
+                          data-testid={`visitas-detalle-${u.id}`}
+                        >
+                          {u.visitas_detalle.map((v, i) => (
+                            <span key={v.fecha + i}>
+                              {i > 0 && " · "}
+                              {new Date(v.fecha).toLocaleDateString("es-ES", {
+                                day: "2-digit",
+                                month: "short",
+                              })}
+                              : {v.horas_totales}h
+                            </span>
+                          ))}
+                        </p>
                       )}
                     </div>
                     {isAdmin && (
