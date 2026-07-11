@@ -435,6 +435,14 @@ const WorkOrderDetailPage = () => {
                 </h1>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   {estadoBadge(parte.estado)}
+                  {parte.usa_zonas && (
+                    <span
+                      className="text-xs px-2 py-1 rounded bg-violet-100 text-violet-700"
+                      data-testid="badge-usa-zonas"
+                    >
+                      Usa zonas
+                    </span>
+                  )}
                   {cliente && (
                     <span className="text-sm text-slate-500 inline-flex items-center gap-1">
                       <Building2 className="w-3.5 h-3.5" />
@@ -752,7 +760,9 @@ const WorkOrderDetailPage = () => {
           {sessionsOrdenadas.map((s) => {
             const nombres = nombresDeSesion(s);
             const firmante = nombreFirmante(s);
-            const tareas = (s.tareas_ids || []).map((tid) => tareasPorId[tid]).filter(Boolean);
+            const tareas = (s.tareas_ids || [])
+              .map((tid) => (tareasPorId[tid] ? { id: tid, nombre: tareasPorId[tid] } : null))
+              .filter(Boolean);
             return (
               <Card key={s.id} className="border-slate-100" data-testid={`session-${s.id}`}>
                 <CardContent className="p-4">
@@ -815,14 +825,20 @@ const WorkOrderDetailPage = () => {
                   {tareas.length > 0 && (
                     <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                       <ClipboardList className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      {tareas.map((t) => (
-                        <span
-                          key={t}
-                          className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full"
-                        >
-                          {t}
-                        </span>
-                      ))}
+                      {tareas.map((t) => {
+                        const zona = s.tareas_zonas?.[t.id];
+                        return (
+                          <span
+                            key={t.id}
+                            className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full"
+                          >
+                            {t.nombre}
+                            {parte.usa_zonas && zona && zona !== "X" && (
+                              <span className="font-semibold ml-1">· {zona}</span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -897,6 +913,7 @@ const WorkOrderDetailPage = () => {
         onOpenChange={setSessionDialogOpen}
         workOrderId={id}
         session={sesionEditando}
+        usaZonas={!!parte.usa_zonas}
         onSaved={fetchParte}
       />
 

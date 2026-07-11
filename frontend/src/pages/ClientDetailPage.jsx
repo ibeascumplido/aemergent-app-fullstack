@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -193,6 +194,7 @@ const ClientDetailPage = () => {
   const [nuevoParteForm, setNuevoParteForm] = useState({
     titulo: "",
     budget_template_id: "",
+    usa_zonas: false,
   });
   const [creandoParte, setCreandoParte] = useState(false);
 
@@ -245,7 +247,7 @@ const ClientDetailPage = () => {
   }, [slug]);
 
   const abrirNuevoParte = () => {
-    setNuevoParteForm({ titulo: "", budget_template_id: "" });
+    setNuevoParteForm({ titulo: "", budget_template_id: "", usa_zonas: false });
     setDialogNuevoParte(true);
   };
 
@@ -261,7 +263,7 @@ const ClientDetailPage = () => {
     }
     setCreandoParte(true);
     try {
-      const payload = { client_id: cliente.id, titulo };
+      const payload = { client_id: cliente.id, titulo, usa_zonas: nuevoParteForm.usa_zonas };
       if (nuevoParteForm.budget_template_id) {
         payload.budget_template_id = nuevoParteForm.budget_template_id;
       }
@@ -653,6 +655,23 @@ const ClientDetailPage = () => {
               <p className="text-xs text-slate-400">
                 Vinculalo a un presupuesto para trazabilidad, o dejalo suelto si es un trabajo puntual.
               </p>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5">
+              <div>
+                <Label htmlFor="parte-usa-zonas" className="cursor-pointer">
+                  Usar zonas del jardín
+                </Label>
+                <p className="text-xs text-slate-400">
+                  Cada tarea de las sesiones se podrá asociar a una zona (A-M) o marcar sin
+                  zona concreta. Actívalo solo si este parte lo necesita.
+                </p>
+              </div>
+              <Switch
+                id="parte-usa-zonas"
+                checked={nuevoParteForm.usa_zonas}
+                onCheckedChange={(v) => setNuevoParteForm((f) => ({ ...f, usa_zonas: v }))}
+                data-testid="parte-usa-zonas-switch"
+              />
             </div>
           </div>
           <DialogFooter>
