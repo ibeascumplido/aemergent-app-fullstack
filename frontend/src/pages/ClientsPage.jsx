@@ -62,8 +62,10 @@ const slugify = (str) =>
 
 // Tamaño máximo del logo en bytes (200 KB). Si crece más, migramos a Cloudinary.
 const MAX_LOGO_BYTES = 200 * 1024;
+// El mapa de zonas necesita mas resolucion para que las letras se lean bien.
+const MAX_MAPA_ZONAS_BYTES = 3 * 1024 * 1024;
 
-const emptyForm = { slug: "", nombre: "", notas: "", logo_url: null };
+const emptyForm = { slug: "", nombre: "", notas: "", logo_url: null, mapa_zonas_url: null };
 
 const ClientsPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
@@ -124,6 +126,7 @@ const ClientsPage = () => {
       nombre: cliente.nombre,
       notas: cliente.notas || "",
       logo_url: cliente.logo_url || null,
+      mapa_zonas_url: cliente.mapa_zonas_url || null,
     });
     setSlugTouched(true); // en edición no autogeneramos slug (además va deshabilitado)
     setDialogOpen(true);
@@ -163,6 +166,25 @@ const ClientsPage = () => {
     reader.readAsDataURL(file);
   };
 
+  const handleMapaZonasChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("El archivo debe ser una imagen");
+      return;
+    }
+    if (file.size > MAX_MAPA_ZONAS_BYTES) {
+      toast.error(`La imagen supera los ${Math.round(MAX_MAPA_ZONAS_BYTES / 1024)} KB`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setForm((f) => ({ ...f, mapa_zonas_url: reader.result }));
+    };
+    reader.onerror = () => toast.error("No se pudo leer la imagen");
+    reader.readAsDataURL(file);
+  };
+
   const handleSave = async () => {
     // Validaciones mínimas
     const nombre = form.nombre.trim();
@@ -186,6 +208,7 @@ const ClientsPage = () => {
           nombre,
           notas,
           logo_url: form.logo_url,
+          mapa_zonas_url: form.mapa_zonas_url,
         });
         toast.success("Cliente actualizado");
       } else {
@@ -194,6 +217,7 @@ const ClientsPage = () => {
           nombre,
           notas,
           logo_url: form.logo_url,
+          mapa_zonas_url: form.mapa_zonas_url,
         });
         toast.success("Cliente creado");
       }
@@ -457,6 +481,51 @@ const ClientsPage = () => {
                   </p>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Mapa de zonas (opcional)</Label>
+              <p className="text-xs text-slate-400 -mt-1">
+                Si este cliente usa partes con zonas (A-M), sube aquí el plano para que
+                operarios y cliente sepan a qué corresponde cada letra.
+              </p>
+              {form.mapa_zonas_url && (
+                <div className="rounded-lg border border-slate-200 overflow-hidden">
+                  <img
+                    src={form.mapa_zonas_url}
+                    alt="Mapa de zonas"
+                    className="w-full max-h-48 object-contain bg-slate-50"
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleMapaZonasChange}
+                    data-testid="client-mapa-zonas-input"
+                  />
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm hover:bg-slate-50">
+                    <Upload className="w-4 h-4" />
+                    {form.mapa_zonas_url ? "Cambiar mapa" : "Subir mapa"}
+                  </span>
+                </label>
+                {form.mapa_zonas_url && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, mapa_zonas_url: null }))}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"
+                  >
+                    <X className="w-3 h-3" />
+                    Quitar mapa
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-400">
+                Máx. {Math.round(MAX_MAPA_ZONAS_BYTES / 1024 / 1024)} MB.
+              </p>
             </div>
           </div>
 
