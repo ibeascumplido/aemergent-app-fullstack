@@ -1848,6 +1848,9 @@ class ClientLocationBase(BaseModel):
     frecuencia: str = Field(..., pattern=_FRECUENCIA_PATTERN)
     visitas_objetivo_ano: int = Field(..., ge=0)
     responsable_id: Optional[str] = None
+    responsable_texto_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre libre si el responsable no es un usuario registrado"
+    )
     dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
     notas: Optional[str] = Field("", max_length=2000)
 
@@ -1866,6 +1869,7 @@ class ClientLocationUpdate(BaseModel):
     frecuencia: Optional[str] = Field(None, pattern=_FRECUENCIA_PATTERN)
     visitas_objetivo_ano: Optional[int] = Field(None, ge=0)
     responsable_id: Optional[str] = None
+    responsable_texto_libre: Optional[str] = Field(None, max_length=200)
     dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
     notas: Optional[str] = Field(None, max_length=2000)
     activo: Optional[bool] = None
@@ -1880,17 +1884,68 @@ class ClientLocation(ClientLocationBase):
     actualizado_en: datetime
 
 
-@api_router.get("/clients/{slug}/locations", response_model=List[ClientLocation])
+class ClientLocationConVisitas(ClientLocation):
+    """Ubicacion + contadores del ano en curso, calculados a partir de las
+    visitas reales registradas (Fase 6 parte 2). Sustituye al COUNTIF fragil
+    del Excel: aqui se cuenta contra datos estructurados, no texto libre."""
+
+    visitas_realizadas_ano: int = 0
+    visitas_pendientes_ano: int = 0
+    horas_realizadas_ano: float = 0
+
+
+async def _visitas_stats_por_ubicacion(client_id: str, year: int) -> dict:
+    """Una sola consulta agregada: {location_id: {visitas, horas}} para
+    todas las ubicaciones del cliente en el ano dado."""
+    pipeline = [
+        {
+            "$match": {
+                "client_id": client_id,
+                "fecha": {"$gte": f"{year}-01-01", "$lt": f"{year + 1}-01-01"},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$client_location_id",
+                "visitas": {"$sum": 1},
+                "horas": {"$sum": "$horas"},
+            }
+        },
+    ]
+    stats = {}
+    async for row in db.client_location_visits.aggregate(pipeline):
+        stats[row["_id"]] = {"visitas": row["visitas"], "horas": row["horas"]}
+    return stats
+
+
+@api_router.get("/clients/{slug}/locations", response_model=List[ClientLocationConVisitas])
 async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
-    """Ubicaciones activas del cliente, por nombre ascendente."""
+    """Ubicaciones activas del cliente, por nombre ascendente, con contadores
+    de visitas del ano en curso ya calculados."""
     slug = _validate_slug(slug)
     cliente = await db.clients.find_one({"slug": slug, "activo": True})
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    year = datetime.now(timezone.utc).year
+    stats = await _visitas_stats_por_ubicacion(cliente["id"], year)
+
+    resultado = []
     cursor = db.client_locations.find(
         {"client_id": cliente["id"], "activo": True}
     ).sort("nombre", 1)
-    return [ClientLocation(**doc) async for doc in cursor]
+    async for doc in cursor:
+        s = stats.get(doc["id"], {"visitas": 0, "horas": 0})
+        objetivo = doc.get("visitas_objetivo_ano", 0)
+        resultado.append(
+            ClientLocationConVisitas(
+                **doc,
+                visitas_realizadas_ano=s["visitas"],
+                visitas_pendientes_ano=max(0, objetivo - s["visitas"]),
+                horas_realizadas_ano=s["horas"],
+            )
+        )
+    return resultado
 
 
 @api_router.post("/clients/{slug}/locations", response_model=ClientLocation)
@@ -1943,6 +1998,139 @@ async def delete_client_location(location_id: str, _: dict = Depends(require_adm
         {"id": location_id},
         {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
     )
+    return {"ok": True}
+
+
+# =====================================================================
+# VISITAS A UBICACIONES (Fase 6 parte 2)
+# ---------------------------------------------------------------------
+# Calendario dedicado (no el de vacaciones/dias libres del equipo).
+# Crear/editar/borrar una visita esta abierto a cualquier aprobado (igual
+# que las sesiones de partes de trabajo) - es una tarea operativa, no de
+# gestion del catalogo. operarios_ids/operarios_texto_libre reutilizan
+# exactamente el mismo patron que WorkSession.
+# =====================================================================
+
+
+class ClientLocationVisitBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    horas: float = Field(..., ge=0)
+    operarios_ids: List[str] = Field(default_factory=list)
+    operarios_texto_libre: Optional[str] = Field("", max_length=500)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class ClientLocationVisitCreate(ClientLocationVisitBase):
+    pass
+
+
+class ClientLocationVisitUpdate(BaseModel):
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    horas: Optional[float] = Field(None, ge=0)
+    operarios_ids: Optional[List[str]] = None
+    operarios_texto_libre: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ClientLocationVisit(ClientLocationVisitBase):
+    id: str
+    client_location_id: str
+    client_id: str
+    client_slug: str
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class ClientLocationVisitConUbicacion(ClientLocationVisit):
+    """Para el calendario: incluye el nombre oficial de la ubicacion ya
+    resuelto, para no depender nunca de un ID/referencia tecleado a mano."""
+
+    location_nombre: str
+    location_dificultad: Optional[str] = None
+
+
+@api_router.get(
+    "/clients/{slug}/visits", response_model=List[ClientLocationVisitConUbicacion]
+)
+async def list_client_visits(
+    slug: str, desde: str, hasta: str, _: dict = Depends(require_approved)
+):
+    """Visitas del cliente con fecha en [desde, hasta) - formato 'YYYY-MM-DD'.
+    Pensado para pintar el calendario mes a mes."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    ubicaciones = {
+        loc["id"]: loc
+        async for loc in db.client_locations.find({"client_id": cliente["id"]})
+    }
+
+    cursor = db.client_location_visits.find(
+        {"client_id": cliente["id"], "fecha": {"$gte": desde, "$lt": hasta}}
+    ).sort("fecha", 1)
+
+    resultado = []
+    async for v in cursor:
+        loc = ubicaciones.get(v["client_location_id"])
+        resultado.append(
+            ClientLocationVisitConUbicacion(
+                **v,
+                location_nombre=loc["nombre"] if loc else "(ubicación eliminada)",
+                location_dificultad=loc.get("dificultad") if loc else None,
+            )
+        )
+    return resultado
+
+
+@api_router.post("/locations/{location_id}/visits", response_model=ClientLocationVisit)
+async def create_location_visit(
+    location_id: str,
+    payload: ClientLocationVisitCreate,
+    current_user: dict = Depends(require_approved),
+):
+    loc = await db.client_locations.find_one({"id": location_id})
+    if not loc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_location_id": location_id,
+        "client_id": loc["client_id"],
+        "client_slug": loc["client_slug"],
+        **payload.model_dump(),
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.client_location_visits.insert_one(doc)
+    return ClientLocationVisit(**doc)
+
+
+@api_router.put("/visits/{visit_id}", response_model=ClientLocationVisit)
+async def update_location_visit(
+    visit_id: str, payload: ClientLocationVisitUpdate, _: dict = Depends(require_approved)
+):
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Visita no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return ClientLocationVisit(**doc)
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.client_location_visits.update_one({"id": visit_id}, {"$set": updates})
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    return ClientLocationVisit(**doc)
+
+
+@api_router.delete("/visits/{visit_id}")
+async def delete_location_visit(visit_id: str, _: dict = Depends(require_approved)):
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Visita no encontrada")
+    await db.client_location_visits.delete_one({"id": visit_id})
     return {"ok": True}
 
 
