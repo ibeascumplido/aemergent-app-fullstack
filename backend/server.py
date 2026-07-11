@@ -1884,37 +1884,69 @@ class ClientLocation(ClientLocationBase):
     actualizado_en: datetime
 
 
+class VisitaResumen(BaseModel):
+    """Entrada compacta para el mini-listado tipo Excel: fecha + horas
+    totales de una visita ya realizada."""
+
+    fecha: str
+    horas_totales: float
+
+
 class ClientLocationConVisitas(ClientLocation):
     """Ubicacion + contadores del ano en curso, calculados a partir de las
     visitas reales registradas (Fase 6 parte 2). Sustituye al COUNTIF fragil
-    del Excel: aqui se cuenta contra datos estructurados, no texto libre."""
+    del Excel: aqui se cuenta contra datos estructurados, no texto libre.
+
+    horas_estimadas_ano es el estimado SOLO de las visitas ya realizadas
+    (horas_por_visita x visitas_realizadas_ano), para comparar manzanas con
+    manzanas contra horas_realizadas_ano - no contra el objetivo completo
+    del ano, que incluye visitas que aun no han pasado."""
 
     visitas_realizadas_ano: int = 0
     visitas_pendientes_ano: int = 0
     horas_realizadas_ano: float = 0
+    horas_estimadas_ano: float = 0
+    visitas_detalle: List[VisitaResumen] = Field(default_factory=list)
+
+
+def _num_operarios_visita(visita: dict) -> int:
+    """Cuenta operarios de una visita: registrados + texto libre (separado
+    por comas). Nunca 0: una visita sin operarios anotados cuenta como 1,
+    para no perder horas ya registradas en el total."""
+    n = len(visita.get("operarios_ids") or [])
+    libres = visita.get("operarios_texto_libre") or ""
+    n += len([x for x in libres.split(",") if x.strip()])
+    return max(n, 1)
+
+
+def _horas_totales_visita(visita: dict) -> float:
+    """Horas-persona de una visita: horas de la jornada x nº de operarios.
+    2 operarios x 3h de visita = 6h totales (asi lo pidio el cliente)."""
+    return (visita.get("horas") or 0) * _num_operarios_visita(visita)
 
 
 async def _visitas_stats_por_ubicacion(client_id: str, year: int) -> dict:
-    """Una sola consulta agregada: {location_id: {visitas, horas}} para
-    todas las ubicaciones del cliente en el ano dado."""
-    pipeline = [
+    """{location_id: {visitas, horas, detalle}} para el ano dado. 'horas' ya
+    es el total horas-persona (ver _horas_totales_visita), no solo la
+    duracion de la visita. 'detalle' es la lista [{fecha, horas_totales}]
+    ordenada por fecha, para el mini-listado tipo Excel del catalogo."""
+    cursor = db.client_location_visits.find(
         {
-            "$match": {
-                "client_id": client_id,
-                "fecha": {"$gte": f"{year}-01-01", "$lt": f"{year + 1}-01-01"},
-            }
-        },
-        {
-            "$group": {
-                "_id": "$client_location_id",
-                "visitas": {"$sum": 1},
-                "horas": {"$sum": "$horas"},
-            }
-        },
-    ]
+            "client_id": client_id,
+            "fecha": {"$gte": f"{year}-01-01", "$lt": f"{year + 1}-01-01"},
+        }
+    ).sort("fecha", 1)
     stats = {}
-    async for row in db.client_location_visits.aggregate(pipeline):
-        stats[row["_id"]] = {"visitas": row["visitas"], "horas": row["horas"]}
+    async for v in cursor:
+        loc_id = v["client_location_id"]
+        if loc_id not in stats:
+            stats[loc_id] = {"visitas": 0, "horas": 0, "detalle": []}
+        horas_totales = _horas_totales_visita(v)
+        stats[loc_id]["visitas"] += 1
+        stats[loc_id]["horas"] += horas_totales
+        stats[loc_id]["detalle"].append(
+            {"fecha": v["fecha"], "horas_totales": horas_totales}
+        )
     return stats
 
 
@@ -1935,7 +1967,7 @@ async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
         {"client_id": cliente["id"], "activo": True}
     ).sort("nombre", 1)
     async for doc in cursor:
-        s = stats.get(doc["id"], {"visitas": 0, "horas": 0})
+        s = stats.get(doc["id"], {"visitas": 0, "horas": 0, "detalle": []})
         objetivo = doc.get("visitas_objetivo_ano", 0)
         resultado.append(
             ClientLocationConVisitas(
@@ -1943,6 +1975,8 @@ async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
                 visitas_realizadas_ano=s["visitas"],
                 visitas_pendientes_ano=max(0, objetivo - s["visitas"]),
                 horas_realizadas_ano=s["horas"],
+                horas_estimadas_ano=doc.get("horas_por_visita", 0) * s["visitas"],
+                visitas_detalle=[VisitaResumen(**d) for d in s["detalle"]],
             )
         )
     return resultado
@@ -2044,10 +2078,15 @@ class ClientLocationVisit(ClientLocationVisitBase):
 
 class ClientLocationVisitConUbicacion(ClientLocationVisit):
     """Para el calendario: incluye el nombre oficial de la ubicacion ya
-    resuelto, para no depender nunca de un ID/referencia tecleado a mano."""
+    resuelto, para no depender nunca de un ID/referencia tecleado a mano.
+    num_operarios y horas_totales se calculan aqui (misma logica que
+    _visitas_stats_por_ubicacion) para que el calendario nunca las
+    recalcule por su cuenta y se desincronice."""
 
     location_nombre: str
     location_dificultad: Optional[str] = None
+    num_operarios: int = 1
+    horas_totales: float = 0
 
 
 @api_router.get(
@@ -2080,6 +2119,8 @@ async def list_client_visits(
                 **v,
                 location_nombre=loc["nombre"] if loc else "(ubicación eliminada)",
                 location_dificultad=loc.get("dificultad") if loc else None,
+                num_operarios=_num_operarios_visita(v),
+                horas_totales=_horas_totales_visita(v),
             )
         )
     return resultado
