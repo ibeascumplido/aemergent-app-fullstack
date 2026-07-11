@@ -1584,6 +1584,11 @@ class ClientBase(BaseModel):
     slug: str = Field(..., description="Identificador URL-friendly, único y estable")
     nombre: str = Field(..., min_length=1, max_length=120)
     logo_url: Optional[str] = Field(None, description="Data-URI base64 (entrada) o URL de Cloudinary (salida)")
+    mapa_zonas_url: Optional[str] = Field(
+        None,
+        description="Data-URI base64 (entrada) o URL de Cloudinary (salida) del plano de zonas "
+        "del cliente (Fase 6). Las letras A-M de las tareas por zona se corresponden con este mapa.",
+    )
     notas: Optional[str] = Field("", max_length=2000)
 
 
@@ -1596,6 +1601,7 @@ class ClientUpdate(BaseModel):
     # (rompería URLs y referencias futuras desde otras colecciones).
     nombre: Optional[str] = Field(None, min_length=1, max_length=120)
     logo_url: Optional[str] = None
+    mapa_zonas_url: Optional[str] = None
     notas: Optional[str] = Field(None, max_length=2000)
     activo: Optional[bool] = None
 
@@ -1607,6 +1613,9 @@ class Client(ClientBase):
     actualizado_en: datetime
     logo_public_id: Optional[str] = Field(
         None, description="ID interno del asset en Cloudinary, para poder borrarlo al reemplazar el logo."
+    )
+    mapa_zonas_public_id: Optional[str] = Field(
+        None, description="ID interno del asset en Cloudinary del mapa de zonas."
     )
 
 
@@ -1714,12 +1723,18 @@ async def create_client(payload: ClientCreate, _: dict = Depends(require_admin))
     logo_public_id = None
     if _es_logo_base64(logo_url):
         logo_url, logo_public_id = await _subir_logo_cloudinary(logo_url)
+    mapa_zonas_url = payload.mapa_zonas_url
+    mapa_zonas_public_id = None
+    if _es_logo_base64(mapa_zonas_url):
+        mapa_zonas_url, mapa_zonas_public_id = await _subir_logo_cloudinary(mapa_zonas_url)
     doc = {
         "id": str(uuid.uuid4()),
         "slug": slug,
         "nombre": payload.nombre.strip(),
         "logo_url": logo_url,
         "logo_public_id": logo_public_id,
+        "mapa_zonas_url": mapa_zonas_url,
+        "mapa_zonas_public_id": mapa_zonas_public_id,
         "notas": (payload.notas or "").strip(),
         "activo": True,
         "creado_en": now,
@@ -1756,6 +1771,17 @@ async def update_client(
             # Logo eliminado explicitamente
             await _borrar_logo_cloudinary(doc.get("logo_public_id"))
             updates["logo_public_id"] = None
+
+    if "mapa_zonas_url" in updates:
+        nuevo_mapa = updates["mapa_zonas_url"]
+        if _es_logo_base64(nuevo_mapa):
+            url, public_id = await _subir_logo_cloudinary(nuevo_mapa)
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_url"] = url
+            updates["mapa_zonas_public_id"] = public_id
+        elif nuevo_mapa is None and doc.get("mapa_zonas_public_id"):
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_public_id"] = None
 
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.clients.update_one({"id": client_id}, {"$set": updates})
@@ -2467,6 +2493,12 @@ class WorkOrderBase(BaseModel):
     budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
     titulo: str = Field(..., min_length=1, max_length=200)
     notas: Optional[str] = Field("", max_length=4000)
+    usa_zonas: bool = Field(
+        False,
+        description="Si esta activo, las tareas de cada sesion se pueden asociar a una zona "
+        "(letras A-M, o X para 'sin zona concreta'). Se elige al crear el parte; no todos los "
+        "partes lo necesitan, es opcional caso por caso.",
+    )
 
 
 class WorkOrderCreate(WorkOrderBase):
@@ -2478,6 +2510,7 @@ class WorkOrderUpdate(BaseModel):
     notas: Optional[str] = Field(None, max_length=4000)
     budget_template_id: Optional[str] = None
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
+    usa_zonas: Optional[bool] = None
 
 
 class WorkOrder(WorkOrderBase):
@@ -2509,6 +2542,12 @@ class WorkSessionBase(BaseModel):
     firmante_responsable_texto: Optional[str] = Field("", max_length=200)
     tareas_ids: List[str] = Field(default_factory=list)
     tareas_libres: List[str] = Field(default_factory=list)
+    tareas_zonas: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Solo relevante si el parte tiene usa_zonas=True. Mapa tarea_id -> zona "
+        "('A'..'M' o 'X' para sin zona concreta). El desplegable del frontend garantiza valores "
+        "validos; el backend no lo restringe para no acoplarse a la lista exacta de letras.",
+    )
     notas: Optional[str] = Field("", max_length=2000)
     visibilidad: Dict[str, bool] = Field(
         default_factory=dict,
@@ -2535,6 +2574,7 @@ class WorkSessionUpdate(BaseModel):
     firmante_responsable_texto: Optional[str] = None
     tareas_ids: Optional[List[str]] = None
     tareas_libres: Optional[List[str]] = None
+    tareas_zonas: Optional[Dict[str, str]] = None
     notas: Optional[str] = None
     visibilidad: Optional[Dict[str, bool]] = None
     firma_responsable: Optional[str] = Field(None, max_length=270000)
@@ -2664,6 +2704,7 @@ async def create_work_order(
         "budget_number": budget_number,
         "titulo": payload.titulo.strip(),
         "notas": (payload.notas or "").strip(),
+        "usa_zonas": payload.usa_zonas,
         "estado": "abierto",
         "creado_por": current_user.get("id") or current_user.get("email") or "?",
         "creado_en": now,
