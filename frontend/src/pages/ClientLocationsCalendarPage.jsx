@@ -190,6 +190,14 @@ const ClientLocationsCalendarPage = () => {
     return map;
   }, [visitas]);
 
+  const nombresOperariosVisita = (v) => {
+    const registrados = (v.operarios_ids || []).map((id) => operariosPorId[id] || "Operario");
+    const libres = v.operarios_texto_libre
+      ? v.operarios_texto_libre.split(",").map((n) => n.trim()).filter(Boolean)
+      : [];
+    return [...registrados, ...libres];
+  };
+
   const days = getDaysInMonth(year, month);
 
   const irMesAnterior = () => setCurrentDate(new Date(year, month - 1, 1));
@@ -438,7 +446,12 @@ const ClientLocationsCalendarPage = () => {
                         {v.location_nombre}
                       </span>
                     </div>
-                    <span className="text-[10px] text-indigo-600">{v.horas} h</span>
+                    <div className="text-[10px] text-indigo-700 truncate" title={nombresOperariosVisita(v).join(", ")}>
+                      {nombresOperariosVisita(v).join(", ") || "Sin operarios"}
+                    </div>
+                    <span className="text-[10px] text-indigo-500">
+                      {v.horas_totales}h
+                    </span>
                   </button>
                 ))}
               </div>
