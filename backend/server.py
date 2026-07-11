@@ -19,6 +19,8 @@ import secrets
 import httpx
 import asyncio
 import resend
+import cloudinary
+import cloudinary.uploader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -42,6 +44,14 @@ db = client[os.environ['DB_NAME']]
 # Resend configuration
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+
+# Cloudinary configuration (Fase 5B: almacenamiento de logos/fotos)
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', ''),
+    api_key=os.environ.get('CLOUDINARY_API_KEY', ''),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET', ''),
+    secure=True,
+)
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -1551,12 +1561,13 @@ async def get_dashboard_stats():
 # Los 7 clientes iniciales se auto-siembran al arrancar la app si la
 # colección está vacía (ver seed_clients_if_empty).
 #
-# NOTA DE ARQUITECTURA (logo):
-# En esta fase el logo se guarda como data-URI base64 dentro del propio
-# documento (campo logo_url). Es aceptable para logos pequeños (<200KB).
-# Cuando lleguen las fotografías de cliente (Fase 6) se migrará a un
-# servicio externo tipo Cloudinary/S3, porque MongoDB no debe usarse
-# como almacén de binarios grandes ni de volumen.
+# NOTA DE ARQUITECTURA (logo) - actualizada en Fase 5B:
+# El frontend sigue enviando el logo como data-URI base64 en logo_url
+# (sin cambios ahi). El backend, al crear o actualizar un cliente, detecta
+# si logo_url es un data-URI y en ese caso lo sube a Cloudinary y guarda
+# la URL resultante (mas logo_public_id, para poder borrar el asset viejo
+# cuando se reemplaza). MongoDB deja de usarse como almacen de binarios.
+# Ver _es_logo_base64 / _subir_logo_cloudinary / _borrar_logo_cloudinary.
 #
 # NOTA DE SEGURIDAD:
 # Lectura permitida a cualquier usuario aprobado (mismo patrón que
@@ -1572,7 +1583,7 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 class ClientBase(BaseModel):
     slug: str = Field(..., description="Identificador URL-friendly, único y estable")
     nombre: str = Field(..., min_length=1, max_length=120)
-    logo_url: Optional[str] = Field(None, description="Data-URI base64 o URL externa")
+    logo_url: Optional[str] = Field(None, description="Data-URI base64 (entrada) o URL de Cloudinary (salida)")
     notas: Optional[str] = Field("", max_length=2000)
 
 
@@ -1594,6 +1605,40 @@ class Client(ClientBase):
     activo: bool = True
     creado_en: datetime
     actualizado_en: datetime
+    logo_public_id: Optional[str] = Field(
+        None, description="ID interno del asset en Cloudinary, para poder borrarlo al reemplazar el logo."
+    )
+
+
+def _es_logo_base64(valor: Optional[str]) -> bool:
+    return bool(valor) and valor.startswith("data:image")
+
+
+async def _subir_logo_cloudinary(data_uri: str) -> tuple:
+    """Sube un logo (data-URI base64) a Cloudinary. Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder="inicia-gestion/clientes",
+            resource_type="image",
+        )
+    except Exception as e:
+        logger.error("Error subiendo logo a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el logo") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
+async def _borrar_logo_cloudinary(public_id: Optional[str]) -> None:
+    """Borra un asset de Cloudinary. Nunca lanza excepcion: si falla, se
+    queda huerfano en Cloudinary pero no debe romper la operacion del
+    usuario (crear/actualizar un cliente)."""
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(cloudinary.uploader.destroy, public_id)
+    except Exception:
+        logger.warning("No se pudo borrar un logo antiguo de Cloudinary", exc_info=True)
 
 
 def _validate_slug(slug: str) -> str:
@@ -1665,11 +1710,16 @@ async def create_client(payload: ClientCreate, _: dict = Depends(require_admin))
     if existing:
         raise HTTPException(status_code=409, detail="Ya existe un cliente con ese slug")
     now = datetime.now(timezone.utc)
+    logo_url = payload.logo_url
+    logo_public_id = None
+    if _es_logo_base64(logo_url):
+        logo_url, logo_public_id = await _subir_logo_cloudinary(logo_url)
     doc = {
         "id": str(uuid.uuid4()),
         "slug": slug,
         "nombre": payload.nombre.strip(),
-        "logo_url": payload.logo_url,
+        "logo_url": logo_url,
+        "logo_public_id": logo_public_id,
         "notas": (payload.notas or "").strip(),
         "activo": True,
         "creado_en": now,
@@ -1693,10 +1743,54 @@ async def update_client(
         updates["nombre"] = updates["nombre"].strip()
     if "notas" in updates and updates["notas"] is not None:
         updates["notas"] = updates["notas"].strip()
+
+    if "logo_url" in updates:
+        nuevo_logo = updates["logo_url"]
+        if _es_logo_base64(nuevo_logo):
+            # Logo nuevo: subir a Cloudinary y borrar el anterior (si habia)
+            url, public_id = await _subir_logo_cloudinary(nuevo_logo)
+            await _borrar_logo_cloudinary(doc.get("logo_public_id"))
+            updates["logo_url"] = url
+            updates["logo_public_id"] = public_id
+        elif nuevo_logo is None and doc.get("logo_public_id"):
+            # Logo eliminado explicitamente
+            await _borrar_logo_cloudinary(doc.get("logo_public_id"))
+            updates["logo_public_id"] = None
+
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.clients.update_one({"id": client_id}, {"$set": updates})
     doc = await db.clients.find_one({"id": client_id})
     return Client(**doc)
+
+
+@api_router.post("/admin/clients/migrar-logos-cloudinary")
+async def migrar_logos_cloudinary(_: dict = Depends(require_admin)):
+    """Tarea puntual (Fase 5B): sube a Cloudinary los logos que aun esten
+    en base64 dentro de MongoDB (clientes creados/sembrados antes de esta
+    fase). Idempotente: los que ya estan en Cloudinary se saltan, asi que
+    se puede ejecutar mas de una vez sin problema."""
+    migrados, ya_en_cloudinary, sin_logo = 0, 0, 0
+    async for doc in db.clients.find({}):
+        logo = doc.get("logo_url")
+        if not logo:
+            sin_logo += 1
+            continue
+        if not _es_logo_base64(logo):
+            ya_en_cloudinary += 1
+            continue
+        url, public_id = await _subir_logo_cloudinary(logo)
+        await db.clients.update_one(
+            {"id": doc["id"]},
+            {
+                "$set": {
+                    "logo_url": url,
+                    "logo_public_id": public_id,
+                    "actualizado_en": datetime.now(timezone.utc),
+                }
+            },
+        )
+        migrados += 1
+    return {"migrados": migrados, "ya_en_cloudinary": ya_en_cloudinary, "sin_logo": sin_logo}
 
 
 @api_router.delete("/clients/{client_id}")

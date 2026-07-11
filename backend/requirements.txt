@@ -69,6 +69,7 @@ tzdata==2025.2
 urllib3==2.6.1
 uvicorn==0.25.0
 watchfiles==1.1.1
+cloudinary==1.45.0
 reportlab==4.2.5
 
 resend==2.12.0
