@@ -13,6 +13,7 @@ import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
 import ClientLocationsPage from "@/pages/ClientLocationsPage";
+import ClientLocationsCalendarPage from "@/pages/ClientLocationsCalendarPage";
 import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
 import PublicSignPage from "@/pages/PublicSignPage";
 import LoginPage from "@/components/auth/LoginPage";
@@ -73,6 +74,11 @@ function App() {
               <Route path="clients/:slug/locations" element={
                 <ProtectedRoute requireBudgets>
                   <ClientLocationsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="clients/:slug/locations/calendar" element={
+                <ProtectedRoute requireBudgets>
+                  <ClientLocationsCalendarPage />
                 </ProtectedRoute>
               } />
               <Route path="clients" element={
