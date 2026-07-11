@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Plus,
   Clock,
+  MapPin,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -216,6 +217,31 @@ const ClientDetailPage = () => {
   useEffect(() => {
     fetchPartes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  // ==============================
+  // Ubicaciones (Fase 6 parte 1)
+  // ==============================
+  const [ubicacionesCount, setUbicacionesCount] = useState(0);
+  const [loadingUbicaciones, setLoadingUbicaciones] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/clients/${slug}/locations`);
+        if (!cancelado) setUbicacionesCount(res.data.length);
+      } catch (err) {
+        if (err?.response?.status !== 404) {
+          console.error("Error cargando ubicaciones:", err);
+        }
+      } finally {
+        if (!cancelado) setLoadingUbicaciones(false);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
   }, [slug]);
 
   const abrirNuevoParte = () => {
@@ -446,6 +472,37 @@ const ClientDetailPage = () => {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Tarjeta: Ubicaciones (Fase 6 parte 1) */}
+      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-ubicaciones">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
+                <MapPin className="w-6 h-6 text-indigo-500" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Ubicaciones</p>
+                <p className="text-sm text-slate-500">
+                  {loadingUbicaciones
+                    ? "Cargando..."
+                    : `${ubicacionesCount} ${ubicacionesCount === 1 ? "ubicación" : "ubicaciones"}`}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/clients/${slug}/locations`)}
+              className="border-slate-200"
+              size="sm"
+              data-testid="btn-ver-ubicaciones"
+            >
+              <ChevronRight className="w-4 h-4 mr-1" />
+              {ubicacionesCount > 0 ? "Ver ubicaciones" : "Añadir ubicaciones"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
