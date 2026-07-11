@@ -1806,6 +1806,146 @@ async def delete_client(client_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# =====================================================================
+# UBICACIONES DE CLIENTE (Fase 6)
+# ---------------------------------------------------------------------
+# Generico: cualquier cliente puede tener ubicaciones (sedes, estaciones,
+# delegaciones...) que requieren visitas periodicas. Nace del caso GALP
+# (39 estaciones de servicio con visitas recurrentes que antes se
+# llevaban en Excel), pero no esta atado a ese cliente.
+#
+# FRECUENCIA_OBJETIVO_VISITAS es un mapeo FIJO confirmado sobre datos
+# reales del cliente, sin excepciones observadas: no es literal (p.ej.
+# "trimestral" son 3 visitas/año, no 4). Se autorellena en el frontend
+# al elegir la frecuencia, pero el campo queda editable por si algun
+# caso futuro lo necesita distinto.
+#
+# El calculo de visitas realizadas/pendientes (a partir de las visitas
+# reales registradas) llega en la Fase 6 parte 2, junto al calendario.
+# =====================================================================
+
+FRECUENCIA_OBJETIVO_VISITAS = {
+    "MENSUAL": 8,
+    "BIMESTRAL": 4,
+    "TRIMESTRAL": 3,
+    "SEMESTRAL": 2,
+    "ANUAL": 1,
+}
+
+_FRECUENCIA_PATTERN = r"^(MENSUAL|BIMESTRAL|TRIMESTRAL|SEMESTRAL|ANUAL)$"
+_DIFICULTAD_PATTERN = r"^(facil|media|dificil)$"
+
+
+class ClientLocationBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    referencia_cliente: Optional[str] = Field(
+        None, max_length=50, description="Codigo interno del propio cliente (ej. E0803 en GALP)"
+    )
+    direccion: Optional[str] = Field("", max_length=300)
+    email_contacto: Optional[str] = Field(None, max_length=200)
+    enlace_maps: Optional[str] = Field(None, max_length=500)
+    horas_por_visita: float = Field(..., ge=0)
+    frecuencia: str = Field(..., pattern=_FRECUENCIA_PATTERN)
+    visitas_objetivo_ano: int = Field(..., ge=0)
+    responsable_id: Optional[str] = None
+    dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class ClientLocationCreate(ClientLocationBase):
+    pass
+
+
+class ClientLocationUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    referencia_cliente: Optional[str] = Field(None, max_length=50)
+    direccion: Optional[str] = Field(None, max_length=300)
+    email_contacto: Optional[str] = Field(None, max_length=200)
+    enlace_maps: Optional[str] = Field(None, max_length=500)
+    horas_por_visita: Optional[float] = Field(None, ge=0)
+    frecuencia: Optional[str] = Field(None, pattern=_FRECUENCIA_PATTERN)
+    visitas_objetivo_ano: Optional[int] = Field(None, ge=0)
+    responsable_id: Optional[str] = None
+    dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class ClientLocation(ClientLocationBase):
+    id: str
+    client_id: str
+    client_slug: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+@api_router.get("/clients/{slug}/locations", response_model=List[ClientLocation])
+async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
+    """Ubicaciones activas del cliente, por nombre ascendente."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cursor = db.client_locations.find(
+        {"client_id": cliente["id"], "activo": True}
+    ).sort("nombre", 1)
+    return [ClientLocation(**doc) async for doc in cursor]
+
+
+@api_router.post("/clients/{slug}/locations", response_model=ClientLocation)
+async def create_client_location(
+    slug: str, payload: ClientLocationCreate, _: dict = Depends(require_admin)
+):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cliente["id"],
+        "client_slug": slug,
+        **payload.model_dump(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.client_locations.insert_one(doc)
+    return ClientLocation(**doc)
+
+
+@api_router.put("/locations/{location_id}", response_model=ClientLocation)
+async def update_client_location(
+    location_id: str, payload: ClientLocationUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.client_locations.find_one({"id": location_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return ClientLocation(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.client_locations.update_one({"id": location_id}, {"$set": updates})
+    doc = await db.client_locations.find_one({"id": location_id})
+    return ClientLocation(**doc)
+
+
+@api_router.delete("/locations/{location_id}")
+async def delete_client_location(location_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False, no borra el historial de visitas."""
+    doc = await db.client_locations.find_one({"id": location_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    await db.client_locations.update_one(
+        {"id": location_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
 
 # ---------------------------------------------------------------------
 # Presupuestos asociados a un cliente (Fase 4)
