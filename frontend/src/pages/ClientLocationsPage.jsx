@@ -8,6 +8,7 @@ import {
   Trash2,
   Search,
   ExternalLink,
+  Calendar,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -74,6 +75,7 @@ const emptyForm = {
   frecuencia: "",
   visitas_objetivo_ano: "",
   responsable_id: "none",
+  responsable_texto_libre: "",
   dificultad: "none",
   notas: "",
 };
@@ -150,6 +152,7 @@ const ClientLocationsPage = () => {
       frecuencia: u.frecuencia || "",
       visitas_objetivo_ano: u.visitas_objetivo_ano ?? "",
       responsable_id: u.responsable_id || "none",
+      responsable_texto_libre: u.responsable_texto_libre || "",
       dificultad: u.dificultad || "none",
       notas: u.notas || "",
     });
@@ -190,6 +193,7 @@ const ClientLocationsPage = () => {
         frecuencia: form.frecuencia,
         visitas_objetivo_ano: Number(form.visitas_objetivo_ano) || 0,
         responsable_id: form.responsable_id === "none" ? null : form.responsable_id,
+        responsable_texto_libre: form.responsable_texto_libre.trim(),
         dificultad: form.dificultad === "none" ? null : form.dificultad,
         notas: form.notas.trim(),
       };
@@ -257,16 +261,27 @@ const ClientLocationsPage = () => {
             </p>
           </div>
         </div>
-        {isAdmin && (
+        <div className="flex items-center gap-2">
           <Button
-            onClick={abrirNueva}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white"
-            data-testid="nueva-ubicacion-btn"
+            variant="outline"
+            onClick={() => navigate(`/clients/${slug}/locations/calendar`)}
+            className="border-slate-200"
+            data-testid="ver-calendario-btn"
           >
-            <Plus className="w-4 h-4 mr-2" />
-            Nueva ubicación
+            <Calendar className="w-4 h-4 mr-2" />
+            Ver calendario
           </Button>
-        )}
+          {isAdmin && (
+            <Button
+              onClick={abrirNueva}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="nueva-ubicacion-btn"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Nueva ubicación
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative mb-4 max-w-sm">
@@ -327,9 +342,21 @@ const ClientLocationsPage = () => {
                           {u.frecuencia} · {u.visitas_objetivo_ano}{" "}
                           {u.visitas_objetivo_ano === 1 ? "visita" : "visitas"}/año
                         </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-medium ${
+                            u.visitas_pendientes_ano === 0
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-amber-50 text-amber-700"
+                          }`}
+                          data-testid={`visitas-contador-${u.id}`}
+                        >
+                          {u.visitas_realizadas_ano}/{u.visitas_objetivo_ano} este año
+                        </span>
                         <span>{u.horas_por_visita} h/visita</span>
-                        {u.responsable_id && (
+                        {u.responsable_id ? (
                           <span>{operariosPorId[u.responsable_id] || "Operario"}</span>
+                        ) : (
+                          u.responsable_texto_libre && <span>{u.responsable_texto_libre}</span>
                         )}
                       </div>
                       {u.direccion && (
@@ -485,6 +512,15 @@ const ClientLocationsPage = () => {
                   ))}
                 </SelectContent>
               </Select>
+              <Input
+                value={form.responsable_texto_libre}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, responsable_texto_libre: e.target.value }))
+                }
+                placeholder="O escribe un nombre si no está registrado en la app"
+                className="text-sm"
+                data-testid="loc-responsable-libre-input"
+              />
             </div>
 
             <div className="space-y-1.5">
