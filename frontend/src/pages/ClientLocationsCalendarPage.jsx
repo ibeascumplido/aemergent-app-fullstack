@@ -190,13 +190,6 @@ const ClientLocationsCalendarPage = () => {
     return map;
   }, [visitas]);
 
-  const nombresOperariosVisita = (v) => {
-    const registrados = (v.operarios_ids || []).map((id) => operariosPorId[id] || "Operario");
-    const libres = v.operarios_texto_libre
-      ? v.operarios_texto_libre.split(",").map((n) => n.trim()).filter(Boolean)
-      : [];
-    return [...registrados, ...libres];
-  };
 
   const days = getDaysInMonth(year, month);
 
@@ -446,11 +439,8 @@ const ClientLocationsCalendarPage = () => {
                         {v.location_nombre}
                       </span>
                     </div>
-                    <div className="text-[10px] text-indigo-700 truncate" title={nombresOperariosVisita(v).join(", ")}>
-                      {nombresOperariosVisita(v).join(", ") || "Sin operarios"}
-                    </div>
-                    <span className="text-[10px] text-indigo-500">
-                      {v.horas_totales}h
+                    <span className="text-[10px] text-indigo-600 font-medium">
+                      {v.num_operarios} {v.num_operarios === 1 ? "operario" : "operarios"} · {v.horas_totales}h
                     </span>
                   </button>
                 ))}
