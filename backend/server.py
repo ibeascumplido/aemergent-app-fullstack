@@ -21,7 +21,7 @@ import asyncio
 import resend
 import cloudinary
 import cloudinary.uploader
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -31,6 +31,8 @@ from reportlab.platypus import (
     Spacer,
     Image as RLImage,
     HRFlowable,
+    Table,
+    TableStyle,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -3036,13 +3038,156 @@ def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
     return buffer.getvalue()
 
 
+async def _descargar_imagen_pdf(url: Optional[str], max_width_cm: float = 16.0):
+    """Descarga una imagen por URL (ej. el mapa de zonas en Cloudinary, no es
+    base64) y la devuelve como Image de reportlab, escalada. A diferencia de
+    _decode_firma_pdf (que decodifica base64), esta hace una peticion HTTP."""
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client_http:
+            resp = await client_http.get(url)
+            resp.raise_for_status()
+        img = RLImage(io.BytesIO(resp.content))
+        max_w = max_width_cm * cm
+        if img.drawWidth > max_w:
+            ratio = max_w / img.drawWidth
+            img.drawWidth = max_w
+            img.drawHeight = img.drawHeight * ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo descargar la imagen del mapa de zonas", exc_info=True)
+        return None
+
+
+async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
+    """PDF especifico para partes con usa_zonas=True (Fase 6): reproduce la
+    pestaña INFORME del Excel original de Style Outlet - cuadrante tarea x
+    dia marcado solo con X (las zonas internas NO se exponen al cliente),
+    mas el mapa de zonas y las observaciones de cada sesion. Sustituye por
+    completo al informe de sesiones (_generar_pdf_parte) para este tipo de
+    parte: el cliente no necesita ver duracion, operarios ni firmas aqui."""
+    if doc.get("mes_rejilla"):
+        year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+    else:
+        year, month = doc["creado_en"].year, doc["creado_en"].month
+    dias = _dias_del_mes(year, month)
+
+    tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    tareas = [t async for t in tareas_cursor]
+
+    marcadas = set()  # {(tarea_id, fecha)}
+    observaciones = []  # [(fecha, nota)]
+    sesiones_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort("fecha", 1)
+    async for s in sesiones_cursor:
+        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
+            if zonas:
+                marcadas.add((tarea_id, s["fecha"]))
+        if s.get("notas"):
+            observaciones.append((s["fecha"], s["notas"]))
+
+    buffer = io.BytesIO()
+    pdf_doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm,
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        title=doc["titulo"],
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "TituloParte", parent=styles["Heading1"], fontSize=15, spaceAfter=2
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=10,
+    )
+    seccion_style = ParagraphStyle(
+        "Seccion", parent=styles["Heading3"], fontSize=11, spaceBefore=10, spaceAfter=6
+    )
+    normal_style = ParagraphStyle(
+        "NormalP", parent=styles["Normal"], fontSize=9, leading=12
+    )
+
+    story = [
+        Paragraph(_p(doc["titulo"]), titulo_style),
+        Paragraph(
+            f"{_p(cliente['nombre']) if cliente else ''} &nbsp;&middot;&nbsp; "
+            f"{_MESES_ES[month - 1].capitalize()} de {year}",
+            subtitulo_style,
+        ),
+        HRFlowable(width="100%", color=colors.HexColor("#e2e8f0"), thickness=1),
+        Spacer(1, 8),
+    ]
+
+    # Cuadrante: tarea x dia, solo X (sin zonas)
+    cabecera = ["Servicios realizados"] + [str(int(d.split("-")[2])) for d in dias]
+    filas_tabla = [cabecera]
+    for t in tareas:
+        fila = [Paragraph(_p(t["nombre"]), normal_style)]
+        for fecha in dias:
+            fila.append("X" if (t["id"], fecha) in marcadas else "")
+        filas_tabla.append(fila)
+
+    ancho_disponible = landscape(A4)[0] - 2.4 * cm
+    ancho_nombre = 4.2 * cm
+    ancho_dia = (ancho_disponible - ancho_nombre) / len(dias)
+    tabla = Table(
+        filas_tabla,
+        colWidths=[ancho_nombre] + [ancho_dia] * len(dias),
+        repeatRows=1,
+    )
+    tabla.setStyle(
+        TableStyle(
+            [
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+    story.append(tabla)
+
+    # Mapa de zonas
+    mapa_img = await _descargar_imagen_pdf(
+        cliente.get("mapa_zonas_url") if cliente else None, max_width_cm=22.0
+    )
+    if mapa_img:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Mapa de zonas", seccion_style))
+        story.append(mapa_img)
+
+    # Observaciones e incidencias (notas de las sesiones)
+    if observaciones:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Observaciones e incidencias", seccion_style))
+        for fecha, nota in observaciones:
+            story.append(
+                Paragraph(f"<b>{_formatear_fecha_es(fecha)}:</b> {_p(nota)}", normal_style)
+            )
+
+    pdf_doc.build(story)
+    return buffer.getvalue()
+
+
 @api_router.get("/work-orders/{work_order_id}/pdf")
 async def descargar_pdf_parte(
     work_order_id: str, _: dict = Depends(require_approved)
 ):
     doc = await _cargar_parte(work_order_id)
-    vista = await _construir_vista_publica(doc)
-    pdf_bytes = _generar_pdf_parte(vista)
+    if doc.get("usa_zonas"):
+        cliente = await db.clients.find_one({"id": doc["client_id"]})
+        pdf_bytes = await _generar_pdf_rejilla_zonas(doc, cliente)
+    else:
+        vista = await _construir_vista_publica(doc)
+        pdf_bytes = _generar_pdf_parte(vista)
     filename = f"parte-{doc['id'][:8]}.pdf"
     return Response(
         content=pdf_bytes,
