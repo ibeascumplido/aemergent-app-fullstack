@@ -839,15 +839,18 @@ const WorkOrderDetailPage = () => {
                     <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                       <ClipboardList className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       {tareas.map((t) => {
-                        const zona = s.tareas_zonas?.[t.id];
+                        const zonas = s.tareas_zonas?.[t.id] || [];
+                        const zonasReales = zonas.filter((z) => z !== "X");
                         return (
                           <span
                             key={t.id}
                             className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full"
                           >
                             {t.nombre}
-                            {parte.usa_zonas && zona && zona !== "X" && (
-                              <span className="font-semibold ml-1">· {zona}</span>
+                            {parte.usa_zonas && zonasReales.length > 0 && (
+                              <span className="font-semibold ml-1">
+                                · {zonasReales.join(",")}
+                              </span>
                             )}
                           </span>
                         );

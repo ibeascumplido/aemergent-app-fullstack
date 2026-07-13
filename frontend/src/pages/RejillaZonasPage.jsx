@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MapPin, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, MapPin, Image as ImageIcon, Check } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -12,12 +18,22 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 // Mismas letras fijas que en SessionDialog (Fase 6): se corresponden con
 // el mapa de zonas que el cliente tiene subido.
 const ZONA_LETRAS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M"];
+const MAX_ZONAS_POR_CELDA = 3;
 
 const DIAS_SEMANA_CORTO = ["L", "M", "X", "J", "V", "S", "D"];
+const MESES_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
 
 const formatearDiaCorto = (fechaISO) => {
   const d = new Date(fechaISO + "T00:00:00");
   return { numero: d.getDate(), semana: DIAS_SEMANA_CORTO[(d.getDay() + 6) % 7] };
+};
+
+const formatearFechaLarga = (fechaISO) => {
+  const d = new Date(fechaISO + "T00:00:00");
+  return d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
 };
 
 const RejillaZonasPage = () => {
@@ -28,11 +44,15 @@ const RejillaZonasPage = () => {
   const [cliente, setCliente] = useState(null);
   const [dias, setDias] = useState([]);
   const [tareas, setTareas] = useState([]);
-  const [celdas, setCeldas] = useState({}); // { tarea_id: { fecha: zona } }
+  const [celdas, setCeldas] = useState({}); // { tarea_id: { fecha: [zonas] } }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [guardandoCeldas, setGuardandoCeldas] = useState(new Set());
   const [mapaAbierto, setMapaAbierto] = useState(false);
+
+  // Modal compartido de edicion de celda (una sola instancia, no una por celda)
+  const [celdaActiva, setCeldaActiva] = useState(null); // { tareaId, tareaNombre, fecha }
+  const [zonasSeleccionadas, setZonasSeleccionadas] = useState([]);
+  const [guardandoCelda, setGuardandoCelda] = useState(false);
 
   const cargar = async () => {
     setLoading(true);
@@ -59,7 +79,7 @@ const RejillaZonasPage = () => {
       const mapa = {};
       rejillaRes.data.celdas.forEach((c) => {
         if (!mapa[c.tarea_id]) mapa[c.tarea_id] = {};
-        mapa[c.tarea_id][c.fecha] = c.zona;
+        mapa[c.tarea_id][c.fecha] = c.zonas;
       });
       setCeldas(mapa);
     } catch (err) {
@@ -77,42 +97,50 @@ const RejillaZonasPage = () => {
 
   const parteAbierto = parte?.estado === "abierto";
 
-  const guardarCelda = async (tareaId, fecha, valor) => {
+  const abrirCelda = (tareaId, tareaNombre, fecha) => {
     if (!parteAbierto) return;
-    const key = `${tareaId}|${fecha}`;
-    setGuardandoCeldas((prev) => new Set(prev).add(key));
+    setZonasSeleccionadas(celdas[tareaId]?.[fecha] || []);
+    setCeldaActiva({ tareaId, tareaNombre, fecha });
+  };
 
-    const anterior = celdas[tareaId]?.[fecha];
-    // Actualizacion optimista
-    setCeldas((prev) => {
-      const copia = { ...prev, [tareaId]: { ...(prev[tareaId] || {}) } };
-      if (valor) copia[tareaId][fecha] = valor;
-      else delete copia[tareaId][fecha];
-      return copia;
+  const toggleZonaModal = (zona) => {
+    if (zona === "X") {
+      setZonasSeleccionadas((prev) => (prev.includes("X") ? [] : ["X"]));
+      return;
+    }
+    setZonasSeleccionadas((prev) => {
+      const sinX = prev.filter((z) => z !== "X");
+      if (sinX.includes(zona)) return sinX.filter((z) => z !== zona);
+      if (sinX.length >= MAX_ZONAS_POR_CELDA) {
+        toast.warning(`Máximo ${MAX_ZONAS_POR_CELDA} zonas por día`);
+        return sinX;
+      }
+      return [...sinX, zona];
     });
+  };
 
+  const guardarCeldaModal = async () => {
+    if (!celdaActiva) return;
+    const { tareaId, fecha } = celdaActiva;
+    setGuardandoCelda(true);
     try {
       await axios.put(`${API}/work-orders/${id}/rejilla-zonas/celda`, {
         tarea_id: tareaId,
         fecha,
-        zona: valor || null,
+        zonas: zonasSeleccionadas.length ? zonasSeleccionadas : null,
       });
-    } catch (err) {
-      console.error("Error guardando celda:", err);
-      toast.error("No se pudo guardar. Se revierte el cambio.");
-      // Revertir al valor anterior
       setCeldas((prev) => {
         const copia = { ...prev, [tareaId]: { ...(prev[tareaId] || {}) } };
-        if (anterior) copia[tareaId][fecha] = anterior;
+        if (zonasSeleccionadas.length) copia[tareaId][fecha] = zonasSeleccionadas;
         else delete copia[tareaId][fecha];
         return copia;
       });
+      setCeldaActiva(null);
+    } catch (err) {
+      console.error("Error guardando celda:", err);
+      toast.error("No se pudo guardar. Intentalo de nuevo.");
     } finally {
-      setGuardandoCeldas((prev) => {
-        const s = new Set(prev);
-        s.delete(key);
-        return s;
-      });
+      setGuardandoCelda(false);
     }
   };
 
@@ -159,7 +187,18 @@ const RejillaZonasPage = () => {
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight font-['Manrope']">
               Rejilla de zonas
             </h1>
-            <p className="text-sm text-slate-500">{parte.titulo}</p>
+            <p className="text-sm text-slate-500">
+              {parte.titulo}
+              {dias.length > 0 && (
+                <span className="ml-2 text-slate-400">
+                  ·{" "}
+                  {(() => {
+                    const [y, m] = dias[0].split("-");
+                    return `${MESES_ES[Number(m) - 1]} de ${y}`;
+                  })()}
+                </span>
+              )}
+            </p>
           </div>
         </div>
         {cliente?.mapa_zonas_url && (
@@ -183,8 +222,8 @@ const RejillaZonasPage = () => {
       )}
 
       <p className="text-xs text-slate-400 mb-3">
-        Clica una celda y elige la zona (A-M) donde se hizo esa tarea ese día, o "X" si no
-        aplica una zona concreta. Deja en blanco si no se hizo.
+        Clica una celda y elige hasta {MAX_ZONAS_POR_CELDA} zonas (A-M) donde se hizo esa
+        tarea ese día, o "X" si no aplica una zona concreta. Deja en blanco si no se hizo.
       </p>
 
       <div className="border border-slate-200 rounded-lg overflow-auto max-w-full">
@@ -197,7 +236,7 @@ const RejillaZonasPage = () => {
               {diasFormateados.map((d, i) => (
                 <th
                   key={dias[i]}
-                  className="bg-slate-50 border-b border-slate-200 px-1 py-1 text-center font-medium text-slate-500 w-11"
+                  className="bg-slate-50 border-b border-slate-200 px-1 py-1 text-center font-medium text-slate-500 w-12"
                 >
                   <div>{d.numero}</div>
                   <div className="text-[9px] text-slate-400 font-normal">{d.semana}</div>
@@ -212,28 +251,22 @@ const RejillaZonasPage = () => {
                   {t.tarea_nombre}
                 </td>
                 {dias.map((fecha) => {
-                  const valor = celdas[t.tarea_id]?.[fecha] || "";
-                  const key = `${t.tarea_id}|${fecha}`;
-                  const guardando = guardandoCeldas.has(key);
+                  const zonas = celdas[t.tarea_id]?.[fecha] || [];
+                  const texto = zonas.join(",");
                   return (
                     <td key={fecha} className="border-l border-slate-100 p-0 text-center">
-                      <select
-                        value={valor}
-                        disabled={!parteAbierto || guardando}
-                        onChange={(e) => guardarCelda(t.tarea_id, fecha, e.target.value)}
-                        className={`w-11 h-7 text-center text-[11px] border-0 bg-transparent focus:ring-1 focus:ring-inset focus:ring-indigo-400 cursor-pointer disabled:cursor-not-allowed ${
-                          valor ? "font-semibold text-indigo-700" : "text-slate-300"
+                      <button
+                        type="button"
+                        disabled={!parteAbierto}
+                        onClick={() => abrirCelda(t.tarea_id, t.tarea_nombre, fecha)}
+                        className={`w-12 h-7 text-[10px] leading-tight border-0 bg-transparent hover:bg-indigo-50 cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-transparent ${
+                          zonas.length ? "font-semibold text-indigo-700" : "text-slate-300"
                         }`}
                         data-testid={`celda-${t.tarea_id}-${fecha}`}
+                        title={texto || "Sin asignar"}
                       >
-                        <option value=""> </option>
-                        <option value="X">X</option>
-                        {ZONA_LETRAS.map((letra) => (
-                          <option key={letra} value={letra}>
-                            {letra}
-                          </option>
-                        ))}
-                      </select>
+                        {texto || "·"}
+                      </button>
                     </td>
                   );
                 })}
@@ -242,6 +275,92 @@ const RejillaZonasPage = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Modal compartido: editar zonas de una celda (hasta 3) */}
+      <Dialog
+        open={!!celdaActiva}
+        onOpenChange={(v) => !guardandoCelda && !v && setCeldaActiva(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {celdaActiva?.tareaNombre}
+              {celdaActiva && (
+                <span className="block text-sm font-normal text-slate-500 mt-0.5 capitalize">
+                  {formatearFechaLarga(celdaActiva.fecha)}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-1">
+            <button
+              type="button"
+              onClick={() => toggleZonaModal("X")}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
+                zonasSeleccionadas.includes("X")
+                  ? "bg-slate-100 border-slate-300 text-slate-700 font-medium"
+                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+              }`}
+              data-testid="modal-zona-X"
+            >
+              Sin zona concreta (X)
+              {zonasSeleccionadas.includes("X") && <Check className="w-4 h-4" />}
+            </button>
+
+            <div>
+              <p className="text-xs text-slate-400 mb-1.5">
+                O hasta {MAX_ZONAS_POR_CELDA} zonas concretas:
+              </p>
+              <div className="grid grid-cols-5 gap-1.5">
+                {ZONA_LETRAS.map((letra) => {
+                  const activa = zonasSeleccionadas.includes(letra);
+                  return (
+                    <button
+                      type="button"
+                      key={letra}
+                      onClick={() => toggleZonaModal(letra)}
+                      className={`h-9 rounded-lg border text-sm font-medium transition-colors ${
+                        activa
+                          ? "bg-indigo-600 border-indigo-600 text-white"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                      data-testid={`modal-zona-${letra}`}
+                    >
+                      {letra}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {zonasSeleccionadas.length > 0 && zonasSeleccionadas[0] !== "X" && (
+              <p className="text-xs text-slate-400">
+                Seleccionadas: {zonasSeleccionadas.join(", ")} ({zonasSeleccionadas.length}/
+                {MAX_ZONAS_POR_CELDA})
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setCeldaActiva(null)}
+              disabled={guardandoCelda}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={guardarCeldaModal}
+              disabled={guardandoCelda}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="guardar-celda-btn"
+            >
+              {guardandoCelda ? "Guardando..." : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={mapaAbierto} onOpenChange={setMapaAbierto}>
         <DialogContent className="max-w-3xl">
