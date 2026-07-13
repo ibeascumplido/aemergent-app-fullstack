@@ -191,10 +191,12 @@ const ClientDetailPage = () => {
   const [loadingPartes, setLoadingPartes] = useState(true);
 
   const [dialogNuevoParte, setDialogNuevoParte] = useState(false);
+  const mesActual = new Date().toISOString().slice(0, 7);
   const [nuevoParteForm, setNuevoParteForm] = useState({
     titulo: "",
     budget_template_id: "",
     usa_zonas: false,
+    mes_rejilla: mesActual,
   });
   const [creandoParte, setCreandoParte] = useState(false);
 
@@ -247,7 +249,12 @@ const ClientDetailPage = () => {
   }, [slug]);
 
   const abrirNuevoParte = () => {
-    setNuevoParteForm({ titulo: "", budget_template_id: "", usa_zonas: false });
+    setNuevoParteForm({
+      titulo: "",
+      budget_template_id: "",
+      usa_zonas: false,
+      mes_rejilla: mesActual,
+    });
     setDialogNuevoParte(true);
   };
 
@@ -263,7 +270,12 @@ const ClientDetailPage = () => {
     }
     setCreandoParte(true);
     try {
-      const payload = { client_id: cliente.id, titulo, usa_zonas: nuevoParteForm.usa_zonas };
+      const payload = {
+        client_id: cliente.id,
+        titulo,
+        usa_zonas: nuevoParteForm.usa_zonas,
+        mes_rejilla: nuevoParteForm.usa_zonas ? nuevoParteForm.mes_rejilla : null,
+      };
       if (nuevoParteForm.budget_template_id) {
         payload.budget_template_id = nuevoParteForm.budget_template_id;
       }
@@ -673,6 +685,24 @@ const ClientDetailPage = () => {
                 data-testid="parte-usa-zonas-switch"
               />
             </div>
+            {nuevoParteForm.usa_zonas && (
+              <div className="space-y-1.5">
+                <Label htmlFor="parte-mes-rejilla">Mes de la rejilla</Label>
+                <Input
+                  id="parte-mes-rejilla"
+                  type="month"
+                  value={nuevoParteForm.mes_rejilla}
+                  onChange={(e) =>
+                    setNuevoParteForm((f) => ({ ...f, mes_rejilla: e.target.value }))
+                  }
+                  data-testid="parte-mes-rejilla-input"
+                />
+                <p className="text-xs text-slate-400">
+                  Los días de la rejilla corresponden a este mes, no a cuándo crees el parte —
+                  puedes hacer partes con antelación o retroactivos.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
