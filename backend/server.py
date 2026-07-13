@@ -2499,6 +2499,13 @@ class WorkOrderBase(BaseModel):
         "(letras A-M, o X para 'sin zona concreta'). Se elige al crear el parte; no todos los "
         "partes lo necesitan, es opcional caso por caso.",
     )
+    mes_rejilla: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}$",
+        description="Mes/año que representa la rejilla de zonas, formato 'YYYY-MM'. "
+        "Independiente de cuando se crea el parte (se puede hacer un parte con antelacion o "
+        "retroactivo). Si no se especifica, se usa el mes de creacion del parte.",
+    )
 
 
 class WorkOrderCreate(WorkOrderBase):
@@ -2511,6 +2518,7 @@ class WorkOrderUpdate(BaseModel):
     budget_template_id: Optional[str] = None
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
+    mes_rejilla: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
 
 
 class WorkOrder(WorkOrderBase):
@@ -2542,11 +2550,12 @@ class WorkSessionBase(BaseModel):
     firmante_responsable_texto: Optional[str] = Field("", max_length=200)
     tareas_ids: List[str] = Field(default_factory=list)
     tareas_libres: List[str] = Field(default_factory=list)
-    tareas_zonas: Dict[str, str] = Field(
+    tareas_zonas: Dict[str, List[str]] = Field(
         default_factory=dict,
-        description="Solo relevante si el parte tiene usa_zonas=True. Mapa tarea_id -> zona "
-        "('A'..'M' o 'X' para sin zona concreta). El desplegable del frontend garantiza valores "
-        "validos; el backend no lo restringe para no acoplarse a la lista exacta de letras.",
+        description="Solo relevante si el parte tiene usa_zonas=True. Mapa tarea_id -> lista de "
+        "hasta 3 zonas ('A'..'M', o ['X'] para sin zona concreta - no se combina con letras "
+        "reales). El frontend garantiza valores validos y el limite de 3; el backend no lo "
+        "restringe para no acoplarse a la lista exacta de letras.",
     )
     notas: Optional[str] = Field("", max_length=2000)
     visibilidad: Dict[str, bool] = Field(
@@ -2574,7 +2583,7 @@ class WorkSessionUpdate(BaseModel):
     firmante_responsable_texto: Optional[str] = None
     tareas_ids: Optional[List[str]] = None
     tareas_libres: Optional[List[str]] = None
-    tareas_zonas: Optional[Dict[str, str]] = None
+    tareas_zonas: Optional[Dict[str, List[str]]] = None
     notas: Optional[str] = None
     visibilidad: Optional[Dict[str, bool]] = None
     firma_responsable: Optional[str] = Field(None, max_length=270000)
@@ -2705,6 +2714,7 @@ async def create_work_order(
         "titulo": payload.titulo.strip(),
         "notas": (payload.notas or "").strip(),
         "usa_zonas": payload.usa_zonas,
+        "mes_rejilla": payload.mes_rejilla,
         "estado": "abierto",
         "creado_por": current_user.get("id") or current_user.get("email") or "?",
         "creado_en": now,
@@ -3141,7 +3151,7 @@ async def delete_session(
 class CeldaRejilla(BaseModel):
     tarea_id: str
     fecha: str
-    zona: str
+    zonas: List[str]
 
 
 class FilaRejillaZonas(BaseModel):
@@ -3158,19 +3168,17 @@ class RejillaZonas(BaseModel):
 class CeldaRejillaPayload(BaseModel):
     tarea_id: str
     fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    zona: Optional[str] = Field(
-        None, description="'A'..'M' o 'X'. None/ausente = quitar la tarea de ese dia."
+    zonas: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Hasta 3 de 'A'..'M', o ['X']. None/lista vacia = quitar la tarea de ese dia.",
     )
 
 
-def _dias_del_mes(momento: datetime) -> List[str]:
-    """Todas las fechas ISO del mes de 'momento' (usado: mes de creacion del parte)."""
-    primer_dia = date(momento.year, momento.month, 1)
-    siguiente_mes = (
-        date(momento.year + 1, 1, 1)
-        if momento.month == 12
-        else date(momento.year, momento.month + 1, 1)
-    )
+def _dias_del_mes(year: int, month: int) -> List[str]:
+    """Todas las fechas ISO del mes dado (year, month), en orden."""
+    primer_dia = date(year, month, 1)
+    siguiente_mes = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
     ultimo_dia = siguiente_mes - timedelta(days=1)
     dias = []
     d = primer_dia
@@ -3188,7 +3196,11 @@ async def obtener_rejilla_zonas(
     if not doc.get("usa_zonas"):
         raise HTTPException(status_code=400, detail="Este parte no usa zonas")
 
-    dias = _dias_del_mes(doc["creado_en"])
+    if doc.get("mes_rejilla"):
+        year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+    else:
+        year, month = doc["creado_en"].year, doc["creado_en"].month
+    dias = _dias_del_mes(year, month)
 
     tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
     tareas = [
@@ -3199,8 +3211,9 @@ async def obtener_rejilla_zonas(
     celdas = []
     sesiones_cursor = db.work_sessions.find({"work_order_id": work_order_id})
     async for s in sesiones_cursor:
-        for tarea_id, zona in (s.get("tareas_zonas") or {}).items():
-            celdas.append(CeldaRejilla(tarea_id=tarea_id, fecha=s["fecha"], zona=zona))
+        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
+            if zonas:
+                celdas.append(CeldaRejilla(tarea_id=tarea_id, fecha=s["fecha"], zonas=zonas))
 
     return RejillaZonas(dias=dias, tareas=tareas, celdas=celdas)
 
@@ -3227,7 +3240,7 @@ async def actualizar_celda_rejilla(
         {"work_order_id": work_order_id, "fecha": payload.fecha}
     )
 
-    if payload.zona is None:
+    if not payload.zonas:
         if not sesion:
             return {"ok": True}
         tareas_ids = [t for t in sesion.get("tareas_ids", []) if t != payload.tarea_id]
@@ -3244,7 +3257,7 @@ async def actualizar_celda_rejilla(
         tareas_ids = sesion.get("tareas_ids", [])
         if payload.tarea_id not in tareas_ids:
             tareas_ids = tareas_ids + [payload.tarea_id]
-        tareas_zonas = {**(sesion.get("tareas_zonas") or {}), payload.tarea_id: payload.zona}
+        tareas_zonas = {**(sesion.get("tareas_zonas") or {}), payload.tarea_id: payload.zonas}
         await db.work_sessions.update_one(
             {"id": sesion["id"]},
             {"$set": {"tareas_ids": tareas_ids, "tareas_zonas": tareas_zonas, "actualizado_en": now}},
@@ -3262,7 +3275,7 @@ async def actualizar_celda_rejilla(
             "firmante_responsable_texto": "",
             "tareas_ids": [payload.tarea_id],
             "tareas_libres": [],
-            "tareas_zonas": {payload.tarea_id: payload.zona},
+            "tareas_zonas": {payload.tarea_id: payload.zonas},
             "notas": "",
             "visibilidad": {},
             "firma_responsable": None,
