@@ -15,6 +15,7 @@ import ClientDetailPage from "@/pages/ClientDetailPage";
 import ClientLocationsPage from "@/pages/ClientLocationsPage";
 import ClientLocationsCalendarPage from "@/pages/ClientLocationsCalendarPage";
 import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
+import RejillaZonasPage from "@/pages/RejillaZonasPage";
 import PublicSignPage from "@/pages/PublicSignPage";
 import LoginPage from "@/components/auth/LoginPage";
 import AuthCallback from "@/components/auth/AuthCallback";
@@ -94,6 +95,11 @@ function App() {
               <Route path="work-orders/:id" element={
                 <ProtectedRoute requireBudgets>
                   <WorkOrderDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="work-orders/:id/rejilla" element={
+                <ProtectedRoute requireBudgets>
+                  <RejillaZonasPage />
                 </ProtectedRoute>
               } />
             </Route>
