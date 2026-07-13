@@ -2933,7 +2933,9 @@ def _formatear_fecha_es(fecha_str: str) -> str:
         return fecha_str
 
 
-def _decode_firma_pdf(data_url: Optional[str], max_width_cm: float = 6.0):
+def _decode_firma_pdf(
+    data_url: Optional[str], max_width_cm: float = 6.0, max_height_cm: float = 6.0
+):
     if not data_url:
         return None
     try:
@@ -2941,10 +2943,10 @@ def _decode_firma_pdf(data_url: Optional[str], max_width_cm: float = 6.0):
         raw = base64.b64decode(b64)
         img = RLImage(io.BytesIO(raw))
         max_w = max_width_cm * cm
-        if img.drawWidth > max_w:
-            ratio = max_w / img.drawWidth
-            img.drawWidth = max_w
-            img.drawHeight = img.drawHeight * ratio
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
         return img
     except Exception:
         logger.warning("No se pudo decodificar una firma para el PDF", exc_info=True)
@@ -3038,10 +3040,14 @@ def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
     return buffer.getvalue()
 
 
-async def _descargar_imagen_pdf(url: Optional[str], max_width_cm: float = 16.0):
+async def _descargar_imagen_pdf(
+    url: Optional[str], max_width_cm: float = 16.0, max_height_cm: float = 16.0
+):
     """Descarga una imagen por URL (ej. el mapa de zonas en Cloudinary, no es
-    base64) y la devuelve como Image de reportlab, escalada. A diferencia de
-    _decode_firma_pdf (que decodifica base64), esta hace una peticion HTTP."""
+    base64) y la devuelve como Image de reportlab, escalada para caber tanto
+    en ancho como en alto (una imagen muy vertical desbordaba la pagina si
+    solo se limitaba el ancho). A diferencia de _decode_firma_pdf (que
+    decodifica base64), esta hace una peticion HTTP."""
     if not url:
         return None
     try:
@@ -3050,10 +3056,10 @@ async def _descargar_imagen_pdf(url: Optional[str], max_width_cm: float = 16.0):
             resp.raise_for_status()
         img = RLImage(io.BytesIO(resp.content))
         max_w = max_width_cm * cm
-        if img.drawWidth > max_w:
-            ratio = max_w / img.drawWidth
-            img.drawWidth = max_w
-            img.drawHeight = img.drawHeight * ratio
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
         return img
     except Exception:
         logger.warning("No se pudo descargar la imagen del mapa de zonas", exc_info=True)
@@ -3157,7 +3163,9 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     # Mapa de zonas
     mapa_img = await _descargar_imagen_pdf(
-        cliente.get("mapa_zonas_url") if cliente else None, max_width_cm=22.0
+        cliente.get("mapa_zonas_url") if cliente else None,
+        max_width_cm=22.0,
+        max_height_cm=15.0,
     )
     if mapa_img:
         story.append(Spacer(1, 10))
