@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { X, Plus, Search, UserPlus, Users, Check, Eye } from "lucide-react";
+import { X, Plus, Search, UserPlus, Users, Check, Eye, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -38,6 +38,10 @@ const CAMPOS_VISIBILIDAD = [
   { key: "tareas", label: "Tareas realizadas" },
   { key: "notas", label: "Notas" },
 ];
+
+// Zonas fijas A-M (Fase 6): se corresponden con el mapa de zonas que el
+// cliente tiene subido. "X" es "sin zona concreta" y siempre es una opcion.
+const ZONA_LETRAS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M"];
 
 // Horas en pasos de 15 minutos: "00:00" .. "23:45"
 const HORAS_15MIN = Array.from({ length: 96 }, (_, i) => {
@@ -89,7 +93,7 @@ const Chk = ({ checked }) => (
  * - session: si se pasa, el dialogo edita esa sesion; si es null/undefined, crea una nueva.
  * - onSaved: callback tras guardar con exito (para refrescar la lista en el padre).
  */
-const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) => {
+const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onSaved }) => {
   const editing = !!session;
 
   const [operarios, setOperarios] = useState([]);
@@ -111,6 +115,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
   const [firmanteTipo, setFirmanteTipo] = useState("none");
 
   const [tareasIds, setTareasIds] = useState([]);
+  const [tareasZonas, setTareasZonas] = useState({});
   const [buscarTarea, setBuscarTarea] = useState("");
   const [popoverTareasOpen, setPopoverTareasOpen] = useState(false);
   const [creandoTarea, setCreandoTarea] = useState(false);
@@ -172,6 +177,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
         setFirmanteTipo("none");
       }
       setTareasIds(session.tareas_ids || []);
+      setTareasZonas(session.tareas_zonas || {});
       setNotas(session.notas || "");
       setVisibilidad({
         ...Object.fromEntries(CAMPOS_VISIBILIDAD.map((c) => [c.key, true])),
@@ -187,6 +193,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
       setOperariosLibresTexto([]);
       setFirmanteTipo("none");
       setTareasIds([]);
+      setTareasZonas({});
       setNotas("");
       setVisibilidad(Object.fromEntries(CAMPOS_VISIBILIDAD.map((c) => [c.key, true])));
       setFirmaResponsable(null);
@@ -272,6 +279,31 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
     setTareasIds((prev) =>
       prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
     );
+    setTareasZonas((prev) => {
+      if (prev[taskId]) {
+        const { [taskId]: _quitada, ...resto } = prev;
+        return resto;
+      }
+      return { ...prev, [taskId]: ["X"] };
+    });
+  };
+
+  const toggleZonaTarea = (taskId, zona) => {
+    setTareasZonas((prev) => {
+      const actuales = prev[taskId] || [];
+      if (zona === "X") {
+        return { ...prev, [taskId]: actuales.includes("X") ? [] : ["X"] };
+      }
+      const sinX = actuales.filter((z) => z !== "X");
+      if (sinX.includes(zona)) {
+        return { ...prev, [taskId]: sinX.filter((z) => z !== zona) };
+      }
+      if (sinX.length >= 3) {
+        toast.warning("Máximo 3 zonas por tarea");
+        return { ...prev, [taskId]: sinX };
+      }
+      return { ...prev, [taskId]: [...sinX, zona] };
+    });
   };
 
   const crearTareaAlVuelo = async () => {
@@ -332,6 +364,11 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
           : "",
         tareas_ids: tareasIds,
         tareas_libres: [],
+        tareas_zonas: usaZonas
+          ? Object.fromEntries(
+              tareasIds.map((id) => [id, tareasZonas[id]?.length ? tareasZonas[id] : ["X"]])
+            )
+          : {},
         notas: notas.trim(),
         visibilidad,
         firma_responsable: firmaResponsable,
@@ -702,6 +739,61 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, onSaved }) =>
               </>
             )}
           </div>
+
+          {/* Zona por tarea (Fase 6) - solo si el parte tiene usa_zonas activo */}
+          {usaZonas && tareasIds.length > 0 && (
+            <div className="space-y-2">
+              <Label className="inline-flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                Zona por tarea
+              </Label>
+              <div className="space-y-3 rounded-lg border border-slate-200 p-2.5">
+                {tareasIds.map((id) => {
+                  const t = tareas.find((x) => x.id === id);
+                  if (!t) return null;
+                  const seleccion = tareasZonas[id] || [];
+                  return (
+                    <div key={id} className="space-y-1.5 pb-2.5 border-b border-slate-100 last:border-0 last:pb-0">
+                      <span className="text-sm text-slate-700 truncate block">{t.nombre}</span>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleZonaTarea(id, "X")}
+                          className={`px-2 py-1 rounded text-xs font-medium border transition-colors ${
+                            seleccion.includes("X")
+                              ? "bg-slate-200 border-slate-300 text-slate-700"
+                              : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50"
+                          }`}
+                          data-testid={`zona-tarea-${id}-X`}
+                        >
+                          X
+                        </button>
+                        {ZONA_LETRAS.map((letra) => (
+                          <button
+                            type="button"
+                            key={letra}
+                            onClick={() => toggleZonaTarea(id, letra)}
+                            className={`w-7 h-7 rounded text-xs font-medium border transition-colors ${
+                              seleccion.includes(letra)
+                                ? "bg-indigo-600 border-indigo-600 text-white"
+                                : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                            }`}
+                            data-testid={`zona-tarea-${id}-${letra}`}
+                          >
+                            {letra}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-400">
+                Hasta 3 zonas por tarea. Las letras se corresponden con el mapa de zonas del
+                cliente. Elige X si no aplica una zona concreta.
+              </p>
+            </div>
+          )}
 
           {/* Visibilidad para el cliente */}
           <div className="space-y-2">
