@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape as xml_escape
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from enum import Enum
 import hashlib
 import secrets
@@ -3123,6 +3123,157 @@ async def delete_session(
     await db.work_orders.update_one(
         {"id": work_order_id}, {"$set": {"actualizado_en": datetime.now(timezone.utc)}}
     )
+    return {"ok": True}
+
+
+# =====================================================================
+# REJILLA DE ZONAS (Fase 6 - zonas del jardin)
+# ---------------------------------------------------------------------
+# Interfaz principal de edicion para partes con usa_zonas=True: en vez de
+# crear sesiones "pesadas" (hora, operarios, firmante...) para anotar
+# tarea+zona de un dia, aqui se edita celda a celda como en el Excel
+# original. Por debajo sigue usando work_sessions (una sesion "ligera"
+# por dia con horas 00:00-00:00 si no habia ya una), para no duplicar el
+# modelo de datos ni el calculo de horas totales del parte.
+# =====================================================================
+
+
+class CeldaRejilla(BaseModel):
+    tarea_id: str
+    fecha: str
+    zona: str
+
+
+class FilaRejillaZonas(BaseModel):
+    tarea_id: str
+    tarea_nombre: str
+
+
+class RejillaZonas(BaseModel):
+    dias: List[str]
+    tareas: List[FilaRejillaZonas]
+    celdas: List[CeldaRejilla]
+
+
+class CeldaRejillaPayload(BaseModel):
+    tarea_id: str
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    zona: Optional[str] = Field(
+        None, description="'A'..'M' o 'X'. None/ausente = quitar la tarea de ese dia."
+    )
+
+
+def _dias_del_mes(momento: datetime) -> List[str]:
+    """Todas las fechas ISO del mes de 'momento' (usado: mes de creacion del parte)."""
+    primer_dia = date(momento.year, momento.month, 1)
+    siguiente_mes = (
+        date(momento.year + 1, 1, 1)
+        if momento.month == 12
+        else date(momento.year, momento.month + 1, 1)
+    )
+    ultimo_dia = siguiente_mes - timedelta(days=1)
+    dias = []
+    d = primer_dia
+    while d <= ultimo_dia:
+        dias.append(d.isoformat())
+        d += timedelta(days=1)
+    return dias
+
+
+@api_router.get("/work-orders/{work_order_id}/rejilla-zonas", response_model=RejillaZonas)
+async def obtener_rejilla_zonas(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    doc = await _cargar_parte(work_order_id)
+    if not doc.get("usa_zonas"):
+        raise HTTPException(status_code=400, detail="Este parte no usa zonas")
+
+    dias = _dias_del_mes(doc["creado_en"])
+
+    tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    tareas = [
+        FilaRejillaZonas(tarea_id=t["id"], tarea_nombre=t["nombre"])
+        async for t in tareas_cursor
+    ]
+
+    celdas = []
+    sesiones_cursor = db.work_sessions.find({"work_order_id": work_order_id})
+    async for s in sesiones_cursor:
+        for tarea_id, zona in (s.get("tareas_zonas") or {}).items():
+            celdas.append(CeldaRejilla(tarea_id=tarea_id, fecha=s["fecha"], zona=zona))
+
+    return RejillaZonas(dias=dias, tareas=tareas, celdas=celdas)
+
+
+@api_router.put("/work-orders/{work_order_id}/rejilla-zonas/celda")
+async def actualizar_celda_rejilla(
+    work_order_id: str,
+    payload: CeldaRejillaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Crea/actualiza/quita la asignacion de una tarea+zona en un dia
+    concreto. Agrupa por fecha: si ya hay una sesion ese dia se actualiza,
+    si no existe se crea una minima (sin hora/operarios/firmante - eso
+    sigue siendo opcional y se puede rellenar despues desde la sesion si
+    hace falta)."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    if not doc.get("usa_zonas"):
+        raise HTTPException(status_code=400, detail="Este parte no usa zonas")
+
+    now = datetime.now(timezone.utc)
+    sesion = await db.work_sessions.find_one(
+        {"work_order_id": work_order_id, "fecha": payload.fecha}
+    )
+
+    if payload.zona is None:
+        if not sesion:
+            return {"ok": True}
+        tareas_ids = [t for t in sesion.get("tareas_ids", []) if t != payload.tarea_id]
+        tareas_zonas = {
+            k: v for k, v in (sesion.get("tareas_zonas") or {}).items() if k != payload.tarea_id
+        }
+        await db.work_sessions.update_one(
+            {"id": sesion["id"]},
+            {"$set": {"tareas_ids": tareas_ids, "tareas_zonas": tareas_zonas, "actualizado_en": now}},
+        )
+        return {"ok": True}
+
+    if sesion:
+        tareas_ids = sesion.get("tareas_ids", [])
+        if payload.tarea_id not in tareas_ids:
+            tareas_ids = tareas_ids + [payload.tarea_id]
+        tareas_zonas = {**(sesion.get("tareas_zonas") or {}), payload.tarea_id: payload.zona}
+        await db.work_sessions.update_one(
+            {"id": sesion["id"]},
+            {"$set": {"tareas_ids": tareas_ids, "tareas_zonas": tareas_zonas, "actualizado_en": now}},
+        )
+    else:
+        session_doc = {
+            "id": str(uuid.uuid4()),
+            "work_order_id": work_order_id,
+            "fecha": payload.fecha,
+            "hora_inicio": "00:00",
+            "hora_fin": "00:00",
+            "operarios_ids": [],
+            "operarios_texto_libre": "",
+            "firmante_responsable_id": None,
+            "firmante_responsable_texto": "",
+            "tareas_ids": [payload.tarea_id],
+            "tareas_libres": [],
+            "tareas_zonas": {payload.tarea_id: payload.zona},
+            "notas": "",
+            "visibilidad": {},
+            "firma_responsable": None,
+            "firma_responsable_en": None,
+            "creado_por": current_user.get("id") or current_user.get("email") or "?",
+            "creado_en": now,
+            "actualizado_en": now,
+        }
+        await db.work_sessions.insert_one(session_doc)
+
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": {"actualizado_en": now}})
     return {"ok": True}
 
 
