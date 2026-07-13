@@ -18,6 +18,7 @@ import {
   UserCheck,
   Link2,
   Download,
+  MapPin,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -577,6 +578,18 @@ const WorkOrderDetailPage = () => {
           <ClipboardList className="w-4 h-4 mr-2" />
           Cat. Tareas
         </Button>
+        {parte.usa_zonas && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/work-orders/${id}/rejilla`)}
+            className="border-slate-200"
+            data-testid="ver-rejilla-btn"
+          >
+            <MapPin className="w-4 h-4 mr-2" />
+            Rejilla de zonas
+          </Button>
+        )}
         {parteAbierto && (
           <Button
             variant="outline"
