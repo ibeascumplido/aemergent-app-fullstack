@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2 } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true },
+    { to: "/planificacion", icon: CalendarDays, label: "Planificación", show: true },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets },
     { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin },
