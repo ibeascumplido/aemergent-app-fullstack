@@ -8,7 +8,6 @@ import {
   Lock,
   Check,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -350,24 +349,6 @@ const PlanificacionPage = () => {
 
       {loading ? (
         <p className="text-sm text-slate-400 text-center py-8">Cargando...</p>
-      ) : columnas.length === 0 ? (
-        <Card className="border-slate-100">
-          <CardContent className="p-8 text-center text-slate-400">
-            Todavía no hay columnas configuradas.
-            {isAdmin && (
-              <>
-                <br />
-                <button
-                  type="button"
-                  onClick={abrirNuevaColumna}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1"
-                >
-                  Añadir la primera columna
-                </button>
-              </>
-            )}
-          </CardContent>
-        </Card>
       ) : (
         <div className="border border-slate-200 rounded-lg overflow-auto max-w-full">
           <table className="border-collapse text-xs min-w-max">
@@ -397,6 +378,19 @@ const PlanificacionPage = () => {
                     </div>
                   </th>
                 ))}
+                {isAdmin && (
+                  <th className="sticky top-0 z-10 border-b border-l border-slate-200 bg-white px-2 py-2 min-w-[90px]">
+                    <button
+                      type="button"
+                      onClick={abrirNuevaColumna}
+                      className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium"
+                      data-testid="anadir-columna-en-tabla-btn"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Columna
+                    </button>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -448,12 +442,20 @@ const PlanificacionPage = () => {
                         </td>
                       );
                     })}
+                    {isAdmin && <td className="border-l border-slate-100 bg-white" />}
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {!loading && columnas.length === 0 && (
+        <p className="text-xs text-slate-400 text-center mt-3">
+          Todavía no hay columnas.{" "}
+          {isAdmin ? 'Usa el botón "Columna" al final de la cabecera para añadir la primera.' : ""}
+        </p>
       )}
 
       {/* Panel flotante rapido: elegir operarios para una celda */}
