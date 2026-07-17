@@ -1,15 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, MapPin, Image as ImageIcon, Check } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -31,14 +25,10 @@ const formatearDiaCorto = (fechaISO) => {
   return { numero: d.getDate(), semana: DIAS_SEMANA_CORTO[(d.getDay() + 6) % 7] };
 };
 
-const formatearFechaLarga = (fechaISO) => {
-  const d = new Date(fechaISO + "T00:00:00");
-  return d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
-};
-
 const RejillaZonasPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const panelRef = useRef(null);
 
   const [parte, setParte] = useState(null);
   const [cliente, setCliente] = useState(null);
@@ -47,12 +37,13 @@ const RejillaZonasPage = () => {
   const [celdas, setCeldas] = useState({}); // { tarea_id: { fecha: [zonas] } }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [guardandoCeldas, setGuardandoCeldas] = useState(new Set());
   const [mapaAbierto, setMapaAbierto] = useState(false);
 
-  // Modal compartido de edicion de celda (una sola instancia, no una por celda)
-  const [celdaActiva, setCeldaActiva] = useState(null); // { tareaId, tareaNombre, fecha }
-  const [zonasSeleccionadas, setZonasSeleccionadas] = useState([]);
-  const [guardandoCelda, setGuardandoCelda] = useState(false);
+  // Panel flotante ligero anclado a la celda pulsada (una sola instancia
+  // para toda la rejilla, no una por celda: rapido incluso con cientos de
+  // celdas). Se abre justo debajo del clic, se cierra al clicar fuera.
+  const [panelAbierto, setPanelAbierto] = useState(null); // { tareaId, tareaNombre, fecha, top, left }
 
   const cargar = async () => {
     setLoading(true);
@@ -95,56 +86,112 @@ const RejillaZonasPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Cerrar el panel al clicar fuera de el
+  useEffect(() => {
+    if (!panelAbierto) return undefined;
+    const handleClick = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setPanelAbierto(null);
+      }
+    };
+    const handleEscape = (e) => {
+      if (e.key === "Escape") setPanelAbierto(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [panelAbierto]);
+
   const parteAbierto = parte?.estado === "abierto";
 
-  const abrirCelda = (tareaId, tareaNombre, fecha) => {
+  const abrirPanel = (e, tareaId, tareaNombre, fecha) => {
     if (!parteAbierto) return;
-    setZonasSeleccionadas(celdas[tareaId]?.[fecha] || []);
-    setCeldaActiva({ tareaId, tareaNombre, fecha });
-  };
-
-  const toggleZonaModal = (zona) => {
-    if (zona === "X") {
-      setZonasSeleccionadas((prev) => (prev.includes("X") ? [] : ["X"]));
+    // Si ya esta abierto para esta misma celda, un segundo clic la cierra
+    if (panelAbierto?.tareaId === tareaId && panelAbierto?.fecha === fecha) {
+      setPanelAbierto(null);
       return;
     }
-    setZonasSeleccionadas((prev) => {
-      const sinX = prev.filter((z) => z !== "X");
-      if (sinX.includes(zona)) return sinX.filter((z) => z !== zona);
-      if (sinX.length >= MAX_ZONAS_POR_CELDA) {
-        toast.warning(`Máximo ${MAX_ZONAS_POR_CELDA} zonas por día`);
-        return sinX;
-      }
-      return [...sinX, zona];
-    });
+    const rect = e.currentTarget.getBoundingClientRect();
+    const PANEL_ANCHO = 168;
+    const PANEL_ALTO_ESTIMADO = 130;
+
+    let left = rect.left + window.scrollX;
+    if (left + PANEL_ANCHO > window.scrollX + window.innerWidth) {
+      left = window.scrollX + window.innerWidth - PANEL_ANCHO - 8;
+    }
+
+    let top = rect.bottom + window.scrollY + 4;
+    if (rect.bottom + PANEL_ALTO_ESTIMADO > window.innerHeight) {
+      top = rect.top + window.scrollY - PANEL_ALTO_ESTIMADO - 4;
+    }
+
+    setPanelAbierto({ tareaId, tareaNombre, fecha, top, left });
   };
 
-  const guardarCeldaModal = async () => {
-    if (!celdaActiva) return;
-    const { tareaId, fecha } = celdaActiva;
-    setGuardandoCelda(true);
+  const guardarCelda = async (tareaId, fecha, nuevasZonas) => {
+    const key = `${tareaId}|${fecha}`;
+    setGuardandoCeldas((prev) => new Set(prev).add(key));
+
+    const anterior = celdas[tareaId]?.[fecha];
+    setCeldas((prev) => {
+      const copia = { ...prev, [tareaId]: { ...(prev[tareaId] || {}) } };
+      if (nuevasZonas.length) copia[tareaId][fecha] = nuevasZonas;
+      else delete copia[tareaId][fecha];
+      return copia;
+    });
+
     try {
       await axios.put(`${API}/work-orders/${id}/rejilla-zonas/celda`, {
         tarea_id: tareaId,
         fecha,
-        zonas: zonasSeleccionadas.length ? zonasSeleccionadas : null,
+        zonas: nuevasZonas.length ? nuevasZonas : null,
       });
+    } catch (err) {
+      console.error("Error guardando celda:", err);
+      toast.error("No se pudo guardar. Se revierte el cambio.");
       setCeldas((prev) => {
         const copia = { ...prev, [tareaId]: { ...(prev[tareaId] || {}) } };
-        if (zonasSeleccionadas.length) copia[tareaId][fecha] = zonasSeleccionadas;
+        if (anterior) copia[tareaId][fecha] = anterior;
         else delete copia[tareaId][fecha];
         return copia;
       });
-      setCeldaActiva(null);
-    } catch (err) {
-      console.error("Error guardando celda:", err);
-      toast.error("No se pudo guardar. Intentalo de nuevo.");
     } finally {
-      setGuardandoCelda(false);
+      setGuardandoCeldas((prev) => {
+        const s = new Set(prev);
+        s.delete(key);
+        return s;
+      });
     }
   };
 
+  const toggleZonaPanel = (zona) => {
+    if (!panelAbierto) return;
+    const { tareaId, fecha } = panelAbierto;
+    const actuales = celdas[tareaId]?.[fecha] || [];
+    let nuevas;
+    if (zona === "X") {
+      nuevas = actuales.includes("X") ? [] : ["X"];
+    } else {
+      const sinX = actuales.filter((z) => z !== "X");
+      if (sinX.includes(zona)) {
+        nuevas = sinX.filter((z) => z !== zona);
+      } else if (sinX.length >= MAX_ZONAS_POR_CELDA) {
+        toast.warning(`Máximo ${MAX_ZONAS_POR_CELDA} zonas por día`);
+        nuevas = sinX;
+      } else {
+        nuevas = [...sinX, zona];
+      }
+    }
+    guardarCelda(tareaId, fecha, nuevas);
+  };
+
   const diasFormateados = useMemo(() => dias.map(formatearDiaCorto), [dias]);
+  const zonasDelPanel = panelAbierto
+    ? celdas[panelAbierto.tareaId]?.[panelAbierto.fecha] || []
+    : [];
 
   if (loading) {
     return <div className="p-8 text-center text-slate-400">Cargando rejilla...</div>;
@@ -222,8 +269,8 @@ const RejillaZonasPage = () => {
       )}
 
       <p className="text-xs text-slate-400 mb-3">
-        Clica una celda y elige hasta {MAX_ZONAS_POR_CELDA} zonas (A-M) donde se hizo esa
-        tarea ese día, o "X" si no aplica una zona concreta. Deja en blanco si no se hizo.
+        Clica una celda: se abre un desplegable rápido justo ahí para marcar hasta{" "}
+        {MAX_ZONAS_POR_CELDA} zonas (A-M) o "X". Cada clic se guarda al momento.
       </p>
 
       <div className="border border-slate-200 rounded-lg overflow-auto max-w-full">
@@ -253,14 +300,24 @@ const RejillaZonasPage = () => {
                 {dias.map((fecha) => {
                   const zonas = celdas[t.tarea_id]?.[fecha] || [];
                   const texto = zonas.join(",");
+                  const key = `${t.tarea_id}|${fecha}`;
+                  const guardando = guardandoCeldas.has(key);
+                  const activa =
+                    panelAbierto?.tareaId === t.tarea_id && panelAbierto?.fecha === fecha;
                   return (
                     <td key={fecha} className="border-l border-slate-100 p-0 text-center">
                       <button
                         type="button"
                         disabled={!parteAbierto}
-                        onClick={() => abrirCelda(t.tarea_id, t.tarea_nombre, fecha)}
-                        className={`w-12 h-7 text-[10px] leading-tight border-0 bg-transparent hover:bg-indigo-50 cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-transparent ${
-                          zonas.length ? "font-semibold text-indigo-700" : "text-slate-300"
+                        onClick={(e) => abrirPanel(e, t.tarea_id, t.tarea_nombre, fecha)}
+                        className={`w-12 h-7 text-[10px] leading-tight border-0 cursor-pointer disabled:cursor-not-allowed disabled:hover:bg-transparent ${
+                          activa ? "bg-indigo-100" : "bg-transparent hover:bg-indigo-50"
+                        } ${
+                          guardando
+                            ? "opacity-50"
+                            : zonas.length
+                            ? "font-semibold text-indigo-700"
+                            : "text-slate-300"
                         }`}
                         data-testid={`celda-${t.tarea_id}-${fecha}`}
                         title={texto || "Sin asignar"}
@@ -276,91 +333,52 @@ const RejillaZonasPage = () => {
         </table>
       </div>
 
-      {/* Modal compartido: editar zonas de una celda (hasta 3) */}
-      <Dialog
-        open={!!celdaActiva}
-        onOpenChange={(v) => !guardandoCelda && !v && setCeldaActiva(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {celdaActiva?.tareaNombre}
-              {celdaActiva && (
-                <span className="block text-sm font-normal text-slate-500 mt-0.5 capitalize">
-                  {formatearFechaLarga(celdaActiva.fecha)}
-                </span>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3 py-1">
-            <button
-              type="button"
-              onClick={() => toggleZonaModal("X")}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
-                zonasSeleccionadas.includes("X")
-                  ? "bg-slate-100 border-slate-300 text-slate-700 font-medium"
-                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
-              }`}
-              data-testid="modal-zona-X"
-            >
-              Sin zona concreta (X)
-              {zonasSeleccionadas.includes("X") && <Check className="w-4 h-4" />}
-            </button>
-
-            <div>
-              <p className="text-xs text-slate-400 mb-1.5">
-                O hasta {MAX_ZONAS_POR_CELDA} zonas concretas:
-              </p>
-              <div className="grid grid-cols-5 gap-1.5">
-                {ZONA_LETRAS.map((letra) => {
-                  const activa = zonasSeleccionadas.includes(letra);
-                  return (
-                    <button
-                      type="button"
-                      key={letra}
-                      onClick={() => toggleZonaModal(letra)}
-                      className={`h-9 rounded-lg border text-sm font-medium transition-colors ${
-                        activa
-                          ? "bg-indigo-600 border-indigo-600 text-white"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
-                      data-testid={`modal-zona-${letra}`}
-                    >
-                      {letra}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {zonasSeleccionadas.length > 0 && zonasSeleccionadas[0] !== "X" && (
-              <p className="text-xs text-slate-400">
-                Seleccionadas: {zonasSeleccionadas.join(", ")} ({zonasSeleccionadas.length}/
-                {MAX_ZONAS_POR_CELDA})
-              </p>
-            )}
+      {/* Panel flotante rapido: se ancla justo bajo la celda pulsada */}
+      {panelAbierto && (
+        <div
+          ref={panelRef}
+          className="fixed z-50 bg-white border border-slate-200 rounded-lg shadow-lg p-2 w-[168px]"
+          style={{ top: panelAbierto.top, left: panelAbierto.left }}
+          data-testid="panel-zonas-rapido"
+        >
+          <p className="text-[10px] text-slate-400 truncate mb-1.5 px-0.5">
+            {panelAbierto.tareaNombre}
+          </p>
+          <button
+            type="button"
+            onClick={() => toggleZonaPanel("X")}
+            className={`w-full flex items-center justify-between px-2 py-1 rounded text-xs mb-1.5 transition-colors ${
+              zonasDelPanel.includes("X")
+                ? "bg-slate-200 text-slate-700 font-medium"
+                : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+            }`}
+            data-testid="panel-zona-X"
+          >
+            Sin zona (X)
+            {zonasDelPanel.includes("X") && <Check className="w-3 h-3" />}
+          </button>
+          <div className="grid grid-cols-5 gap-1">
+            {ZONA_LETRAS.map((letra) => {
+              const activa = zonasDelPanel.includes(letra);
+              return (
+                <button
+                  type="button"
+                  key={letra}
+                  onClick={() => toggleZonaPanel(letra)}
+                  className={`h-7 rounded text-xs font-medium transition-colors ${
+                    activa
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                  data-testid={`panel-zona-${letra}`}
+                >
+                  {letra}
+                </button>
+              );
+            })}
           </div>
-
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setCeldaActiva(null)}
-              disabled={guardandoCelda}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={guardarCeldaModal}
-              disabled={guardandoCelda}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              data-testid="guardar-celda-btn"
-            >
-              {guardandoCelda ? "Guardando..." : "Guardar"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
 
       <Dialog open={mapaAbierto} onOpenChange={setMapaAbierto}>
         <DialogContent className="max-w-3xl">
