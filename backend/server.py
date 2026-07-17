@@ -2456,9 +2456,218 @@ async def list_operarios(_: dict = Depends(require_approved)):
     """Usuarios con rol 'user' y estado 'approved', para selects de operarios."""
     cursor = db.users.find(
         {"role": UserRole.USER, "status": UserStatus.APPROVED},
-        {"_id": 0, "user_id": 1, "name": 1, "email": 1},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "color": 1, "abreviatura": 1},
     ).sort("name", 1)
     return await cursor.to_list(1000)
+
+
+# =====================================================================
+# PLANIFICACION DE EQUIPO (Fase 7)
+# ---------------------------------------------------------------------
+# Rejilla independiente (no el calendario de vacaciones): dias en filas,
+# destinos (clientes o categorias libres como "Ruta") en columnas, cada
+# celda puede tener varios operarios asignados. Se cruza SIEMPRE contra
+# vacaciones aprobadas antes de asignar - un operario de vacaciones no se
+# puede enviar a trabajar. Escritura solo admin; lectura cualquier
+# aprobado (el operario necesita ver su propia semana).
+# =====================================================================
+
+
+class ColumnaPlanificacionBase(BaseModel):
+    tipo: str = Field(..., pattern=r"^(cliente|libre)$")
+    cliente_id: Optional[str] = None
+    etiqueta_libre: Optional[str] = Field(None, max_length=50)
+    color_fondo: Optional[str] = Field(None, max_length=20)
+
+
+class ColumnaPlanificacionCreate(ColumnaPlanificacionBase):
+    pass
+
+
+class ColumnaPlanificacion(ColumnaPlanificacionBase):
+    id: str
+    orden: int
+    creado_en: datetime
+
+
+class ColumnaPlanificacionResuelta(BaseModel):
+    id: str
+    tipo: str
+    cliente_id: Optional[str] = None
+    etiqueta: str
+    color_fondo: Optional[str] = None
+    orden: int
+
+
+class AsignacionOut(BaseModel):
+    id: str
+    operario_id: str
+    fecha: str
+    destino_cliente_id: Optional[str] = None
+    destino_libre: Optional[str] = None
+
+
+class VacacionSimple(BaseModel):
+    user_id: str
+    fecha: str
+    tipo: Optional[str] = None
+
+
+class RejillaPlanificacion(BaseModel):
+    columnas: List[ColumnaPlanificacionResuelta]
+    asignaciones: List[AsignacionOut]
+    vacaciones: List[VacacionSimple]
+
+
+class TogglePlanificacionPayload(BaseModel):
+    operario_id: str
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    destino_cliente_id: Optional[str] = None
+    destino_libre: Optional[str] = Field(None, max_length=50)
+
+
+@api_router.get("/planificacion/columnas", response_model=List[ColumnaPlanificacionResuelta])
+async def list_columnas_planificacion(_: dict = Depends(require_approved)):
+    cursor = db.planificacion_columnas.find({}).sort("orden", 1)
+    columnas = [c async for c in cursor]
+
+    cliente_ids = [c["cliente_id"] for c in columnas if c.get("cliente_id")]
+    clientes_map = {}
+    if cliente_ids:
+        async for cl in db.clients.find({"id": {"$in": cliente_ids}}):
+            clientes_map[cl["id"]] = cl["nombre"]
+
+    resueltas = []
+    for c in columnas:
+        etiqueta = (
+            clientes_map.get(c["cliente_id"], "(cliente eliminado)")
+            if c.get("cliente_id")
+            else (c.get("etiqueta_libre") or "")
+        )
+        resueltas.append(
+            ColumnaPlanificacionResuelta(
+                id=c["id"],
+                tipo=c["tipo"],
+                cliente_id=c.get("cliente_id"),
+                etiqueta=etiqueta,
+                color_fondo=c.get("color_fondo"),
+                orden=c["orden"],
+            )
+        )
+    return resueltas
+
+
+@api_router.post("/planificacion/columnas", response_model=ColumnaPlanificacionResuelta)
+async def crear_columna_planificacion(
+    payload: ColumnaPlanificacionCreate, _: dict = Depends(require_admin)
+):
+    if payload.tipo == "cliente" and not payload.cliente_id:
+        raise HTTPException(status_code=400, detail="Falta cliente_id")
+    if payload.tipo == "libre" and not (payload.etiqueta_libre or "").strip():
+        raise HTTPException(status_code=400, detail="Falta etiqueta_libre")
+
+    ultima = await db.planificacion_columnas.find_one({}, sort=[("orden", -1)])
+    orden = (ultima["orden"] + 1) if ultima else 0
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tipo": payload.tipo,
+        "cliente_id": payload.cliente_id if payload.tipo == "cliente" else None,
+        "etiqueta_libre": payload.etiqueta_libre.strip() if payload.tipo == "libre" else None,
+        "color_fondo": payload.color_fondo,
+        "orden": orden,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    await db.planificacion_columnas.insert_one(doc)
+
+    etiqueta = payload.etiqueta_libre if payload.tipo == "libre" else "Cliente"
+    if payload.tipo == "cliente":
+        cl = await db.clients.find_one({"id": payload.cliente_id})
+        etiqueta = cl["nombre"] if cl else "(cliente eliminado)"
+
+    return ColumnaPlanificacionResuelta(
+        id=doc["id"],
+        tipo=doc["tipo"],
+        cliente_id=doc["cliente_id"],
+        etiqueta=etiqueta,
+        color_fondo=doc["color_fondo"],
+        orden=doc["orden"],
+    )
+
+
+@api_router.delete("/planificacion/columnas/{columna_id}")
+async def eliminar_columna_planificacion(columna_id: str, _: dict = Depends(require_admin)):
+    result = await db.planificacion_columnas.delete_one({"id": columna_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Columna no encontrada")
+    return {"ok": True}
+
+
+@api_router.get("/planificacion/rejilla", response_model=RejillaPlanificacion)
+async def obtener_rejilla_planificacion(
+    desde: str, hasta: str, _: dict = Depends(require_approved)
+):
+    columnas = await list_columnas_planificacion(_)
+
+    asignaciones_cursor = db.asignaciones.find(
+        {"fecha": {"$gte": desde, "$lte": hasta}}
+    )
+    asignaciones = [AsignacionOut(**a) async for a in asignaciones_cursor]
+
+    vacaciones_cursor = db.vacaciones.find(
+        {"fecha": {"$gte": desde, "$lte": hasta}, "status": "approved"}
+    )
+    vacaciones = [
+        VacacionSimple(user_id=v["user_id"], fecha=v["fecha"], tipo=v.get("tipo"))
+        async for v in vacaciones_cursor
+    ]
+
+    return RejillaPlanificacion(columnas=columnas, asignaciones=asignaciones, vacaciones=vacaciones)
+
+
+@api_router.post("/planificacion/celda/toggle")
+async def toggle_celda_planificacion(
+    payload: TogglePlanificacionPayload, current_user: dict = Depends(require_admin)
+):
+    """Un clic = un toggle: si el operario ya esta asignado ese dia+destino,
+    se quita. Si no, se comprueba que no tenga vacaciones aprobadas ese dia
+    y se anade."""
+    if not payload.destino_cliente_id and not payload.destino_libre:
+        raise HTTPException(status_code=400, detail="Falta destino_cliente_id o destino_libre")
+
+    query = {"operario_id": payload.operario_id, "fecha": payload.fecha}
+    if payload.destino_cliente_id:
+        query["destino_cliente_id"] = payload.destino_cliente_id
+    else:
+        query["destino_libre"] = payload.destino_libre
+
+    existente = await db.asignaciones.find_one(query)
+    if existente:
+        await db.asignaciones.delete_one({"id": existente["id"]})
+        return {"ok": True, "accion": "removed"}
+
+    vacacion = await db.vacaciones.find_one(
+        {"user_id": payload.operario_id, "fecha": payload.fecha, "status": "approved"}
+    )
+    if vacacion:
+        tipo_txt = "vacaciones aprobadas" if vacacion.get("tipo") == "vacacion" else "un día libre aprobado"
+        raise HTTPException(
+            status_code=409, detail=f"Este operario tiene {tipo_txt} ese día"
+        )
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": payload.operario_id,
+        "fecha": payload.fecha,
+        "destino_cliente_id": payload.destino_cliente_id,
+        "destino_libre": payload.destino_libre,
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.asignaciones.insert_one(doc)
+    return {"ok": True, "accion": "added"}
 
 
 # =====================================================================
