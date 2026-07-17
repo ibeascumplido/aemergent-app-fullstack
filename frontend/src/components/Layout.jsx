@@ -16,14 +16,38 @@ const Layout = () => {
 
   // Navigation items based on role
   const navItems = [
-    { to: "/", icon: LayoutDashboard, label: "Inicio", show: true },
-    { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true },
-    { to: "/planificacion", icon: CalendarDays, label: "Planificación", show: true },
-    { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets },
-    { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets },
-    { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin },
-    { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin },
+    { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
+    { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true, section: "personal" },
+    { to: "/planificacion", icon: CalendarDays, label: "Planificación", show: true, section: "admin" },
+    { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
+    { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
+    { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin, section: "admin" },
+    { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
+
+  const itemsPersonales = navItems.filter((i) => i.section === "personal");
+  const itemsAdmin = navItems.filter((i) => i.section === "admin");
+
+  const renderNavLink = (item, resaltado) => (
+    <NavLink
+      key={item.to}
+      to={item.to}
+      end={item.to === "/"}
+      className={({ isActive }) =>
+        `flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+          isActive
+            ? "bg-red-50 text-red-600 font-medium"
+            : resaltado
+            ? "bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        }`
+      }
+      data-testid={`nav-${item.label.toLowerCase().replace(/\s/g, '-')}`}
+    >
+      <item.icon className="w-5 h-5" />
+      <span>{item.label}</span>
+    </NavLink>
+  );
 
   return (
     <div className="min-h-screen bg-white" data-testid="app-layout">
@@ -39,24 +63,18 @@ const Layout = () => {
         </div>
         
         <nav className="p-4 space-y-1 flex-1">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive
-                    ? "bg-red-50 text-red-600 font-medium"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`
-              }
-              data-testid={`nav-${item.label.toLowerCase().replace(/\s/g, '-')}`}
-            >
-              <item.icon className="w-5 h-5" />
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+          {itemsPersonales.map((item) => renderNavLink(item, false))}
+
+          {itemsAdmin.length > 0 && (
+            <div className="pt-3 mt-2 border-t border-slate-100">
+              <p className="px-4 pb-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Administración
+              </p>
+              <div className="space-y-1">
+                {itemsAdmin.map((item) => renderNavLink(item, true))}
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* User info & logout */}
