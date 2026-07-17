@@ -11,6 +11,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  MapPin,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,8 +39,37 @@ const MyCalendarPage = () => {
   const [viewMode, setViewMode] = useState("month"); // "month" or "year"
   const [vacaciones, setVacaciones] = useState([]);
   const [resumen, setResumen] = useState(null);
+  const [misDestinos, setMisDestinos] = useState({}); // { fecha: [nombreDestino,...] }
   const [loading, setLoading] = useState(true);
   const [markMode, setMarkMode] = useState("vacacion");
+
+  const fetchMisDestinos = useCallback(async () => {
+    if (!user?.user_id) return;
+    try {
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const desde = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+      const ultimoDia = new Date(year, month + 1, 0).getDate();
+      const hasta = `${year}-${String(month + 1).padStart(2, "0")}-${String(ultimoDia).padStart(2, "0")}`;
+      const res = await axios.get(`${API}/planificacion/rejilla`, { params: { desde, hasta } });
+      const mapa = {};
+      res.data.asignaciones
+        .filter((a) => a.operario_id === user.user_id)
+        .forEach((a) => {
+          const columna = res.data.columnas.find((c) =>
+            a.destino_cliente_id
+              ? c.tipo === "cliente" && c.cliente_id === a.destino_cliente_id
+              : c.tipo === "libre" && c.etiqueta === a.destino_libre
+          );
+          const nombre = columna?.etiqueta || a.destino_libre || "Sitio";
+          if (!mapa[a.fecha]) mapa[a.fecha] = [];
+          mapa[a.fecha].push(nombre);
+        });
+      setMisDestinos(mapa);
+    } catch (error) {
+      console.error("Error fetching mis destinos:", error);
+    }
+  }, [currentDate, user]);
 
   const fetchVacaciones = useCallback(async () => {
     try {
@@ -71,10 +101,11 @@ const MyCalendarPage = () => {
     if (!isPending) {
       fetchVacaciones();
       fetchResumen();
+      fetchMisDestinos();
     } else {
       setLoading(false);
     }
-  }, [currentDate, fetchVacaciones, fetchResumen, isPending]);
+  }, [currentDate, fetchVacaciones, fetchResumen, fetchMisDestinos, isPending]);
 
   const getDaysInMonth = (year, month) => {
     const firstDay = new Date(year, month, 1);
@@ -219,6 +250,7 @@ const MyCalendarPage = () => {
           {days.map((day, index) => {
             const dateStr = formatDateString(day.fullDate);
             const vacInfo = getVacacionInfo(dateStr);
+            const destinosHoy = misDestinos[dateStr] || [];
             const isVacacion = vacInfo?.tipo === "vacacion";
             const isLibre = vacInfo?.tipo === "libre";
             const hasAny = isVacacion || isLibre;
@@ -269,6 +301,20 @@ const MyCalendarPage = () => {
                 <span className={`text-sm font-medium ${hasAny ? "text-white" : ""}`}>
                   {day.date}
                 </span>
+                {destinosHoy.length > 0 && (
+                  <div className="mt-0.5 flex flex-col items-center gap-0.5">
+                    {destinosHoy.slice(0, 2).map((nombre, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-0.5 text-[8px] leading-tight px-1 py-0.5 rounded bg-indigo-600 text-white max-w-full truncate"
+                        title={nombre}
+                      >
+                        <MapPin className="w-2 h-2 shrink-0" />
+                        <span className="truncate">{nombre}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {hasAny && (
                   <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-0.5">
                     {isVacacion ? <Palmtree className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
