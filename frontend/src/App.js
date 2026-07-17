@@ -7,6 +7,7 @@ import HomePage from "@/pages/HomePage";
 import BudgetsPage from "@/pages/BudgetsPage";
 import BudgetTemplatePage from "@/pages/BudgetTemplatePage";
 import AdminCalendarPage from "@/pages/AdminCalendarPage";
+import PlanificacionPage from "@/pages/PlanificacionPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import ClientsPage from "@/pages/ClientsPage";
@@ -40,6 +41,7 @@ function App() {
             }>
               <Route index element={<HomePage />} />
               <Route path="my-calendar" element={<MyCalendarPage />} />
+              <Route path="planificacion" element={<PlanificacionPage />} />
               
               {/* Admin only routes */}
               <Route path="budgets" element={
