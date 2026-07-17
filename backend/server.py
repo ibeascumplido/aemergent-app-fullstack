@@ -2453,9 +2453,11 @@ async def delete_work_task(task_id: str, _: dict = Depends(require_admin)):
 
 @api_router.get("/users/operarios")
 async def list_operarios(_: dict = Depends(require_approved)):
-    """Usuarios con rol 'user' y estado 'approved', para selects de operarios."""
+    """Usuarios con rol 'user' o 'admin' y estado 'approved', para selects de
+    operarios. Se incluye al admin porque tambien puede ir sobre el terreno
+    y hay que poder asignarlo (ej. en la Planificacion de equipo)."""
     cursor = db.users.find(
-        {"role": UserRole.USER, "status": UserStatus.APPROVED},
+        {"role": {"$in": [UserRole.USER, UserRole.ADMIN]}, "status": UserStatus.APPROVED},
         {"_id": 0, "user_id": 1, "name": 1, "email": 1, "color": 1, "abreviatura": 1},
     ).sort("name", 1)
     return await cursor.to_list(1000)
