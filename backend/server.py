@@ -2525,11 +2525,24 @@ async def subir_foto(
 
 @api_router.get("/fotos", response_model=List[FotoConNombres])
 async def list_fotos(
-    solo_sin_clasificar: bool = False, _: dict = Depends(require_approved)
+    solo_sin_clasificar: bool = False,
+    work_order_id: Optional[str] = None,
+    client_id: Optional[str] = None,
+    _: dict = Depends(require_approved),
 ):
     """Bandeja de fotos. Con solo_sin_clasificar=True, solo las que no
-    tienen cliente asignado todavia (la vista principal del admin)."""
-    query = {"client_id": None} if solo_sin_clasificar else {}
+    tienen cliente asignado todavia (la vista principal del admin). Con
+    work_order_id, solo las clasificadas en ese parte concreto (la vista
+    dentro de un parte de trabajo). Con client_id, todas las del cliente
+    (con o sin parte concreto - vista en la ficha del cliente)."""
+    if work_order_id:
+        query = {"work_order_id": work_order_id}
+    elif client_id:
+        query = {"client_id": client_id}
+    elif solo_sin_clasificar:
+        query = {"client_id": None}
+    else:
+        query = {}
     cursor = db.fotos.find(query).sort("creado_en", -1)
     fotos = [f async for f in cursor]
 
