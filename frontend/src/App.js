@@ -9,6 +9,7 @@ import BudgetTemplatePage from "@/pages/BudgetTemplatePage";
 import AdminCalendarPage from "@/pages/AdminCalendarPage";
 import PlanificacionPage from "@/pages/PlanificacionPage";
 import FotosPorClasificarPage from "@/pages/FotosPorClasificarPage";
+import FotografiasPage from "@/pages/FotografiasPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import MisFotosPage from "@/pages/MisFotosPage";
 import FotoLoteDetallePage from "@/pages/FotoLoteDetallePage";
@@ -72,6 +73,11 @@ function App() {
               <Route path="fotos-por-clasificar" element={
                 <ProtectedRoute requireAdmin>
                   <FotosPorClasificarPage />
+                </ProtectedRoute>
+              } />
+              <Route path="fotografias" element={
+                <ProtectedRoute requireAdmin>
+                  <FotografiasPage />
                 </ProtectedRoute>
               } />
               <Route path="admin/users" element={
