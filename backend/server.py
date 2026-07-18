@@ -1652,6 +1652,23 @@ async def _borrar_logo_cloudinary(public_id: Optional[str]) -> None:
         logger.warning("No se pudo borrar un logo antiguo de Cloudinary", exc_info=True)
 
 
+async def _subir_audio_cloudinary(data_uri: str) -> tuple:
+    """Sube una nota de voz (data-URI base64) a Cloudinary. resource_type
+    'auto' porque Cloudinary no tiene un tipo 'audio' propio - lo detecta
+    solo. Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder="inicia-gestion/audios",
+            resource_type="auto",
+        )
+    except Exception as e:
+        logger.error("Error subiendo audio a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el audio") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
 def _validate_slug(slug: str) -> str:
     slug = (slug or "").strip().lower()
     if not _SLUG_RE.match(slug):
@@ -2475,6 +2492,11 @@ async def list_operarios(_: dict = Depends(require_approved)):
 
 class FotoCreatePayload(BaseModel):
     imagen: str = Field(..., description="Data-URI base64 de la foto tomada con la camara")
+    lote_id: Optional[str] = Field(
+        None,
+        description="Agrupa varias fotos tomadas en la misma sesion (generado por el "
+        "frontend), para poder clasificarlas todas a la vez despues.",
+    )
 
 
 class FotoClasificarPayload(BaseModel):
@@ -2482,11 +2504,28 @@ class FotoClasificarPayload(BaseModel):
     work_order_id: Optional[str] = None
 
 
+class ClasificarLotePayload(BaseModel):
+    """Mini-clasificacion que el propio operario puede rellenar justo
+    despues de tomar las fotos (Fase 8 parte 2). Todos los campos son
+    opcionales: si no se rellena nada, las fotos quedan igual que antes,
+    sin clasificar, esperando al admin."""
+
+    antes_despues: Optional[str] = Field(None, pattern=r"^(antes|despues)$")
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    client_id: Optional[str] = None
+    audio: Optional[str] = Field(None, description="Data-URI base64 de la nota de voz")
+
+
 class Foto(BaseModel):
     id: str
     operario_id: str
     url: str
     public_id: Optional[str] = None
+    lote_id: Optional[str] = None
+    antes_despues: Optional[str] = None
+    fecha: Optional[str] = None
+    audio_url: Optional[str] = None
+    audio_public_id: Optional[str] = None
     client_id: Optional[str] = None
     work_order_id: Optional[str] = None
     creado_en: datetime
@@ -2514,6 +2553,11 @@ async def subir_foto(
         "operario_id": current_user["user_id"],
         "url": url,
         "public_id": public_id,
+        "lote_id": payload.lote_id,
+        "antes_despues": None,
+        "fecha": None,
+        "audio_url": None,
+        "audio_public_id": None,
         "client_id": None,
         "work_order_id": None,
         "creado_en": now,
@@ -2521,6 +2565,42 @@ async def subir_foto(
     }
     await db.fotos.insert_one(doc)
     return Foto(**doc)
+
+
+@api_router.put("/fotos/lote/{lote_id}/clasificar")
+async def clasificar_lote(
+    lote_id: str,
+    payload: ClasificarLotePayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Aplica la mini-clasificacion (antes/despues, fecha, cliente, audio)
+    a todas las fotos de un mismo lote a la vez. La puede rellenar el
+    propio operario justo despues de tomar las fotos - no hace falta ser
+    admin, pero solo sobre lotes propios (o si eres admin)."""
+    alguna = await db.fotos.find_one({"lote_id": lote_id})
+    if not alguna:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+    if alguna["operario_id"] != current_user["user_id"] and current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="No puedes clasificar fotos de otro operario")
+
+    updates = {}
+    if payload.antes_despues is not None:
+        updates["antes_despues"] = payload.antes_despues
+    if payload.fecha is not None:
+        updates["fecha"] = payload.fecha
+    if payload.client_id is not None:
+        updates["client_id"] = payload.client_id
+        updates["clasificado_en"] = datetime.now(timezone.utc)
+    if payload.audio:
+        audio_url, audio_public_id = await _subir_audio_cloudinary(payload.audio)
+        updates["audio_url"] = audio_url
+        updates["audio_public_id"] = audio_public_id
+
+    if not updates:
+        return {"ok": True, "actualizadas": 0}
+
+    result = await db.fotos.update_many({"lote_id": lote_id}, {"$set": updates})
+    return {"ok": True, "actualizadas": result.modified_count}
 
 
 @api_router.get("/fotos", response_model=List[FotoConNombres])
