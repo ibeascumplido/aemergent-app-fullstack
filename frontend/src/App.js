@@ -8,6 +8,7 @@ import BudgetsPage from "@/pages/BudgetsPage";
 import BudgetTemplatePage from "@/pages/BudgetTemplatePage";
 import AdminCalendarPage from "@/pages/AdminCalendarPage";
 import PlanificacionPage from "@/pages/PlanificacionPage";
+import FotosPorClasificarPage from "@/pages/FotosPorClasificarPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import ClientsPage from "@/pages/ClientsPage";
@@ -62,6 +63,11 @@ function App() {
               <Route path="calendar" element={
                 <ProtectedRoute requireAdmin>
                   <AdminCalendarPage />
+                </ProtectedRoute>
+              } />
+              <Route path="fotos-por-clasificar" element={
+                <ProtectedRoute requireAdmin>
+                  <FotosPorClasificarPage />
                 </ProtectedRoute>
               } />
               <Route path="admin/users" element={
