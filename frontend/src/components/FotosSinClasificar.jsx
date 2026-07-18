@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,7 +59,7 @@ const FotosSinClasificar = () => {
 
   const abrirClasificar = (foto) => {
     setFotoActiva(foto);
-    setClienteSel("");
+    setClienteSel(foto.client_id || "");
     setWoSel("none");
     setWorkOrders([]);
   };
@@ -112,6 +112,20 @@ const FotosSinClasificar = () => {
     }
   };
 
+  const grupos = useMemo(() => {
+    const mapa = {};
+    const orden = [];
+    fotos.forEach((f) => {
+      const clave = f.lote_id || `individual-${f.id}`;
+      if (!mapa[clave]) {
+        mapa[clave] = [];
+        orden.push(clave);
+      }
+      mapa[clave].push(f);
+    });
+    return orden.map((clave) => mapa[clave]);
+  }, [fotos]);
+
   if (loading || fotos.length === 0) return null;
 
   return (
@@ -124,37 +138,63 @@ const FotosSinClasificar = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-            {fotos.map((f) => (
-              <div key={f.id} className="group">
-                <button
-                  type="button"
-                  onClick={() => abrirClasificar(f)}
-                  className="relative block w-full aspect-square rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
-                  data-testid={`foto-sin-clasificar-${f.id}`}
+          <div className="space-y-3">
+            {grupos.map((grupo) => {
+              const primera = grupo[0];
+              return (
+                <div
+                  key={grupo.map((f) => f.id).join("-")}
+                  className="border border-slate-100 rounded-lg p-2.5"
+                  data-testid={`grupo-sin-clasificar-${primera.lote_id || primera.id}`}
                 >
-                  <img src={f.url} alt="" className="w-full h-full object-cover" />
-                  {f.antes_despues && (
-                    <span
-                      className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
-                        f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-                      }`}
-                    >
-                      {f.antes_despues === "antes" ? "Antes" : "Después"}
-                    </span>
+                  <p className="text-[10px] text-slate-400 mb-1.5">{primera.operario_nombre}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {grupo.map((f) => (
+                      <div key={f.id} className="group">
+                        <button
+                          type="button"
+                          onClick={() => abrirClasificar(f)}
+                          className="relative block w-16 h-16 rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
+                          data-testid={`foto-sin-clasificar-${f.id}`}
+                        >
+                          <img src={f.url} alt="" className="w-full h-full object-cover" />
+                          <div className="absolute bottom-1 left-1 right-1 flex items-center gap-1 flex-wrap">
+                            {f.antes_despues && (
+                              <span
+                                className={`text-[8px] font-bold px-1 rounded text-white ${
+                                  f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                                }`}
+                              >
+                                {f.antes_despues === "antes" ? "Antes" : "Desp."}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            onClick={(e) => eliminarFoto(e, f.id)}
+                            role="button"
+                            tabIndex={0}
+                            className="absolute top-0.5 right-0.5 bg-black/50 hover:bg-red-600 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </span>
+                        </button>
+                        {f.fecha && (
+                          <p className="text-[9px] text-slate-400 mt-0.5 text-center">
+                            {(() => {
+                              const [, m, d] = f.fecha.split("-");
+                              return `${d}/${m}`;
+                            })()}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {primera.audio_url && (
+                    <audio controls src={primera.audio_url} className="w-full max-w-xs mt-2 h-8" />
                   )}
-                  <span
-                    onClick={(e) => eliminarFoto(e, f.id)}
-                    role="button"
-                    tabIndex={0}
-                    className="absolute top-1 right-1 bg-black/50 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </span>
-                </button>
-                <p className="text-[10px] text-slate-400 mt-1 truncate">{f.operario_nombre}</p>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
