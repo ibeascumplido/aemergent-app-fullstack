@@ -2610,17 +2610,19 @@ async def list_fotos(
     client_id: Optional[str] = None,
     _: dict = Depends(require_approved),
 ):
-    """Bandeja de fotos. Con solo_sin_clasificar=True, solo las que no
-    tienen cliente asignado todavia (la vista principal del admin). Con
-    work_order_id, solo las clasificadas en ese parte concreto (la vista
-    dentro de un parte de trabajo). Con client_id, todas las del cliente
-    (con o sin parte concreto - vista en la ficha del cliente)."""
+    """Bandeja de fotos. Con solo_sin_clasificar=True, las que aun no
+    tienen un PARTE asignado (aunque el operario ya les haya puesto
+    cliente en la mini-clasificacion, siguen "pendientes" hasta que el
+    admin las ubique en un parte concreto). Con work_order_id, solo las
+    clasificadas en ese parte concreto (la vista dentro de un parte de
+    trabajo). Con client_id, todas las del cliente (con o sin parte
+    concreto - vista en la ficha del cliente)."""
     if work_order_id:
         query = {"work_order_id": work_order_id}
     elif client_id:
         query = {"client_id": client_id}
     elif solo_sin_clasificar:
-        query = {"client_id": None}
+        query = {"work_order_id": None}
     else:
         query = {}
     cursor = db.fotos.find(query).sort("creado_en", -1)
