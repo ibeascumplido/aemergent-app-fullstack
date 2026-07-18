@@ -134,6 +134,15 @@ const FotosSinClasificar = () => {
                   data-testid={`foto-sin-clasificar-${f.id}`}
                 >
                   <img src={f.url} alt="" className="w-full h-full object-cover" />
+                  {f.antes_despues && (
+                    <span
+                      className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
+                        f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                      }`}
+                    >
+                      {f.antes_despues === "antes" ? "Antes" : "Después"}
+                    </span>
+                  )}
                   <span
                     onClick={(e) => eliminarFoto(e, f.id)}
                     role="button"
@@ -164,7 +173,21 @@ const FotosSinClasificar = () => {
               />
               <p className="text-xs text-slate-400">
                 Enviada por {fotoActiva.operario_nombre}
+                {fotoActiva.fecha &&
+                  ` · ${new Date(fotoActiva.fecha + "T00:00:00").toLocaleDateString("es-ES")}`}
               </p>
+              {fotoActiva.antes_despues && (
+                <span
+                  className={`inline-block text-xs font-medium px-2 py-1 rounded text-white ${
+                    fotoActiva.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                >
+                  {fotoActiva.antes_despues === "antes" ? "Antes" : "Después"}
+                </span>
+              )}
+              {fotoActiva.audio_url && (
+                <audio controls src={fotoActiva.audio_url} className="w-full" />
+              )}
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-500">Cliente</label>
                 <Select value={clienteSel} onValueChange={setClienteSel}>
