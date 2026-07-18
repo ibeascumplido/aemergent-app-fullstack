@@ -2507,13 +2507,16 @@ class FotoClasificarPayload(BaseModel):
 
 class ClasificarLotePayload(BaseModel):
     """Mini-clasificacion que el propio operario puede rellenar justo
-    despues de tomar las fotos (Fase 8 parte 2). Todos los campos son
-    opcionales: si no se rellena nada, las fotos quedan igual que antes,
-    sin clasificar, esperando al admin."""
+    despues de tomar las fotos (Fase 8 parte 2), o la clasificacion
+    completa que hace el admin desde la pagina de detalle de la
+    conversacion (Fase 8 parte 5, incluye work_order_id). Todos los
+    campos son opcionales: si no se rellena nada, las fotos quedan igual
+    que antes."""
 
     antes_despues: Optional[str] = Field(None, pattern=r"^(antes|despues)$")
     fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     client_id: Optional[str] = None
+    work_order_id: Optional[str] = None
     audio: Optional[str] = Field(None, description="Data-URI base64 de la nota de voz")
 
 
@@ -2691,6 +2694,12 @@ async def clasificar_lote(
     if payload.client_id is not None:
         updates["client_id"] = payload.client_id
         updates["clasificado_en"] = datetime.now(timezone.utc)
+    if payload.work_order_id is not None:
+        if current_user.get("role") != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=403, detail="Solo un administrador puede asignar el parte"
+            )
+        updates["work_order_id"] = payload.work_order_id
     if payload.audio:
         audio_url, audio_public_id = await _subir_audio_cloudinary(payload.audio)
         updates["audio_url"] = audio_url
@@ -2709,9 +2718,12 @@ async def list_fotos(
     work_order_id: Optional[str] = None,
     client_id: Optional[str] = None,
     mias: bool = False,
+    lote_id: Optional[str] = None,
     current_user: dict = Depends(require_approved),
 ):
-    """Bandeja de fotos. Con solo_sin_clasificar=True, las que aun no
+    """Bandeja de fotos. Con lote_id, solo las de ese grupo concreto (la
+    pagina de detalle de una conversacion, a la que se llega desde una
+    notificacion). Con solo_sin_clasificar=True, las que aun no
     tienen un PARTE asignado (aunque el operario ya les haya puesto
     cliente en la mini-clasificacion, siguen "pendientes" hasta que el
     admin las ubique en un parte concreto). Con work_order_id, solo las
@@ -2719,7 +2731,9 @@ async def list_fotos(
     trabajo). Con client_id, todas las del cliente (con o sin parte
     concreto - vista en la ficha del cliente). Con mias=True, solo las
     que ha subido el usuario actual (para su propia pagina "Mis fotos")."""
-    if work_order_id:
+    if lote_id:
+        query = {"lote_id": lote_id}
+    elif work_order_id:
         query = {"work_order_id": work_order_id}
     elif client_id:
         query = {"client_id": client_id}
