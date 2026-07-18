@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Camera, Trash2, X } from "lucide-react";
@@ -6,11 +6,20 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const formatearFechaCorta = (fechaISO) => {
+  const [, m, d] = fechaISO.split("-");
+  return `${d}/${m}`;
+};
+
 /**
  * Galeria reutilizable de fotos ya clasificadas (Fase 8). Se usa tanto en
  * la ficha del cliente (todas sus fotos) como dentro de un parte de
  * trabajo concreto (solo las de ese parte). Si no hay fotos, no renderiza
  * nada - no añade una seccion vacia a la pagina.
+ *
+ * Las fotos se agrupan por lote_id (la sesion de captura en la que se
+ * tomaron juntas): asi el audio de la nota de voz se muestra UNA vez por
+ * grupo, no repetido en cada foto individual.
  */
 const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
   const { isAdmin } = useAuth();
@@ -47,6 +56,20 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
     }
   };
 
+  const grupos = useMemo(() => {
+    const mapa = {};
+    const orden = [];
+    fotos.forEach((f) => {
+      const clave = f.lote_id || `individual-${f.id}`;
+      if (!mapa[clave]) {
+        mapa[clave] = [];
+        orden.push(clave);
+      }
+      mapa[clave].push(f);
+    });
+    return orden.map((clave) => mapa[clave]);
+  }, [fotos]);
+
   if (loading || fotos.length === 0) return null;
 
   return (
@@ -56,38 +79,65 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
           <Camera className="w-5 h-5 text-slate-400" />
           {titulo} ({fotos.length})
         </h2>
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {fotos.map((f) => (
-            <div key={f.id} className="group relative">
-              <button
-                type="button"
-                onClick={() => setFotoAmpliada(f)}
-                className="block w-full aspect-square rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
-                data-testid={`foto-${f.id}`}
+        <div className="space-y-3">
+          {grupos.map((grupo) => {
+            const primera = grupo[0];
+            return (
+              <div
+                key={grupo.map((f) => f.id).join("-")}
+                className="border border-slate-100 rounded-lg p-3"
+                data-testid={`grupo-fotos-${primera.lote_id || primera.id}`}
               >
-                <img src={f.url} alt="" className="w-full h-full object-cover" />
-                {f.antes_despues && (
-                  <span
-                    className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
-                      f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-                    }`}
-                  >
-                    {f.antes_despues === "antes" ? "Antes" : "Después"}
-                  </span>
+                <div className="flex gap-2 flex-wrap">
+                  {grupo.map((f) => (
+                    <div key={f.id} className="group relative">
+                      <button
+                        type="button"
+                        onClick={() => setFotoAmpliada(f)}
+                        className="block w-20 h-20 rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
+                        data-testid={`foto-${f.id}`}
+                      >
+                        <img src={f.url} alt="" className="w-full h-full object-cover" />
+                        <div className="absolute bottom-1 left-1 right-1 flex items-center gap-1 flex-wrap">
+                          {f.antes_despues && (
+                            <span
+                              className={`text-[9px] font-bold px-1 py-0.5 rounded text-white ${
+                                f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                              }`}
+                            >
+                              {f.antes_despues === "antes" ? "Antes" : "Después"}
+                            </span>
+                          )}
+                          {f.fecha && (
+                            <span className="text-[9px] font-medium px-1 py-0.5 rounded bg-black/60 text-white">
+                              {formatearFechaCorta(f.fecha)}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={(e) => eliminarFoto(e, f.id)}
+                          className="absolute top-1 right-1 bg-black/50 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          data-testid={`borrar-foto-${f.id}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {primera.audio_url && (
+                  <audio
+                    controls
+                    src={primera.audio_url}
+                    className="w-full max-w-xs mt-2 h-8"
+                  />
                 )}
-              </button>
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={(e) => eliminarFoto(e, f.id)}
-                  className="absolute top-1 right-1 bg-black/50 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  data-testid={`borrar-foto-${f.id}`}
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -128,9 +178,7 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
                 </span>
               )}
             </div>
-            {fotoAmpliada.audio_url && (
-              <audio controls src={fotoAmpliada.audio_url} className="w-full max-w-xs" />
-            )}
+            {/* El audio ya se muestra una vez por grupo en la lista, no aqui, para no repetirlo */}
           </div>
         </div>
       )}
