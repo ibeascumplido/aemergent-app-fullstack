@@ -86,6 +86,7 @@ class NotificationType(str, Enum):
     USER_REJECTED = "user_rejected"
     NEW_USER_REQUEST = "new_user_request"
     VACATION_REQUEST = "vacation_request"
+    FOTO_COMENTARIO = "foto_comentario"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -2540,6 +2541,105 @@ class FotoConNombres(Foto):
     work_order_titulo: Optional[str] = None
 
 
+# =====================================================================
+# COMENTARIOS SOBRE FOTOS (Fase 8 parte 4)
+# ---------------------------------------------------------------------
+# Mini-chat por lote de fotos: si una foto llega "en bruto" (o incluso ya
+# clasificada), el admin puede preguntar algo y el operario responde. Se
+# apoya en el sistema de notificaciones ya existente (create_notification
+# / notify_admins) - no hace falta nada nuevo ahi.
+# =====================================================================
+
+
+class ComentarioFotoBase(BaseModel):
+    texto: str = Field(..., min_length=1, max_length=1000)
+
+
+class ComentarioFoto(ComentarioFotoBase):
+    id: str
+    lote_id: str
+    autor_id: str
+    creado_en: datetime
+
+
+class ComentarioFotoConNombre(ComentarioFoto):
+    autor_nombre: str
+    es_admin: bool
+
+
+@api_router.get(
+    "/fotos/lote/{lote_id}/comentarios", response_model=List[ComentarioFotoConNombre]
+)
+async def list_comentarios_lote(lote_id: str, _: dict = Depends(require_approved)):
+    cursor = db.foto_comentarios.find({"lote_id": lote_id}).sort("creado_en", 1)
+    comentarios = [c async for c in cursor]
+
+    autor_ids = {c["autor_id"] for c in comentarios}
+    autores = {}
+    if autor_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(autor_ids)}}, {"_id": 0, "user_id": 1, "name": 1, "role": 1}
+        ):
+            autores[u["user_id"]] = u
+
+    return [
+        ComentarioFotoConNombre(
+            **c,
+            autor_nombre=autores.get(c["autor_id"], {}).get("name", "Usuario"),
+            es_admin=autores.get(c["autor_id"], {}).get("role") == UserRole.ADMIN,
+        )
+        for c in comentarios
+    ]
+
+
+@api_router.post(
+    "/fotos/lote/{lote_id}/comentarios", response_model=ComentarioFotoConNombre
+)
+async def crear_comentario_lote(
+    lote_id: str,
+    payload: ComentarioFotoBase,
+    current_user: dict = Depends(require_approved),
+):
+    foto = await db.fotos.find_one({"lote_id": lote_id})
+    if not foto:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+    now = datetime.now(timezone.utc)
+    texto = payload.texto.strip()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "lote_id": lote_id,
+        "autor_id": current_user["user_id"],
+        "texto": texto,
+        "creado_en": now,
+    }
+    await db.foto_comentarios.insert_one(doc)
+
+    es_admin_autor = current_user.get("role") == UserRole.ADMIN
+    if es_admin_autor:
+        if foto["operario_id"] != current_user["user_id"]:
+            await create_notification(
+                user_id=foto["operario_id"],
+                notification_type=NotificationType.FOTO_COMENTARIO,
+                title="Pregunta sobre tus fotos",
+                message=texto[:150],
+                data={"lote_id": lote_id},
+            )
+    else:
+        await notify_admins(
+            notification_type=NotificationType.FOTO_COMENTARIO,
+            title=f"{current_user.get('name', 'Un operario')} respondió sobre unas fotos",
+            message=texto[:150],
+            data={"lote_id": lote_id},
+        )
+
+    return ComentarioFotoConNombre(
+        **doc,
+        autor_nombre=current_user.get("name", "Usuario"),
+        es_admin=es_admin_autor,
+    )
+
+
 @api_router.post("/fotos", response_model=Foto)
 async def subir_foto(
     payload: FotoCreatePayload, current_user: dict = Depends(require_approved)
@@ -2608,7 +2708,8 @@ async def list_fotos(
     solo_sin_clasificar: bool = False,
     work_order_id: Optional[str] = None,
     client_id: Optional[str] = None,
-    _: dict = Depends(require_approved),
+    mias: bool = False,
+    current_user: dict = Depends(require_approved),
 ):
     """Bandeja de fotos. Con solo_sin_clasificar=True, las que aun no
     tienen un PARTE asignado (aunque el operario ya les haya puesto
@@ -2616,11 +2717,14 @@ async def list_fotos(
     admin las ubique en un parte concreto). Con work_order_id, solo las
     clasificadas en ese parte concreto (la vista dentro de un parte de
     trabajo). Con client_id, todas las del cliente (con o sin parte
-    concreto - vista en la ficha del cliente)."""
+    concreto - vista en la ficha del cliente). Con mias=True, solo las
+    que ha subido el usuario actual (para su propia pagina "Mis fotos")."""
     if work_order_id:
         query = {"work_order_id": work_order_id}
     elif client_id:
         query = {"client_id": client_id}
+    elif mias:
+        query = {"operario_id": current_user["user_id"]}
     elif solo_sin_clasificar:
         query = {"work_order_id": None}
     else:
