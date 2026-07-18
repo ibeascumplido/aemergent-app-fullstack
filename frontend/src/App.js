@@ -11,6 +11,7 @@ import PlanificacionPage from "@/pages/PlanificacionPage";
 import FotosPorClasificarPage from "@/pages/FotosPorClasificarPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import MisFotosPage from "@/pages/MisFotosPage";
+import FotoLoteDetallePage from "@/pages/FotoLoteDetallePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
@@ -44,6 +45,7 @@ function App() {
               <Route index element={<HomePage />} />
               <Route path="my-calendar" element={<MyCalendarPage />} />
               <Route path="mis-fotos" element={<MisFotosPage />} />
+              <Route path="fotos/lote/:loteId" element={<FotoLoteDetallePage />} />
               <Route path="planificacion" element={<PlanificacionPage />} />
               
               {/* Admin only routes */}
