@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users, Building2, Camera } from "lucide-react";
+import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users, Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
-import { toast } from "sonner";
 import axios from "axios";
 import FotosSinClasificar from "@/components/FotosSinClasificar";
+import FotoRapidaFlow from "@/components/FotoRapidaFlow";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -31,7 +31,6 @@ const HomePage = () => {
   const [myResumen, setMyResumen] = useState(null);
   const [pendingUsers, setPendingUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [subiendoFoto, setSubiendoFoto] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -62,30 +61,6 @@ const HomePage = () => {
     fetchData();
   }, [isAdmin, isPending]);
 
-  const handleFotoSeleccionada = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // permite volver a elegir la misma foto despues
-    if (!file) return;
-    setSubiendoFoto(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        await axios.post(`${API}/fotos`, { imagen: reader.result });
-        toast.success("Foto enviada");
-      } catch (err) {
-        console.error("Error subiendo foto:", err);
-        toast.error("No se pudo subir la foto");
-      } finally {
-        setSubiendoFoto(false);
-      }
-    };
-    reader.onerror = () => {
-      toast.error("No se pudo leer la foto");
-      setSubiendoFoto(false);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-ES', {
       style: 'currency',
@@ -112,28 +87,8 @@ const HomePage = () => {
         </p>
       </div>
 
-      {/* Foto rapida: camara directa, sin elegir cliente. Se clasifica despues. */}
-      {!isPending && (
-        <label
-          className={`mb-8 flex items-center justify-center gap-3 w-full py-4 rounded-xl text-white font-semibold text-lg shadow-sm transition-colors ${
-            subiendoFoto
-              ? "bg-red-300 cursor-wait"
-              : "bg-red-500 hover:bg-red-600 cursor-pointer"
-          }`}
-          data-testid="foto-rapida-btn"
-        >
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleFotoSeleccionada}
-            disabled={subiendoFoto}
-            className="hidden"
-          />
-          <Camera className="w-6 h-6" />
-          {subiendoFoto ? "Subiendo..." : "Foto rápida"}
-        </label>
-      )}
+      {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
+      {!isPending && <FotoRapidaFlow />}
 
       {isAdmin && <FotosSinClasificar />}
 
