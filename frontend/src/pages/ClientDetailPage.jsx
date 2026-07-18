@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft,
   Building2,
-  Image as ImageIcon,
   AlertTriangle,
   ClipboardList,
   FileText,
@@ -49,16 +48,11 @@ const colorDe = (nombre) => {
   return COLORES[Math.abs(h) % COLORES.length];
 };
 
-// Definición de las 7 secciones del dashboard del cliente.
+// Definición de las secciones del dashboard del cliente que aun son
+// maqueta ("Fotografías" ya se quito de aqui: ahora es una seccion real,
+// GaleriaFotos, mas arriba en la pagina).
 // Cada una tendrá su propia página/panel en entregas siguientes.
 const SECCIONES = [
-  {
-    key: "fotografias",
-    titulo: "Fotografías",
-    descripcion: "Galería de imágenes del cliente",
-    icon: ImageIcon,
-    color: "sky",
-  },
   {
     key: "incidencias",
     titulo: "Incidencias",
@@ -490,7 +484,7 @@ const ClientDetailPage = () => {
         </CardContent>
       </Card>
 
-      {cliente && <GaleriaFotos clientId={cliente.id} titulo="Fotos" />}
+      {cliente && <GaleriaFotos clientId={cliente.id} titulo="Fotografías" />}
 
       {/* Tarjeta: Ubicaciones (Fase 6 parte 1) */}
       <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-ubicaciones">
