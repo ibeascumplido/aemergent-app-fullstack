@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Bell,
   Check,
@@ -8,6 +9,7 @@ import {
   Palmtree,
   Sun,
   AlertCircle,
+  Camera,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +25,7 @@ import { es } from "date-fns/locale";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const NotificationBell = () => {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -81,6 +84,16 @@ const NotificationBell = () => {
     }
   };
 
+  const handleClickNotification = async (notification) => {
+    if (!notification.read) {
+      await markAsRead(notification.id);
+    }
+    if (notification.type === "foto_comentario" && notification.data?.lote_id) {
+      setOpen(false);
+      navigate(`/fotos/lote/${notification.data.lote_id}`);
+    }
+  };
+
   const getNotificationIcon = (type) => {
     switch (type) {
       case "vacation_approved":
@@ -91,6 +104,8 @@ const NotificationBell = () => {
         return <Check className="w-4 h-4 text-green-500" />;
       case "user_rejected":
         return <X className="w-4 h-4 text-red-500" />;
+      case "foto_comentario":
+        return <Camera className="w-4 h-4 text-indigo-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
@@ -165,8 +180,13 @@ const NotificationBell = () => {
                 <div
                   key={notification.id}
                   className={`p-4 hover:bg-slate-50 transition-colors ${
+                    notification.type === "foto_comentario" && notification.data?.lote_id
+                      ? "cursor-pointer"
+                      : ""
+                  } ${
                     getNotificationBgColor(notification.type, notification.read)
                   }`}
+                  onClick={() => handleClickNotification(notification)}
                 >
                   <div className="flex gap-3">
                     <div className="flex-shrink-0 mt-0.5">
@@ -189,7 +209,10 @@ const NotificationBell = () => {
                           variant="ghost"
                           size="sm"
                           className="h-6 w-6 p-0 text-slate-400 hover:text-green-600"
-                          onClick={() => markAsRead(notification.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markAsRead(notification.id);
+                          }}
                           title="Marcar como leída"
                         >
                           <Check className="w-3 h-3" />
@@ -199,7 +222,10 @@ const NotificationBell = () => {
                         variant="ghost"
                         size="sm"
                         className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
-                        onClick={() => deleteNotification(notification.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteNotification(notification.id);
+                        }}
                         title="Eliminar"
                       >
                         <Trash2 className="w-3 h-3" />
