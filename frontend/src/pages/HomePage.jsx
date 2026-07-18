@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
 import axios from "axios";
-import FotosSinClasificar from "@/components/FotosSinClasificar";
+import FotosPendientesAviso from "@/components/FotosPendientesAviso";
 import FotoRapidaFlow from "@/components/FotoRapidaFlow";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -90,7 +90,7 @@ const HomePage = () => {
       {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
       {!isPending && <FotoRapidaFlow />}
 
-      {isAdmin && <FotosSinClasificar />}
+      {isAdmin && <FotosPendientesAviso />}
 
       {/* Pending Approval Notice */}
       {isPending && (
