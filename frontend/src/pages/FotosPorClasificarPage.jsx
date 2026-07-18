@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Trash2 } from "lucide-react";
+import ComentariosLote from "@/components/ComentariosLote";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -273,6 +274,11 @@ const FotosPorClasificarPage = () => {
                   </Select>
                 </div>
               )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-slate-500">Preguntar al operario</label>
+                <ComentariosLote loteId={fotoActiva.lote_id} />
+              </div>
             </div>
           )}
           <DialogFooter>
