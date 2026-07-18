@@ -2464,6 +2464,139 @@ async def list_operarios(_: dict = Depends(require_approved)):
 
 
 # =====================================================================
+# FOTOS RAPIDAS (Fase 8)
+# ---------------------------------------------------------------------
+# Alternativa a WhatsApp: el operario hace la foto desde la app (camara
+# directa, sin elegir cliente) y llega a una bandeja "sin clasificar" para
+# que el admin la asigne despues. Reutiliza _subir_logo_cloudinary /
+# _borrar_logo_cloudinary (genericos pese al nombre) para el almacen.
+# =====================================================================
+
+
+class FotoCreatePayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto tomada con la camara")
+
+
+class FotoClasificarPayload(BaseModel):
+    client_id: Optional[str] = None
+    work_order_id: Optional[str] = None
+
+
+class Foto(BaseModel):
+    id: str
+    operario_id: str
+    url: str
+    public_id: Optional[str] = None
+    client_id: Optional[str] = None
+    work_order_id: Optional[str] = None
+    creado_en: datetime
+    clasificado_en: Optional[datetime] = None
+
+
+class FotoConNombres(Foto):
+    """Para la bandeja del admin: nombres ya resueltos, no solo IDs."""
+
+    operario_nombre: str
+    client_nombre: Optional[str] = None
+    work_order_titulo: Optional[str] = None
+
+
+@api_router.post("/fotos", response_model=Foto)
+async def subir_foto(
+    payload: FotoCreatePayload, current_user: dict = Depends(require_approved)
+):
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "url": url,
+        "public_id": public_id,
+        "client_id": None,
+        "work_order_id": None,
+        "creado_en": now,
+        "clasificado_en": None,
+    }
+    await db.fotos.insert_one(doc)
+    return Foto(**doc)
+
+
+@api_router.get("/fotos", response_model=List[FotoConNombres])
+async def list_fotos(
+    solo_sin_clasificar: bool = False, _: dict = Depends(require_approved)
+):
+    """Bandeja de fotos. Con solo_sin_clasificar=True, solo las que no
+    tienen cliente asignado todavia (la vista principal del admin)."""
+    query = {"client_id": None} if solo_sin_clasificar else {}
+    cursor = db.fotos.find(query).sort("creado_en", -1)
+    fotos = [f async for f in cursor]
+
+    operario_ids = {f["operario_id"] for f in fotos}
+    client_ids = {f["client_id"] for f in fotos if f.get("client_id")}
+    wo_ids = {f["work_order_id"] for f in fotos if f.get("work_order_id")}
+
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    clientes_map = {}
+    if client_ids:
+        async for cl in db.clients.find({"id": {"$in": list(client_ids)}}):
+            clientes_map[cl["id"]] = cl["nombre"]
+
+    wo_map = {}
+    if wo_ids:
+        async for wo in db.work_orders.find({"id": {"$in": list(wo_ids)}}):
+            wo_map[wo["id"]] = wo["titulo"]
+
+    return [
+        FotoConNombres(
+            **f,
+            operario_nombre=operarios_map.get(f["operario_id"], "Operario"),
+            client_nombre=clientes_map.get(f.get("client_id")),
+            work_order_titulo=wo_map.get(f.get("work_order_id")),
+        )
+        for f in fotos
+    ]
+
+
+@api_router.put("/fotos/{foto_id}/clasificar", response_model=Foto)
+async def clasificar_foto(
+    foto_id: str, payload: FotoClasificarPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    if payload.work_order_id and not payload.client_id:
+        raise HTTPException(
+            status_code=400, detail="No se puede asignar un parte sin cliente"
+        )
+    updates = {
+        "client_id": payload.client_id,
+        "work_order_id": payload.work_order_id,
+        "clasificado_en": datetime.now(timezone.utc) if payload.client_id else None,
+    }
+    await db.fotos.update_one({"id": foto_id}, {"$set": updates})
+    doc = await db.fotos.find_one({"id": foto_id})
+    return Foto(**doc)
+
+
+@api_router.delete("/fotos/{foto_id}")
+async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await _borrar_logo_cloudinary(doc.get("public_id"))
+    await db.fotos.delete_one({"id": foto_id})
+    return {"ok": True}
+
+
+# =====================================================================
 # PLANIFICACION DE EQUIPO (Fase 7)
 # ---------------------------------------------------------------------
 # Rejilla independiente (no el calendario de vacaciones): dias en filas,
