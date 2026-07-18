@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import GaleriaFotos from "@/components/GaleriaFotos";
 import {
   Dialog,
   DialogContent,
@@ -488,6 +489,8 @@ const ClientDetailPage = () => {
           )}
         </CardContent>
       </Card>
+
+      {cliente && <GaleriaFotos clientId={cliente.id} titulo="Fotos" />}
 
       {/* Tarjeta: Ubicaciones (Fase 6 parte 1) */}
       <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-ubicaciones">
