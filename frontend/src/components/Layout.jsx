@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import NotificationBell from "./NotificationBell";
 const Layout = () => {
   const { user, isAdmin, isPending, canBudgets, logout } = useAuth();
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -51,18 +53,52 @@ const Layout = () => {
 
   return (
     <div className="min-h-screen bg-white" data-testid="app-layout">
+      {/* Boton para abrir el menu, solo visible en movil (el sidebar ya es fijo en escritorio) */}
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-40 p-2 rounded-lg bg-white border border-slate-200 shadow-sm"
+        data-testid="abrir-menu-btn"
+      >
+        <Menu className="w-5 h-5 text-slate-700" />
+      </button>
+
+      {/* Fondo oscuro detras del menu en movil, cierra al tocar fuera */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/40 z-40"
+          onClick={() => setSidebarOpen(false)}
+          data-testid="overlay-menu"
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-screen w-64 border-r border-slate-100 bg-white z-50 flex flex-col" data-testid="sidebar">
+      <aside
+        className={`fixed left-0 top-0 h-screen w-64 border-r border-slate-100 bg-white z-50 flex flex-col transition-transform duration-200 ease-out ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0`}
+        data-testid="sidebar"
+      >
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <img 
             src="https://customer-assets.emergentagent.com/job_presupuesto-app-27/artifacts/yunqqtir_logo-final.png" 
             alt="INICIA" 
             className="h-10 w-auto"
           />
-          <NotificationBell />
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              className="md:hidden p-1.5 text-slate-400 hover:text-slate-700"
+              data-testid="cerrar-menu-btn"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
         
-        <nav className="p-4 space-y-1 flex-1">
+        <nav className="p-4 space-y-1 flex-1" onClick={() => setSidebarOpen(false)}>
           {itemsPersonales.map((item) => renderNavLink(item, false))}
 
           {itemsAdmin.length > 0 && (
@@ -117,12 +153,12 @@ const Layout = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="ml-64 min-h-screen">
+      <main className="md:ml-64 min-h-screen">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
-          className="p-8"
+          className="p-4 pt-16 md:p-8"
         >
           <Outlet />
         </motion.div>
