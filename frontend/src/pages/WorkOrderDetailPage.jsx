@@ -53,6 +53,7 @@ import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import SessionDialog from "@/components/SessionDialog";
+import GaleriaFotos from "@/components/GaleriaFotos";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -696,6 +697,8 @@ const WorkOrderDetailPage = () => {
           </p>
         </div>
       </div>
+
+      <GaleriaFotos workOrderId={id} titulo="Fotos del parte" />
 
       {/* Notas del parte */}
       {parte.notas && (
