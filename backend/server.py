@@ -2719,6 +2719,10 @@ async def list_fotos(
     client_id: Optional[str] = None,
     mias: bool = False,
     lote_id: Optional[str] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    antes_despues: Optional[str] = None,
+    operario_id: Optional[str] = None,
     current_user: dict = Depends(require_approved),
 ):
     """Bandeja de fotos. Con lote_id, solo las de ese grupo concreto (la
@@ -2730,7 +2734,13 @@ async def list_fotos(
     clasificadas en ese parte concreto (la vista dentro de un parte de
     trabajo). Con client_id, todas las del cliente (con o sin parte
     concreto - vista en la ficha del cliente). Con mias=True, solo las
-    que ha subido el usuario actual (para su propia pagina "Mis fotos")."""
+    que ha subido el usuario actual (para su propia pagina "Mis fotos").
+
+    fecha_desde/fecha_hasta, antes_despues y operario_id son filtros
+    adicionales, combinables entre si y con cualquiera de las vistas de
+    arriba - los usa el archivo filtrable de "Fotografias" (fecha,
+    antes/despues, operario; zona queda pendiente, cada jardin tendra la
+    suya propia)."""
     if lote_id:
         query = {"lote_id": lote_id}
     elif work_order_id:
@@ -2743,6 +2753,19 @@ async def list_fotos(
         query = {"work_order_id": None}
     else:
         query = {}
+
+    if fecha_desde or fecha_hasta:
+        rango = {}
+        if fecha_desde:
+            rango["$gte"] = fecha_desde
+        if fecha_hasta:
+            rango["$lte"] = fecha_hasta
+        query["fecha"] = rango
+    if antes_despues:
+        query["antes_despues"] = antes_despues
+    if operario_id:
+        query["operario_id"] = operario_id
+
     cursor = db.fotos.find(query).sort("creado_en", -1)
     fotos = [f async for f in cursor]
 
