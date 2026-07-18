@@ -66,6 +66,15 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
                 data-testid={`foto-${f.id}`}
               >
                 <img src={f.url} alt="" className="w-full h-full object-cover" />
+                {f.antes_despues && (
+                  <span
+                    className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
+                      f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                    }`}
+                  >
+                    {f.antes_despues === "antes" ? "Antes" : "Después"}
+                  </span>
+                )}
               </button>
               {isAdmin && (
                 <button
@@ -94,12 +103,35 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
           >
             <X className="w-6 h-6" />
           </button>
-          <img
-            src={fotoAmpliada.url}
-            alt=""
-            className="max-w-full max-h-full rounded-lg"
+          <div
+            className="flex flex-col items-center gap-3 max-w-full max-h-full"
             onClick={(e) => e.stopPropagation()}
-          />
+          >
+            <img
+              src={fotoAmpliada.url}
+              alt=""
+              className="max-w-full max-h-[70vh] rounded-lg object-contain"
+            />
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              {fotoAmpliada.antes_despues && (
+                <span
+                  className={`text-xs font-medium px-2 py-1 rounded text-white ${
+                    fotoAmpliada.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                >
+                  {fotoAmpliada.antes_despues === "antes" ? "Antes" : "Después"}
+                </span>
+              )}
+              {fotoAmpliada.fecha && (
+                <span className="text-xs text-white/80 bg-white/10 px-2 py-1 rounded">
+                  {new Date(fotoAmpliada.fecha + "T00:00:00").toLocaleDateString("es-ES")}
+                </span>
+              )}
+            </div>
+            {fotoAmpliada.audio_url && (
+              <audio controls src={fotoAmpliada.audio_url} className="w-full max-w-xs" />
+            )}
+          </div>
         </div>
       )}
     </>
