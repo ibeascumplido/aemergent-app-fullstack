@@ -31,12 +31,12 @@ const Layout = () => {
       children: [
         { to: "/clients/galp/locations/calendar", icon: MapPin, label: "GALP" },
         { to: "/planificacion", icon: UsersRound, label: "Operarios" },
+        { to: "/calendar", icon: Calendar, label: "Vacaciones" },
       ],
     },
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
-    { to: "/calendar", icon: Calendar, label: "Calendarios", show: isAdmin, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
 
