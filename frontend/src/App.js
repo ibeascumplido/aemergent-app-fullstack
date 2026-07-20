@@ -12,6 +12,7 @@ import FotosPorClasificarPage from "@/pages/FotosPorClasificarPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import FotoLoteDetallePage from "@/pages/FotoLoteDetallePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
+import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
@@ -75,6 +76,11 @@ function App() {
               <Route path="admin/users" element={
                 <ProtectedRoute requireAdmin>
                   <AdminUsersPage />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/users/:userId" element={
+                <ProtectedRoute requireAdmin>
+                  <UserDetailPage />
                 </ProtectedRoute>
               } />
               <Route path="clients/:id" element={
