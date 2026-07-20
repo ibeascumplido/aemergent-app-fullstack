@@ -4598,6 +4598,162 @@ async def eliminar_historial_maquinaria(historial_id: str, _: dict = Depends(req
     return {"ok": True}
 
 
+# =====================================================================
+# ROPA (Fase 9 parte 3)
+# ---------------------------------------------------------------------
+# Stock de ropa de trabajo: cada prenda (polo, pantalon, botas...) tiene
+# un desglose de tallas con su cantidad en stock. Las tallas van
+# embebidas en la propia prenda (no hace falta una coleccion aparte para
+# algo tan simple), y hay un ajuste rapido +/-1 para el dia a dia
+# (entregar o devolver una prenda) ademas del editor completo de tallas.
+# =====================================================================
+
+
+class TallaStock(BaseModel):
+    talla: str = Field(..., min_length=1, max_length=20)
+    cantidad: int = Field(0, ge=0)
+
+
+class PrendaBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class PrendaCreate(PrendaBase):
+    tallas: List[TallaStock] = Field(default_factory=list)
+
+
+class PrendaUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    notas: Optional[str] = Field(None, max_length=1000)
+    activo: Optional[bool] = None
+
+
+class TallasUpdatePayload(BaseModel):
+    tallas: List[TallaStock]
+
+
+class AjustarStockPayload(BaseModel):
+    delta: int = Field(..., description="+1 para anadir, -1 para descontar (o cualquier valor)")
+
+
+class Prenda(PrendaBase):
+    id: str
+    activo: bool = True
+    tallas: List[TallaStock] = Field(default_factory=list)
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+@api_router.get("/ropa", response_model=List[Prenda])
+async def list_ropa(_: dict = Depends(require_approved)):
+    cursor = db.ropa.find({"activo": True}).sort("nombre", 1)
+    return [Prenda(**p) async for p in cursor]
+
+
+@api_router.post("/ropa", response_model=Prenda)
+async def crear_prenda(payload: PrendaCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre,
+        "notas": payload.notas,
+        "activo": True,
+        "tallas": [t.model_dump() for t in payload.tallas],
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.ropa.insert_one(doc)
+    return Prenda(**doc)
+
+
+@api_router.get("/ropa/{prenda_id}", response_model=Prenda)
+async def obtener_prenda(prenda_id: str, _: dict = Depends(require_approved)):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    return Prenda(**doc)
+
+
+@api_router.put("/ropa/{prenda_id}", response_model=Prenda)
+async def actualizar_prenda(
+    prenda_id: str, payload: PrendaUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.ropa.update_one({"id": prenda_id}, {"$set": updates})
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+@api_router.delete("/ropa/{prenda_id}")
+async def eliminar_prenda(prenda_id: str, _: dict = Depends(require_admin)):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.put("/ropa/{prenda_id}/tallas", response_model=Prenda)
+async def actualizar_tallas_prenda(
+    prenda_id: str, payload: TallasUpdatePayload, _: dict = Depends(require_admin)
+):
+    """Reemplaza el desglose completo de tallas (editor de tabla: se
+    manda la lista entera tal como queda tras editar)."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {
+            "$set": {
+                "tallas": [t.model_dump() for t in payload.tallas],
+                "actualizado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+@api_router.put("/ropa/{prenda_id}/tallas/{talla}/ajustar", response_model=Prenda)
+async def ajustar_stock_talla(
+    prenda_id: str,
+    talla: str,
+    payload: AjustarStockPayload,
+    _: dict = Depends(require_approved),
+):
+    """Ajuste rapido del dia a dia (+1 al devolver, -1 al entregar una
+    prenda), sin tener que abrir el editor completo de tallas. La
+    cantidad nunca baja de 0."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    tallas = doc.get("tallas", [])
+    encontrada = False
+    for t in tallas:
+        if t["talla"] == talla:
+            t["cantidad"] = max(0, t["cantidad"] + payload.delta)
+            encontrada = True
+            break
+    if not encontrada:
+        raise HTTPException(status_code=404, detail="Talla no encontrada en esta prenda")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
