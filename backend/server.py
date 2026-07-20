@@ -229,6 +229,12 @@ class UserResponse(BaseModel):
     )
     fecha_ultima_revision_medica: Optional[str] = None
     fecha_proxima_revision_medica: Optional[str] = None
+    telefono: Optional[str] = None
+    dni: Optional[str] = None
+    direccion: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    contacto_emergencia_nombre: Optional[str] = None
+    contacto_emergencia_telefono: Optional[str] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -241,6 +247,12 @@ class UserUpdate(BaseModel):
     puesto: Optional[str] = None
     fecha_ultima_revision_medica: Optional[str] = None
     fecha_proxima_revision_medica: Optional[str] = None
+    telefono: Optional[str] = None
+    dni: Optional[str] = None
+    direccion: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    contacto_emergencia_nombre: Optional[str] = None
+    contacto_emergencia_telefono: Optional[str] = None
 
 # Helper function to hash passwords
 def hash_password(password: str) -> str:
@@ -787,6 +799,25 @@ async def update_user(user_id: str, user_update: UserUpdate, request: Request):
     if update_data:
         await db.users.update_one({"user_id": user_id}, {"$set": update_data})
     
+    updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
+class FotoUsuarioPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+@api_router.post("/admin/users/{user_id}/foto")
+async def subir_foto_usuario(user_id: str, payload: FotoUsuarioPayload, request: Request):
+    """Sube/reemplaza la foto de perfil de un usuario (admin only). Se
+    guarda directamente en el campo 'picture' que ya existia (antes solo
+    lo rellenaba el login de Google); un logo/foto manual pisa esa foto."""
+    await require_admin(request)
+    existing = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, _public_id = await _subir_logo_cloudinary(payload.imagen)
+    await db.users.update_one({"user_id": user_id}, {"$set": {"picture": url}})
     updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
     return updated
 
