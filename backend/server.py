@@ -3647,10 +3647,10 @@ async def _descargar_imagen_pdf(
 
 
 async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
-    """PDF especifico para partes con usa_zonas=True (Fase 6): reproduce la
-    pestaña INFORME del Excel original de Style Outlet - cuadrante tarea x
-    dia marcado solo con X (las zonas internas NO se exponen al cliente),
-    mas el mapa de zonas y las observaciones de cada sesion. Sustituye por
+    """PDF especifico para partes con usa_zonas=True (Fase 6/9): reproduce
+    la plantilla de "control de calidad" del cliente - logo, cabecera en
+    color, cuadrante tarea x dia con las letras de zona REALES (no solo
+    X), mapa de zonas a la derecha, y observaciones debajo. Sustituye por
     completo al informe de sesiones (_generar_pdf_parte) para este tipo de
     parte: el cliente no necesita ver duracion, operarios ni firmas aqui."""
     if doc.get("mes_rejilla"):
@@ -3664,11 +3664,13 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     await _migrar_celdas_desde_sesiones_si_hace_falta(doc["id"])
 
-    marcadas = set()  # {(tarea_id, fecha)}
+    # {(tarea_id, fecha): "B" o "B,C" ...} - letras reales, tal cual estan
+    # marcadas en la rejilla (X se muestra igual, es un valor mas).
+    celdas_texto = {}
     celdas_cursor = db.rejilla_celdas.find({"work_order_id": doc["id"]})
     async for c in celdas_cursor:
         if c.get("zonas"):
-            marcadas.add((c["tarea_id"], c["fecha"]))
+            celdas_texto[(c["tarea_id"], c["fecha"])] = ",".join(c["zonas"])
 
     # Observaciones: solo de sesiones creadas a mano (la rejilla ya no crea
     # sesiones automaticas), asi que aqui solo aparece lo que el admin
@@ -3679,94 +3681,195 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
         if s.get("notas"):
             observaciones.append((s["fecha"], s["notas"]))
 
+    ANCHO_PAGINA = landscape(A4)[0]
+    MARGEN = 1.2 * cm
+
     buffer = io.BytesIO()
     pdf_doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(A4),
-        topMargin=1.2 * cm,
-        bottomMargin=1.2 * cm,
-        leftMargin=1.2 * cm,
-        rightMargin=1.2 * cm,
+        topMargin=MARGEN,
+        bottomMargin=MARGEN,
+        leftMargin=MARGEN,
+        rightMargin=MARGEN,
         title=doc["titulo"],
     )
     styles = getSampleStyleSheet()
-    titulo_style = ParagraphStyle(
-        "TituloParte", parent=styles["Heading1"], fontSize=15, spaceAfter=2
+    titulo_banner_style = ParagraphStyle(
+        "TituloBanner", parent=styles["Heading1"], fontSize=14, alignment=1,
+        textColor=colors.HexColor("#7f1d1d"), leading=16,
     )
-    subtitulo_style = ParagraphStyle(
-        "Subtitulo", parent=styles["Normal"], fontSize=10,
-        textColor=colors.HexColor("#64748b"), spaceAfter=10,
+    anio_style = ParagraphStyle(
+        "Anio", parent=styles["Normal"], fontSize=11, alignment=2,
+        textColor=colors.HexColor("#7f1d1d"),
+    )
+    label_style = ParagraphStyle(
+        "Label", parent=styles["Normal"], fontSize=9, fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#334155"),
+    )
+    valor_style = ParagraphStyle(
+        "Valor", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#0f172a")
     )
     seccion_style = ParagraphStyle(
-        "Seccion", parent=styles["Heading3"], fontSize=11, spaceBefore=10, spaceAfter=6
+        "Seccion", parent=styles["Heading3"], fontSize=10, spaceBefore=0, spaceAfter=4,
+        textColor=colors.HexColor("#334155"),
     )
-    normal_style = ParagraphStyle(
-        "NormalP", parent=styles["Normal"], fontSize=9, leading=12
-    )
+    normal_style = ParagraphStyle("NormalP", parent=styles["Normal"], fontSize=8, leading=10)
+    tarea_style = ParagraphStyle("TareaP", parent=styles["Normal"], fontSize=7.5, leading=9)
+    obs_style = ParagraphStyle("ObsP", parent=styles["Normal"], fontSize=8, leading=11)
 
-    story = [
-        Paragraph(_p(doc["titulo"]), titulo_style),
-        Paragraph(
-            f"{_p(cliente['nombre']) if cliente else ''} &nbsp;&middot;&nbsp; "
-            f"{_MESES_ES[month - 1].capitalize()} de {year}",
-            subtitulo_style,
-        ),
-        HRFlowable(width="100%", color=colors.HexColor("#e2e8f0"), thickness=1),
-        Spacer(1, 8),
+    story = []
+
+    # Logo del cliente (si tiene), centrado arriba
+    logo_img = await _descargar_imagen_pdf(
+        cliente.get("logo_url") if cliente else None, max_width_cm=5.0, max_height_cm=2.2
+    )
+    if logo_img:
+        logo_tabla = Table([[logo_img]], colWidths=[ANCHO_PAGINA - 2 * MARGEN])
+        logo_tabla.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+        story.append(logo_tabla)
+        story.append(Spacer(1, 6))
+
+    # Cabecera: banner de titulo + año
+    banner = Table(
+        [[Paragraph("CONTROL DE CALIDAD DEL SERVICIO DE JARDINERÍA", titulo_banner_style),
+          Paragraph(str(year), anio_style)]],
+        colWidths=[ANCHO_PAGINA - 2 * MARGEN - 3 * cm, 3 * cm],
+    )
+    banner.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fbdcdc")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (0, 0), 10),
+                ("RIGHTPADDING", (1, 0), (1, 0), 10),
+            ]
+        )
+    )
+    story.append(banner)
+    story.append(Spacer(1, 1))
+
+    # Fila CLIENTE / MES
+    info_fila = Table(
+        [[
+            Paragraph("CLIENTE", label_style),
+            Paragraph(_p(cliente["nombre"]) if cliente else "", valor_style),
+            Paragraph("MES", label_style),
+            Paragraph(f"{_MESES_ES[month - 1].capitalize()}", valor_style),
+        ]],
+        colWidths=[2.4 * cm, ANCHO_PAGINA - 2 * MARGEN - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
+    )
+    info_fila.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#e2e8f0")),
+                ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(info_fila)
+    story.append(Spacer(1, 8))
+
+    # --- Columna izquierda: cuadrante + observaciones ---
+    ANCHO_DERECHA = 8.5 * cm
+    ANCHO_IZQUIERDA = ANCHO_PAGINA - 2 * MARGEN - ANCHO_DERECHA - 0.6 * cm
+
+    cabecera = [Paragraph("Tareas\nrealizadas", label_style)] + [
+        str(int(d.split("-")[2])) for d in dias
     ]
-
-    # Cuadrante: tarea x dia, solo X (sin zonas)
-    cabecera = ["Servicios realizados"] + [str(int(d.split("-")[2])) for d in dias]
     filas_tabla = [cabecera]
     for t in tareas:
-        fila = [Paragraph(_p(t["nombre"]), normal_style)]
+        fila = [Paragraph(_p(t["nombre"]), tarea_style)]
         for fecha in dias:
-            fila.append("X" if (t["id"], fecha) in marcadas else "")
+            fila.append(celdas_texto.get((t["id"], fecha), ""))
         filas_tabla.append(fila)
 
-    ancho_disponible = landscape(A4)[0] - 2.4 * cm
-    ancho_nombre = 4.2 * cm
-    ancho_dia = (ancho_disponible - ancho_nombre) / len(dias)
-    tabla = Table(
+    ancho_nombre = 3.4 * cm
+    ancho_dia = (ANCHO_IZQUIERDA - ancho_nombre) / len(dias)
+    tabla_grid = Table(
         filas_tabla,
         colWidths=[ancho_nombre] + [ancho_dia] * len(dias),
         repeatRows=1,
     )
-    tabla.setStyle(
+    tabla_grid.setStyle(
         TableStyle(
             [
-                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("FONTSIZE", (0, 0), (-1, -1), 6.5),
                 ("ALIGN", (1, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#cbd5e1")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#94a3b8")),
                 ("TOPPADDING", (0, 0), (-1, -1), 2),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("FONTNAME", (1, 1), (-1, -1), "Helvetica-Bold"),
+                ("TEXTCOLOR", (1, 1), (-1, -1), colors.HexColor("#1e3a8a")),
             ]
         )
     )
-    story.append(tabla)
 
-    # Mapa de zonas
+    # Observaciones e incidencias, en un recuadro con titulo resaltado
+    obs_filas = [[Paragraph("OBSERVACIONES E INCIDENCIAS", seccion_style)]]
+    if observaciones:
+        for fecha, nota in observaciones:
+            obs_filas.append(
+                [Paragraph(f"<b>{_formatear_fecha_es(fecha)}:</b> {_p(nota)}", obs_style)]
+            )
+    else:
+        obs_filas.append([Paragraph("Sin observaciones registradas este mes.", obs_style)])
+    tabla_obs = Table(obs_filas, colWidths=[ANCHO_IZQUIERDA])
+    tabla_obs.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#dbeafe")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+
+    columna_izquierda = [tabla_grid, Spacer(1, 8), tabla_obs]
+
+    # --- Columna derecha: mapa de zonas ---
     mapa_img = await _descargar_imagen_pdf(
         cliente.get("mapa_zonas_url") if cliente else None,
-        max_width_cm=22.0,
-        max_height_cm=15.0,
+        max_width_cm=ANCHO_DERECHA / cm - 0.4,
+        max_height_cm=16.0,
     )
+    columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style)]
     if mapa_img:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Mapa de zonas", seccion_style))
-        story.append(mapa_img)
+        columna_derecha.append(mapa_img)
+    else:
+        columna_derecha.append(
+            Paragraph("(el cliente no tiene un mapa de zonas subido todavía)", normal_style)
+        )
 
-    # Observaciones e incidencias (notas de las sesiones)
-    if observaciones:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Observaciones e incidencias", seccion_style))
-        for fecha, nota in observaciones:
-            story.append(
-                Paragraph(f"<b>{_formatear_fecha_es(fecha)}:</b> {_p(nota)}", normal_style)
-            )
+    layout_dos_columnas = Table(
+        [[columna_izquierda, columna_derecha]],
+        colWidths=[ANCHO_IZQUIERDA, ANCHO_DERECHA],
+    )
+    layout_dos_columnas.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (1, 0), (1, 0), 0.6, colors.HexColor("#94a3b8")),
+                ("TOPPADDING", (1, 0), (1, 0), 6),
+                ("LEFTPADDING", (1, 0), (1, 0), 8),
+            ]
+        )
+    )
+    story.append(layout_dos_columnas)
 
     pdf_doc.build(story)
     return buffer.getvalue()
