@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera } from "lucide-react";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,9 @@ import NotificationBell from "./NotificationBell";
 const Layout = () => {
   const { user, isAdmin, isPending, canBudgets, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [planificacionAbierta, setPlanificacionAbierta] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -20,7 +22,17 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true, section: "personal" },
-    { to: "/planificacion", icon: CalendarDays, label: "Planificación", show: true, section: "admin" },
+    {
+      label: "Planificación",
+      icon: CalendarDays,
+      show: true,
+      section: "admin",
+      dropdown: true,
+      children: [
+        { to: "/clients/galp/locations/calendar", icon: MapPin, label: "GALP" },
+        { to: "/planificacion", icon: UsersRound, label: "Operarios" },
+      ],
+    },
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
@@ -30,6 +42,9 @@ const Layout = () => {
 
   const itemsPersonales = navItems.filter((i) => i.section === "personal");
   const itemsAdmin = navItems.filter((i) => i.section === "admin");
+
+  const hijoActivo = (item) =>
+    item.dropdown && item.children.some((h) => location.pathname.startsWith(h.to));
 
   const renderNavLink = (item, resaltado) => (
     <NavLink
@@ -51,6 +66,55 @@ const Layout = () => {
       <span>{item.label}</span>
     </NavLink>
   );
+
+  const renderDropdown = (item) => {
+    const activo = hijoActivo(item);
+    const abierto = planificacionAbierta || activo;
+    return (
+      <div key={item.label}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPlanificacionAbierta((v) => !v);
+          }}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+            activo
+              ? "bg-red-50 text-red-600 font-medium"
+              : "bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          }`}
+          data-testid="nav-planificacion-toggle"
+        >
+          <item.icon className="w-5 h-5" />
+          <span className="flex-1 text-left">{item.label}</span>
+          <ChevronDown
+            className={`w-4 h-4 transition-transform ${abierto ? "rotate-180" : ""}`}
+          />
+        </button>
+        {abierto && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-100 pl-3">
+            {item.children.map((hijo) => (
+              <NavLink
+                key={hijo.to}
+                to={hijo.to}
+                className={({ isActive }) =>
+                  `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
+                    isActive
+                      ? "bg-red-50 text-red-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  }`
+                }
+                data-testid={`nav-${hijo.label.toLowerCase()}`}
+              >
+                <hijo.icon className="w-4 h-4" />
+                <span>{hijo.label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-white" data-testid="app-layout">
@@ -108,7 +172,9 @@ const Layout = () => {
                 Administración
               </p>
               <div className="space-y-1">
-                {itemsAdmin.map((item) => renderNavLink(item, true))}
+                {itemsAdmin.map((item) =>
+                  item.dropdown ? renderDropdown(item) : renderNavLink(item, true)
+                )}
               </div>
             </div>
           )}
