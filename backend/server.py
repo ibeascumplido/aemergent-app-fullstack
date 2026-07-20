@@ -223,6 +223,12 @@ class UserResponse(BaseModel):
     dias_libres: int = 6
     color: str = "#3B82F6"
     abreviatura: str = ""
+    puesto: Optional[str] = Field(
+        None, description="Cargo descriptivo (operario, encargado, gerente...), "
+        "independiente del 'role' que controla permisos."
+    )
+    fecha_ultima_revision_medica: Optional[str] = None
+    fecha_proxima_revision_medica: Optional[str] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -232,6 +238,9 @@ class UserUpdate(BaseModel):
     dias_libres: Optional[int] = None
     color: Optional[str] = None
     abreviatura: Optional[str] = None
+    puesto: Optional[str] = None
+    fecha_ultima_revision_medica: Optional[str] = None
+    fecha_proxima_revision_medica: Optional[str] = None
 
 # Helper function to hash passwords
 def hash_password(password: str) -> str:
@@ -755,6 +764,15 @@ async def get_pending_users(request: Request):
     await require_admin(request)
     users = await db.users.find({"status": UserStatus.PENDING}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
+
+@api_router.get("/admin/users/{user_id}")
+async def get_user_detail(user_id: str, request: Request):
+    """Ficha de un usuario concreto (admin only)."""
+    await require_admin(request)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return user
 
 @api_router.put("/admin/users/{user_id}")
 async def update_user(user_id: str, user_update: UserUpdate, request: Request):
