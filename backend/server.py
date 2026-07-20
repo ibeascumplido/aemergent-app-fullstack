@@ -4392,6 +4392,212 @@ async def eliminar_averia_vehiculo(averia_id: str, _: dict = Depends(require_adm
     return {"ok": True}
 
 
+# =====================================================================
+# MAQUINARIA Y HERRAMIENTAS (Fase 9 parte 2)
+# ---------------------------------------------------------------------
+# Datos por maquina/herramienta (ubicacion actual, año de fabricacion,
+# estado, fotos) mas un historial unico de averias/arreglos/revisiones
+# (a diferencia de vehiculos, aqui se pidio explicitamente distinguir
+# esos 3 tipos de entrada, asi que el historial lleva un campo 'tipo').
+# =====================================================================
+
+_ESTADO_MAQUINARIA_PATTERN = r"^(operativo|en_reparacion|fuera_servicio)$"
+_TIPO_HISTORIAL_PATTERN = r"^(averia|arreglo|revision)$"
+
+
+class MaquinariaBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
+    ubicacion_actual: Optional[str] = Field(None, max_length=200)
+    estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class MaquinariaCreate(MaquinariaBase):
+    pass
+
+
+class MaquinariaUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
+    ubicacion_actual: Optional[str] = Field(None, max_length=200)
+    estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Maquinaria(MaquinariaBase):
+    id: str
+    activo: bool = True
+    fotos: List[str] = Field(default_factory=list)
+    fotos_public_ids: List[str] = Field(default_factory=list)
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class FotoMaquinariaPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+
+class HistorialMaquinariaBase(BaseModel):
+    tipo: str = Field(..., pattern=_TIPO_HISTORIAL_PATTERN)
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    descripcion: str = Field(..., min_length=1, max_length=1000)
+
+
+class HistorialMaquinariaCreate(HistorialMaquinariaBase):
+    pass
+
+
+class HistorialMaquinaria(HistorialMaquinariaBase):
+    id: str
+    maquinaria_id: str
+    creado_por: str
+    creado_en: datetime
+
+
+@api_router.get("/maquinaria", response_model=List[Maquinaria])
+async def list_maquinaria(_: dict = Depends(require_approved)):
+    cursor = db.maquinaria.find({"activo": True}).sort("nombre", 1)
+    return [Maquinaria(**m) async for m in cursor]
+
+
+@api_router.post("/maquinaria", response_model=Maquinaria)
+async def crear_maquinaria(payload: MaquinariaCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "activo": True,
+        "fotos": [],
+        "fotos_public_ids": [],
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.maquinaria.insert_one(doc)
+    return Maquinaria(**doc)
+
+
+@api_router.get("/maquinaria/{maquinaria_id}", response_model=Maquinaria)
+async def obtener_maquinaria(maquinaria_id: str, _: dict = Depends(require_approved)):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    return Maquinaria(**doc)
+
+
+@api_router.put("/maquinaria/{maquinaria_id}", response_model=Maquinaria)
+async def actualizar_maquinaria(
+    maquinaria_id: str, payload: MaquinariaUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.maquinaria.update_one({"id": maquinaria_id}, {"$set": updates})
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.delete("/maquinaria/{maquinaria_id}")
+async def eliminar_maquinaria(maquinaria_id: str, _: dict = Depends(require_admin)):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/maquinaria/{maquinaria_id}/fotos", response_model=Maquinaria)
+async def anadir_foto_maquinaria(
+    maquinaria_id: str, payload: FotoMaquinariaPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    fotos = doc.get("fotos", []) + [url]
+    fotos_ids = doc.get("fotos_public_ids", []) + [public_id]
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.delete("/maquinaria/{maquinaria_id}/fotos/{indice}", response_model=Maquinaria)
+async def eliminar_foto_maquinaria(
+    maquinaria_id: str, indice: int, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    fotos = doc.get("fotos", [])
+    fotos_ids = doc.get("fotos_public_ids", [])
+    if indice < 0 or indice >= len(fotos):
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    public_id = fotos_ids[indice] if indice < len(fotos_ids) else None
+    await _borrar_logo_cloudinary(public_id)
+    fotos.pop(indice)
+    if indice < len(fotos_ids):
+        fotos_ids.pop(indice)
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.get(
+    "/maquinaria/{maquinaria_id}/historial", response_model=List[HistorialMaquinaria]
+)
+async def list_historial_maquinaria(maquinaria_id: str, _: dict = Depends(require_approved)):
+    cursor = db.historial_maquinaria.find({"maquinaria_id": maquinaria_id}).sort("fecha", -1)
+    return [HistorialMaquinaria(**h) async for h in cursor]
+
+
+@api_router.post(
+    "/maquinaria/{maquinaria_id}/historial", response_model=HistorialMaquinaria
+)
+async def crear_historial_maquinaria(
+    maquinaria_id: str,
+    payload: HistorialMaquinariaCreate,
+    current_user: dict = Depends(require_approved),
+):
+    maquina = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not maquina:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "maquinaria_id": maquinaria_id,
+        "tipo": payload.tipo,
+        "fecha": payload.fecha,
+        "descripcion": payload.descripcion.strip(),
+        "creado_por": current_user["user_id"],
+        "creado_en": now,
+    }
+    await db.historial_maquinaria.insert_one(doc)
+    return HistorialMaquinaria(**doc)
+
+
+@api_router.delete("/historial-maquinaria/{historial_id}")
+async def eliminar_historial_maquinaria(historial_id: str, _: dict = Depends(require_admin)):
+    result = await db.historial_maquinaria.delete_one({"id": historial_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return {"ok": True}
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
