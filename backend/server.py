@@ -4216,6 +4216,182 @@ async def client_work_orders_summary(slug: str, _: dict = Depends(require_approv
         "total_horas": round(total_horas, 2),
     }
 
+
+# =====================================================================
+# VEHICULOS (Fase 9 parte 1)
+# ---------------------------------------------------------------------
+# Datos por vehiculo (matricula, marca/modelo, año, kilometraje) con
+# fechas de ITV y proxima revision (el frontend calcula la alerta igual
+# que con las revisiones medicas de usuarios: mismo umbral de 30 dias).
+# Las averias son un historial aparte, no una fecha unica - se pueden ir
+# anadiendo y marcando como resueltas.
+# =====================================================================
+
+
+class VehiculoBase(BaseModel):
+    matricula: str = Field(..., min_length=1, max_length=20)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio: Optional[int] = Field(None, ge=1950, le=2100)
+    kilometraje: Optional[int] = Field(None, ge=0)
+    fecha_itv: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    fecha_proxima_revision: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    operario_asignado_id: Optional[str] = None
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class VehiculoCreate(VehiculoBase):
+    pass
+
+
+class VehiculoUpdate(BaseModel):
+    matricula: Optional[str] = Field(None, min_length=1, max_length=20)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio: Optional[int] = Field(None, ge=1950, le=2100)
+    kilometraje: Optional[int] = Field(None, ge=0)
+    fecha_itv: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    fecha_proxima_revision: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    operario_asignado_id: Optional[str] = None
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Vehiculo(VehiculoBase):
+    id: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class AveriaVehiculoBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    descripcion: str = Field(..., min_length=1, max_length=1000)
+
+
+class AveriaVehiculoCreate(AveriaVehiculoBase):
+    pass
+
+
+class AveriaVehiculo(AveriaVehiculoBase):
+    id: str
+    vehiculo_id: str
+    resuelta: bool = False
+    fecha_resolucion: Optional[str] = None
+    creado_por: str
+    creado_en: datetime
+
+
+@api_router.get("/vehiculos", response_model=List[Vehiculo])
+async def list_vehiculos(_: dict = Depends(require_approved)):
+    cursor = db.vehiculos.find({"activo": True}).sort("matricula", 1)
+    return [Vehiculo(**v) async for v in cursor]
+
+
+@api_router.post("/vehiculos", response_model=Vehiculo)
+async def crear_vehiculo(payload: VehiculoCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.vehiculos.insert_one(doc)
+    return Vehiculo(**doc)
+
+
+@api_router.get("/vehiculos/{vehiculo_id}", response_model=Vehiculo)
+async def obtener_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    return Vehiculo(**doc)
+
+
+@api_router.put("/vehiculos/{vehiculo_id}", response_model=Vehiculo)
+async def actualizar_vehiculo(
+    vehiculo_id: str, payload: VehiculoUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.vehiculos.update_one({"id": vehiculo_id}, {"$set": updates})
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}")
+async def eliminar_vehiculo(vehiculo_id: str, _: dict = Depends(require_admin)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/vehiculos/{vehiculo_id}/averias", response_model=List[AveriaVehiculo])
+async def list_averias_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    cursor = db.averias_vehiculo.find({"vehiculo_id": vehiculo_id}).sort("fecha", -1)
+    return [AveriaVehiculo(**a) async for a in cursor]
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/averias", response_model=AveriaVehiculo)
+async def crear_averia_vehiculo(
+    vehiculo_id: str,
+    payload: AveriaVehiculoCreate,
+    current_user: dict = Depends(require_approved),
+):
+    vehiculo = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "vehiculo_id": vehiculo_id,
+        "fecha": payload.fecha,
+        "descripcion": payload.descripcion.strip(),
+        "resuelta": False,
+        "fecha_resolucion": None,
+        "creado_por": current_user["user_id"],
+        "creado_en": now,
+    }
+    await db.averias_vehiculo.insert_one(doc)
+    return AveriaVehiculo(**doc)
+
+
+@api_router.put("/averias-vehiculo/{averia_id}/resolver", response_model=AveriaVehiculo)
+async def resolver_averia_vehiculo(
+    averia_id: str, _: dict = Depends(require_approved)
+):
+    doc = await db.averias_vehiculo.find_one({"id": averia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Avería no encontrada")
+    hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    nuevo_estado = not doc.get("resuelta", False)
+    await db.averias_vehiculo.update_one(
+        {"id": averia_id},
+        {"$set": {"resuelta": nuevo_estado, "fecha_resolucion": hoy if nuevo_estado else None}},
+    )
+    doc = await db.averias_vehiculo.find_one({"id": averia_id})
+    return AveriaVehiculo(**doc)
+
+
+@api_router.delete("/averias-vehiculo/{averia_id}")
+async def eliminar_averia_vehiculo(averia_id: str, _: dict = Depends(require_admin)):
+    result = await db.averias_vehiculo.delete_one({"id": averia_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Avería no encontrada")
+    return {"ok": True}
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
