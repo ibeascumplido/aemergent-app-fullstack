@@ -20,7 +20,6 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true, section: "personal" },
-    { to: "/mis-fotos", icon: Camera, label: "Mis fotos", show: true, section: "personal" },
     { to: "/planificacion", icon: CalendarDays, label: "Planificación", show: true, section: "admin" },
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
