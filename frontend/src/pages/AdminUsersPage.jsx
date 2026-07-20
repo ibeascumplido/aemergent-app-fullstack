@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Users,
@@ -10,6 +11,8 @@ import {
   Trash2,
   Check,
   X,
+  AlertTriangle,
+  ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,7 +52,19 @@ const PRESET_COLORS = [
   "#06B6D4", "#84CC16", "#F97316", "#6366F1", "#14B8A6", "#A855F7",
 ];
 
+const DIAS_AVISO_PREVIO = 30;
+
+const tieneAlertaRevision = (fechaProxima) => {
+  if (!fechaProxima) return false;
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const proxima = new Date(fechaProxima + "T00:00:00");
+  const diasRestantes = Math.round((proxima - hoy) / (1000 * 60 * 60 * 24));
+  return diasRestantes <= DIAS_AVISO_PREVIO;
+};
+
 const AdminUsersPage = () => {
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -107,6 +122,7 @@ const AdminUsersPage = () => {
         dias_libres: editingUser.dias_libres,
         color: editingUser.color,
         abreviatura: editingUser.abreviatura,
+        puesto: editingUser.puesto || "",
       });
       toast.success("Usuario actualizado");
       setShowEditModal(false);
@@ -274,8 +290,19 @@ const AdminUsersPage = () => {
                             )}
                           </div>
                           <div>
-                            <p className="font-medium text-slate-900">{user.name}</p>
+                            <p className="font-medium text-slate-900 inline-flex items-center gap-1.5">
+                              {user.name}
+                              {tieneAlertaRevision(user.fecha_proxima_revision_medica) && (
+                                <AlertTriangle
+                                  className="w-3.5 h-3.5 text-amber-500"
+                                  title="Revisión médica próxima o vencida"
+                                />
+                              )}
+                            </p>
                             <p className="text-sm text-slate-500">{user.email}</p>
+                            {user.puesto && (
+                              <p className="text-xs text-slate-400">{user.puesto}</p>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -327,6 +354,15 @@ const AdminUsersPage = () => {
                           <Button
                             size="sm"
                             variant="outline"
+                            onClick={() => navigate(`/admin/users/${user.user_id}`)}
+                            data-testid={`ver-ficha-${user.user_id}`}
+                          >
+                            Ficha
+                            <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             onClick={() => {
                               setEditingUser({ ...user });
                               setShowEditModal(true);
@@ -370,6 +406,16 @@ const AdminUsersPage = () => {
                 />
               </div>
               
+              <div className="space-y-2">
+                <Label>Puesto</Label>
+                <Input
+                  value={editingUser.puesto || ""}
+                  onChange={(e) => setEditingUser({ ...editingUser, puesto: e.target.value })}
+                  placeholder="Ej. Operario, Encargado, Gerente..."
+                  data-testid="edit-puesto-input"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Abreviatura</Label>
