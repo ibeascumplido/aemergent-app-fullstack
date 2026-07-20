@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ const Layout = () => {
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
     { to: "/vehiculos", icon: Truck, label: "Vehículos", show: true, section: "admin" },
+    { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: true, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
 
