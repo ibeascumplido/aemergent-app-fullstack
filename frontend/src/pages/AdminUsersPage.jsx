@@ -318,9 +318,11 @@ const AdminUsersPage = () => {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          user.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-700"
+                          user.role === "admin" ? "bg-purple-100 text-purple-700" :
+                          user.role === "facturacion" ? "bg-sky-100 text-sky-700" :
+                          "bg-slate-100 text-slate-700"
                         }`}>
-                          {user.role === "admin" ? "Admin" : "Usuario"}
+                          {user.role === "admin" ? "Admin" : user.role === "facturacion" ? "Facturación" : "Usuario"}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center font-mono text-sm">
@@ -437,6 +439,7 @@ const AdminUsersPage = () => {
                     <SelectContent>
                       <SelectItem value="user">Usuario</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="facturacion">Facturación</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
