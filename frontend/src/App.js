@@ -14,6 +14,8 @@ import FotoLoteDetallePage from "@/pages/FotoLoteDetallePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import VehiculosPage from "@/pages/VehiculosPage";
 import VehiculoDetailPage from "@/pages/VehiculoDetailPage";
+import MaquinariaPage from "@/pages/MaquinariaPage";
+import MaquinariaDetailPage from "@/pages/MaquinariaDetailPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
@@ -87,6 +89,8 @@ function App() {
               } />
               <Route path="vehiculos" element={<VehiculosPage />} />
               <Route path="vehiculos/:vehiculoId" element={<VehiculoDetailPage />} />
+              <Route path="maquinaria" element={<MaquinariaPage />} />
+              <Route path="maquinaria/:maquinariaId" element={<MaquinariaDetailPage />} />
               <Route path="clients/:id" element={
                 <ProtectedRoute requireBudgets>
                   <ClientDetailPage />
