@@ -12,6 +12,8 @@ import FotosPorClasificarPage from "@/pages/FotosPorClasificarPage";
 import MyCalendarPage from "@/pages/MyCalendarPage";
 import FotoLoteDetallePage from "@/pages/FotoLoteDetallePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
+import VehiculosPage from "@/pages/VehiculosPage";
+import VehiculoDetailPage from "@/pages/VehiculoDetailPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
@@ -83,6 +85,8 @@ function App() {
                   <UserDetailPage />
                 </ProtectedRoute>
               } />
+              <Route path="vehiculos" element={<VehiculosPage />} />
+              <Route path="vehiculos/:vehiculoId" element={<VehiculoDetailPage />} />
               <Route path="clients/:id" element={
                 <ProtectedRoute requireBudgets>
                   <ClientDetailPage />
