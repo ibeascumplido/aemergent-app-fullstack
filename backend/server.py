@@ -3662,13 +3662,20 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
     tareas = [t async for t in tareas_cursor]
 
+    await _migrar_celdas_desde_sesiones_si_hace_falta(doc["id"])
+
     marcadas = set()  # {(tarea_id, fecha)}
+    celdas_cursor = db.rejilla_celdas.find({"work_order_id": doc["id"]})
+    async for c in celdas_cursor:
+        if c.get("zonas"):
+            marcadas.add((c["tarea_id"], c["fecha"]))
+
+    # Observaciones: solo de sesiones creadas a mano (la rejilla ya no crea
+    # sesiones automaticas), asi que aqui solo aparece lo que el admin
+    # anoto explicitamente para un dia concreto.
     observaciones = []  # [(fecha, nota)]
     sesiones_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort("fecha", 1)
     async for s in sesiones_cursor:
-        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
-            if zonas:
-                marcadas.add((tarea_id, s["fecha"]))
         if s.get("notas"):
             observaciones.append((s["fecha"], s["notas"]))
 
@@ -3921,6 +3928,40 @@ def _dias_del_mes(year: int, month: int) -> List[str]:
     return dias
 
 
+async def _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id: str) -> None:
+    """Compatibilidad con partes creados antes de este cambio: si la
+    rejilla usaba sesiones auto-creadas para guardar las zonas, se migran
+    una sola vez a la coleccion dedicada rejilla_celdas. Se marca con un
+    flag en el propio parte (no basta con mirar si ya hay celdas: en
+    cuanto se usa la rejilla normalmente ya habria alguna, y se saltaria
+    la migracion de lo antiguo por error)."""
+    parte = await db.work_orders.find_one({"id": work_order_id})
+    if parte and parte.get("rejilla_migrada"):
+        return
+    now = datetime.now(timezone.utc)
+    cursor = db.work_sessions.find({"work_order_id": work_order_id})
+    async for s in cursor:
+        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
+            if zonas:
+                existente = await db.rejilla_celdas.find_one(
+                    {"work_order_id": work_order_id, "tarea_id": tarea_id, "fecha": s["fecha"]}
+                )
+                if not existente:
+                    await db.rejilla_celdas.insert_one(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "work_order_id": work_order_id,
+                            "tarea_id": tarea_id,
+                            "fecha": s["fecha"],
+                            "zonas": zonas,
+                            "actualizado_en": now,
+                        }
+                    )
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"rejilla_migrada": True}}
+    )
+
+
 @api_router.get("/work-orders/{work_order_id}/rejilla-zonas", response_model=RejillaZonas)
 async def obtener_rejilla_zonas(
     work_order_id: str, _: dict = Depends(require_approved)
@@ -3941,12 +3982,13 @@ async def obtener_rejilla_zonas(
         async for t in tareas_cursor
     ]
 
+    await _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id)
+
     celdas = []
-    sesiones_cursor = db.work_sessions.find({"work_order_id": work_order_id})
-    async for s in sesiones_cursor:
-        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
-            if zonas:
-                celdas.append(CeldaRejilla(tarea_id=tarea_id, fecha=s["fecha"], zonas=zonas))
+    celdas_cursor = db.rejilla_celdas.find({"work_order_id": work_order_id})
+    async for c in celdas_cursor:
+        if c.get("zonas"):
+            celdas.append(CeldaRejilla(tarea_id=c["tarea_id"], fecha=c["fecha"], zonas=c["zonas"]))
 
     return RejillaZonas(dias=dias, tareas=tareas, celdas=celdas)
 
@@ -3957,11 +3999,12 @@ async def actualizar_celda_rejilla(
     payload: CeldaRejillaPayload,
     current_user: dict = Depends(require_approved),
 ):
-    """Crea/actualiza/quita la asignacion de una tarea+zona en un dia
-    concreto. Agrupa por fecha: si ya hay una sesion ese dia se actualiza,
-    si no existe se crea una minima (sin hora/operarios/firmante - eso
-    sigue siendo opcional y se puede rellenar despues desde la sesion si
-    hace falta)."""
+    """Marca/quita una zona en la rejilla para una tarea+dia. Vive en su
+    propia coleccion (rejilla_celdas), independiente de las sesiones: no
+    se crea ninguna sesion automatica al usar la rejilla. Si se quiere que
+    una anotacion aparezca en 'Observaciones e incidencias' del PDF, hay
+    que abrir una sesion a mano para ese dia (boton de siempre en el
+    parte) y escribir la nota ahi - eso sigue funcionando igual."""
     doc = await _cargar_parte(work_order_id)
     if doc["estado"] != "abierto":
         raise HTTPException(status_code=403, detail="El parte no esta abierto")
@@ -3969,55 +4012,31 @@ async def actualizar_celda_rejilla(
         raise HTTPException(status_code=400, detail="Este parte no usa zonas")
 
     now = datetime.now(timezone.utc)
-    sesion = await db.work_sessions.find_one(
-        {"work_order_id": work_order_id, "fecha": payload.fecha}
+    existente = await db.rejilla_celdas.find_one(
+        {"work_order_id": work_order_id, "tarea_id": payload.tarea_id, "fecha": payload.fecha}
     )
 
     if not payload.zonas:
-        if not sesion:
-            return {"ok": True}
-        tareas_ids = [t for t in sesion.get("tareas_ids", []) if t != payload.tarea_id]
-        tareas_zonas = {
-            k: v for k, v in (sesion.get("tareas_zonas") or {}).items() if k != payload.tarea_id
-        }
-        await db.work_sessions.update_one(
-            {"id": sesion["id"]},
-            {"$set": {"tareas_ids": tareas_ids, "tareas_zonas": tareas_zonas, "actualizado_en": now}},
-        )
+        if existente:
+            await db.rejilla_celdas.delete_one({"id": existente["id"]})
         return {"ok": True}
 
-    if sesion:
-        tareas_ids = sesion.get("tareas_ids", [])
-        if payload.tarea_id not in tareas_ids:
-            tareas_ids = tareas_ids + [payload.tarea_id]
-        tareas_zonas = {**(sesion.get("tareas_zonas") or {}), payload.tarea_id: payload.zonas}
-        await db.work_sessions.update_one(
-            {"id": sesion["id"]},
-            {"$set": {"tareas_ids": tareas_ids, "tareas_zonas": tareas_zonas, "actualizado_en": now}},
+    if existente:
+        await db.rejilla_celdas.update_one(
+            {"id": existente["id"]},
+            {"$set": {"zonas": payload.zonas, "actualizado_en": now}},
         )
     else:
-        session_doc = {
-            "id": str(uuid.uuid4()),
-            "work_order_id": work_order_id,
-            "fecha": payload.fecha,
-            "hora_inicio": "00:00",
-            "hora_fin": "00:00",
-            "operarios_ids": [],
-            "operarios_texto_libre": "",
-            "firmante_responsable_id": None,
-            "firmante_responsable_texto": "",
-            "tareas_ids": [payload.tarea_id],
-            "tareas_libres": [],
-            "tareas_zonas": {payload.tarea_id: payload.zonas},
-            "notas": "",
-            "visibilidad": {},
-            "firma_responsable": None,
-            "firma_responsable_en": None,
-            "creado_por": current_user.get("id") or current_user.get("email") or "?",
-            "creado_en": now,
-            "actualizado_en": now,
-        }
-        await db.work_sessions.insert_one(session_doc)
+        await db.rejilla_celdas.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "work_order_id": work_order_id,
+                "tarea_id": payload.tarea_id,
+                "fecha": payload.fecha,
+                "zonas": payload.zonas,
+                "actualizado_en": now,
+            }
+        )
 
     await db.work_orders.update_one({"id": work_order_id}, {"$set": {"actualizado_en": now}})
     return {"ok": True}
