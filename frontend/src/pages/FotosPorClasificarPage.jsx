@@ -37,6 +37,7 @@ const FotosPorClasificarPage = () => {
   const [clienteSel, setClienteSel] = useState("");
   const [workOrders, setWorkOrders] = useState([]);
   const [woSel, setWoSel] = useState("none");
+  const [gruposExpandidos, setGruposExpandidos] = useState(new Set());
   const [guardando, setGuardando] = useState(false);
 
   const cargar = async () => {
@@ -152,59 +153,78 @@ const FotosPorClasificarPage = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {grupos.map((grupo) => {
             const primera = grupo[0];
+            const clave = grupo.map((f) => f.id).join("-");
+            const expandido = gruposExpandidos.has(clave);
+            const LIMITE = 6;
+            const visibles = expandido ? grupo : grupo.slice(0, LIMITE);
+            const restantes = grupo.length - visibles.length;
             return (
               <div
-                key={grupo.map((f) => f.id).join("-")}
+                key={clave}
                 className="border border-slate-100 rounded-lg p-3"
                 data-testid={`grupo-sin-clasificar-${primera.lote_id || primera.id}`}
               >
-                <p className="text-xs text-slate-400 mb-2">{primera.operario_nombre}</p>
-                <div className="flex flex-wrap gap-2">
-                  {grupo.map((f) => (
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-xs text-slate-500 font-medium truncate">
+                    {primera.operario_nombre}
+                  </p>
+                  {primera.fecha && (
+                    <p className="text-[10px] text-slate-400 shrink-0">
+                      {(() => {
+                        const [, m, d] = primera.fecha.split("-");
+                        return `${d}/${m}`;
+                      })()}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {visibles.map((f) => (
                     <div key={f.id} className="group">
                       <button
                         type="button"
                         onClick={() => abrirClasificar(f)}
-                        className="relative block w-20 h-20 rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
+                        className="relative block w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-400 transition-all"
                         data-testid={`foto-sin-clasificar-${f.id}`}
                       >
                         <img src={f.url} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute bottom-1 left-1 right-1 flex items-center gap-1 flex-wrap">
-                          {f.antes_despues && (
-                            <span
-                              className={`text-[9px] font-bold px-1 rounded text-white ${
-                                f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-                              }`}
-                            >
-                              {f.antes_despues === "antes" ? "Antes" : "Desp."}
-                            </span>
-                          )}
-                        </div>
+                        {f.antes_despues && (
+                          <span
+                            className={`absolute bottom-0.5 left-0.5 text-[8px] font-bold px-1 rounded text-white ${
+                              f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                            }`}
+                          >
+                            {f.antes_despues === "antes" ? "A" : "D"}
+                          </span>
+                        )}
                         <span
                           onClick={(e) => eliminarFoto(e, f.id)}
                           role="button"
                           tabIndex={0}
-                          className="absolute top-1 right-1 bg-black/50 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute top-0.5 right-0.5 bg-black/50 hover:bg-red-600 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-2.5 h-2.5" />
                         </span>
                       </button>
-                      {f.fecha && (
-                        <p className="text-[10px] text-slate-400 mt-0.5 text-center">
-                          {(() => {
-                            const [, m, d] = f.fecha.split("-");
-                            return `${d}/${m}`;
-                          })()}
-                        </p>
-                      )}
                     </div>
                   ))}
+                  {restantes > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGruposExpandidos((prev) => new Set(prev).add(clave))
+                      }
+                      className="w-14 h-14 rounded-lg border border-dashed border-slate-300 flex items-center justify-center text-xs text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors"
+                      data-testid={`expandir-grupo-${clave}`}
+                    >
+                      +{restantes}
+                    </button>
+                  )}
                 </div>
                 {primera.audio_url && (
-                  <audio controls src={primera.audio_url} className="w-full max-w-xs mt-2 h-8" />
+                  <audio controls src={primera.audio_url} className="w-full mt-2 h-8" />
                 )}
               </div>
             );
