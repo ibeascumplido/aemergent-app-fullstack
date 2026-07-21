@@ -8,6 +8,8 @@ import { useAuth } from "../contexts/AuthContext";
 import axios from "axios";
 import FotosPendientesAviso from "@/components/FotosPendientesAviso";
 import FotoRapidaFlow from "@/components/FotoRapidaFlow";
+import ParteRapidoFlow from "@/components/ParteRapidoFlow";
+import SolicitudRopaFlow from "@/components/SolicitudRopaFlow";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -89,6 +91,8 @@ const HomePage = () => {
 
       {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
       {!isPending && <FotoRapidaFlow />}
+      {!isPending && <ParteRapidoFlow />}
+      {!isPending && <SolicitudRopaFlow />}
 
       {isAdmin && <FotosPendientesAviso />}
 
@@ -109,13 +113,35 @@ const HomePage = () => {
         </Card>
       )}
 
-      {/* User's Vacation Summary */}
+      {/* Acceso rapido a Mi Calendario: ahora va primero, antes de los dias disponibles */}
+      {!isPending && myResumen && (
+        <div className="mb-6">
+          <Link to="/my-calendar">
+            <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-red-200">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-slate-500">Acceso rápido</p>
+                    <p className="text-xl font-bold text-slate-900">Mi Calendario</p>
+                    <p className="text-sm text-slate-500 mt-1">Gestiona tus vacaciones y días libres</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
+                    <Calendar className="w-6 h-6 text-red-500" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      )}
+
+      {/* Dias disponibles de vacaciones y libres */}
       {!isPending && myResumen && (
         <motion.div
           variants={container}
           initial="hidden"
           animate="show"
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
+          className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"
         >
           <motion.div variants={item}>
             <Card className="border-orange-200 bg-orange-50 shadow-sm hover:shadow-md transition-all">
@@ -153,25 +179,6 @@ const HomePage = () => {
                 </div>
               </CardContent>
             </Card>
-          </motion.div>
-
-          <motion.div variants={item} className="col-span-1 md:col-span-2">
-            <Link to="/my-calendar">
-              <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-red-200">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-slate-500">Acceso rápido</p>
-                      <p className="text-xl font-bold text-slate-900">Mi Calendario</p>
-                      <p className="text-sm text-slate-500 mt-1">Gestiona tus vacaciones y días libres</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
-                      <Calendar className="w-6 h-6 text-red-500" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
           </motion.div>
         </motion.div>
       )}
