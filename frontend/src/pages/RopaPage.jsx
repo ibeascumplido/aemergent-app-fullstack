@@ -28,7 +28,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const emptyForm = { nombre: "", notas: "" };
+const emptyForm = { nombre: "", marca: "", notas: "" };
 
 const RopaPage = () => {
   const { isAdmin } = useAuth();
@@ -42,6 +42,9 @@ const RopaPage = () => {
   const [editandoTallas, setEditandoTallas] = useState(null); // prenda activa
   const [tallasForm, setTallasForm] = useState([]);
   const [guardandoTallas, setGuardandoTallas] = useState(false);
+
+  const [editandoCantidad, setEditandoCantidad] = useState(null); // { prendaId, talla }
+  const [valorEditado, setValorEditado] = useState("");
 
   const [aBorrar, setABorrar] = useState(null);
   const [solicitudes, setSolicitudes] = useState([]);
@@ -102,6 +105,7 @@ const RopaPage = () => {
     try {
       await axios.post(`${API}/ropa`, {
         nombre: form.nombre.trim(),
+        marca: form.marca.trim() || null,
         notas: form.notas.trim(),
         tallas: [],
       });
@@ -113,6 +117,41 @@ const RopaPage = () => {
       toast.error("Error al crear");
     } finally {
       setGuardando(false);
+    }
+  };
+
+  const abrirEdicionCantidad = (prendaId, talla, cantidadActual) => {
+    setEditandoCantidad({ prendaId, talla });
+    setValorEditado(String(cantidadActual));
+  };
+
+  const confirmarNuevoValor = async (prendaId, talla) => {
+    const nuevo = Number(valorEditado);
+    setEditandoCantidad(null);
+    if (!Number.isFinite(nuevo) || nuevo < 0) {
+      toast.error("Introduce un número válido");
+      return;
+    }
+    // Actualizacion optimista
+    setPrendas((prev) =>
+      prev.map((p) => {
+        if (p.id !== prendaId) return p;
+        return {
+          ...p,
+          tallas: p.tallas.map((t) => (t.talla === talla ? { ...t, cantidad: nuevo } : t)),
+        };
+      })
+    );
+    try {
+      await axios.put(
+        `${API}/ropa/${prendaId}/tallas/${encodeURIComponent(talla)}/establecer`,
+        { cantidad: nuevo }
+      );
+      toast.success("Stock actualizado");
+    } catch (err) {
+      console.error("Error fijando el stock:", err);
+      toast.error("No se pudo guardar");
+      await cargar();
     }
   };
 
@@ -281,7 +320,14 @@ const RopaPage = () => {
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
                     <div>
-                      <p className="font-semibold text-slate-900">{p.nombre}</p>
+                      <p className="font-semibold text-slate-900">
+                        {p.nombre}
+                        {p.marca && (
+                          <span className="text-xs font-normal text-slate-400 ml-2">
+                            {p.marca}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-slate-400">{total} unidades en total</p>
                     </div>
                     {isAdmin && (
@@ -330,13 +376,37 @@ const RopaPage = () => {
                           >
                             <Minus className="w-3 h-3 text-slate-500" />
                           </button>
-                          <span
-                            className={`text-sm font-bold w-6 text-center ${
-                              t.cantidad === 0 ? "text-red-500" : "text-slate-800"
-                            }`}
-                          >
-                            {t.cantidad}
-                          </span>
+                          {isAdmin && editandoCantidad?.prendaId === p.id && editandoCantidad?.talla === t.talla ? (
+                            <input
+                              type="number"
+                              min="0"
+                              autoFocus
+                              value={valorEditado}
+                              onChange={(e) => setValorEditado(e.target.value)}
+                              onBlur={() => confirmarNuevoValor(p.id, t.talla)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.currentTarget.blur();
+                                if (e.key === "Escape") setEditandoCantidad(null);
+                              }}
+                              className="w-10 text-sm font-bold text-center border border-indigo-300 rounded"
+                              data-testid={`input-cantidad-${p.id}-${t.talla}`}
+                            />
+                          ) : (
+                            <span
+                              onClick={() =>
+                                isAdmin && abrirEdicionCantidad(p.id, t.talla, t.cantidad)
+                              }
+                              role={isAdmin ? "button" : undefined}
+                              tabIndex={isAdmin ? 0 : undefined}
+                              title={isAdmin ? "Pulsa para fijar un número nuevo (ej. al llegar un pedido)" : undefined}
+                              className={`text-sm font-bold w-6 text-center ${
+                                t.cantidad === 0 ? "text-red-500" : "text-slate-800"
+                              } ${isAdmin ? "cursor-pointer hover:underline" : ""}`}
+                              data-testid={`cantidad-${p.id}-${t.talla}`}
+                            >
+                              {t.cantidad}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => ajustar(p.id, t.talla, 1)}
@@ -370,6 +440,15 @@ const RopaPage = () => {
                 onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
                 placeholder="Ej. Polo verano, Botas de seguridad..."
                 data-testid="nombre-prenda-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Marca (opcional)</Label>
+              <Input
+                value={form.marca}
+                onChange={(e) => setForm((f) => ({ ...f, marca: e.target.value }))}
+                placeholder="Ej. Roly"
+                data-testid="marca-prenda-input"
               />
             </div>
             <div className="space-y-1.5">
