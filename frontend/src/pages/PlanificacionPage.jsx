@@ -391,12 +391,19 @@ const PlanificacionPage = () => {
                     style={{ backgroundColor: c.color_fondo || "#f8fafc" }}
                   >
                     <div className="flex items-center justify-center gap-1">
-                      <span className="truncate">{c.etiqueta}</span>
+                      <div className="min-w-0">
+                        {c.tipo === "centro" && c.cliente_nombre && (
+                          <p className="text-[9px] text-slate-400 leading-tight truncate">
+                            {c.cliente_nombre}
+                          </p>
+                        )}
+                        <span className="truncate block">{c.etiqueta}</span>
+                      </div>
                       {isAdmin && (
                         <button
                           type="button"
                           onClick={() => setColumnaABorrar(c)}
-                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity shrink-0"
                           data-testid={`borrar-columna-${c.id}`}
                         >
                           <X className="w-3 h-3" />
@@ -684,7 +691,14 @@ const PlanificacionPage = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar esta columna?</AlertDialogTitle>
             <AlertDialogDescription>
-              Vas a eliminar <span className="font-semibold">{columnaABorrar?.etiqueta}</span>.
+              Vas a eliminar{" "}
+              <span className="font-semibold">
+                {columnaABorrar?.etiqueta}
+                {columnaABorrar?.tipo === "centro" &&
+                  columnaABorrar?.cliente_nombre &&
+                  ` (${columnaABorrar.cliente_nombre})`}
+              </span>
+              .
               Las asignaciones ya guardadas para esta columna dejarán de mostrarse.
             </AlertDialogDescription>
           </AlertDialogHeader>
