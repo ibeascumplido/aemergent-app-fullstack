@@ -10,6 +10,7 @@ import {
   Sun,
   AlertCircle,
   Camera,
+  Shirt,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -91,6 +92,12 @@ const NotificationBell = () => {
     if (notification.type === "foto_comentario" && notification.data?.lote_id) {
       setOpen(false);
       navigate(`/fotos/lote/${notification.data.lote_id}`);
+    } else if (
+      notification.type === "solicitud_ropa" ||
+      notification.type === "solicitud_ropa_resuelta"
+    ) {
+      setOpen(false);
+      navigate("/ropa");
     }
   };
 
@@ -106,6 +113,9 @@ const NotificationBell = () => {
         return <X className="w-4 h-4 text-red-500" />;
       case "foto_comentario":
         return <Camera className="w-4 h-4 text-indigo-500" />;
+      case "solicitud_ropa":
+      case "solicitud_ropa_resuelta":
+        return <Shirt className="w-4 h-4 text-amber-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
@@ -180,7 +190,9 @@ const NotificationBell = () => {
                 <div
                   key={notification.id}
                   className={`p-4 hover:bg-slate-50 transition-colors ${
-                    notification.type === "foto_comentario" && notification.data?.lote_id
+                    (notification.type === "foto_comentario" && notification.data?.lote_id) ||
+                    notification.type === "solicitud_ropa" ||
+                    notification.type === "solicitud_ropa_resuelta"
                       ? "cursor-pointer"
                       : ""
                   } ${
