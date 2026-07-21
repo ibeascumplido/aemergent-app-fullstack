@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Shirt, Plus, Minus, Pencil, Trash2, X } from "lucide-react";
+import { Shirt, Plus, Minus, Pencil, Trash2, X, Check, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,31 @@ const RopaPage = () => {
   const [guardandoTallas, setGuardandoTallas] = useState(false);
 
   const [aBorrar, setABorrar] = useState(null);
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [resolviendo, setResolviendo] = useState(null);
+
+  const cargarSolicitudes = async () => {
+    try {
+      const res = await axios.get(`${API}/solicitudes-ropa`, { params: { estado: "pendiente" } });
+      setSolicitudes(res.data);
+    } catch (err) {
+      console.error("Error cargando solicitudes:", err);
+    }
+  };
+
+  const resolverSolicitud = async (solicitudId, accion) => {
+    setResolviendo(solicitudId);
+    try {
+      await axios.put(`${API}/solicitudes-ropa/${solicitudId}/${accion}`);
+      toast.success(accion === "aprobar" ? "Solicitud aprobada" : "Solicitud rechazada");
+      await Promise.all([cargarSolicitudes(), cargar()]);
+    } catch (err) {
+      console.error("Error resolviendo solicitud:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo resolver la solicitud");
+    } finally {
+      setResolviendo(null);
+    }
+  };
 
   const cargar = async () => {
     try {
@@ -59,6 +84,8 @@ const RopaPage = () => {
 
   useEffect(() => {
     cargar();
+    if (isAdmin) cargarSolicitudes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const abrirNuevo = () => {
@@ -188,6 +215,56 @@ const RopaPage = () => {
           </Button>
         )}
       </div>
+
+      {isAdmin && solicitudes.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/50 mb-6">
+          <CardContent className="p-4">
+            <p className="text-sm font-semibold text-amber-900 mb-3 flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              Solicitudes pendientes ({solicitudes.length})
+            </p>
+            <div className="space-y-2">
+              {solicitudes.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-center justify-between gap-3 p-3 rounded-lg bg-white border border-amber-100"
+                  data-testid={`solicitud-${s.id}`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-800">
+                      <span className="font-medium">{s.operario_nombre}</span> pidió{" "}
+                      {s.prenda_nombre} talla {s.talla} x{s.cantidad}
+                    </p>
+                    {s.notas && <p className="text-xs text-slate-400 mt-0.5">{s.notas}</p>}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button
+                      size="sm"
+                      onClick={() => resolverSolicitud(s.id, "aprobar")}
+                      disabled={resolviendo === s.id}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                      data-testid={`aprobar-solicitud-${s.id}`}
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" />
+                      Aprobar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => resolverSolicitud(s.id, "rechazar")}
+                      disabled={resolviendo === s.id}
+                      data-testid={`rechazar-solicitud-${s.id}`}
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" />
+                      Rechazar
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {prendas.length === 0 ? (
         <Card className="border-slate-100">
