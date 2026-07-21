@@ -75,6 +75,10 @@ const PlanificacionPage = () => {
   const [dialogColumnaOpen, setDialogColumnaOpen] = useState(false);
   const [nuevaColumnaTipo, setNuevaColumnaTipo] = useState("cliente");
   const [nuevaColumnaClienteId, setNuevaColumnaClienteId] = useState("");
+  const [nuevaColumnaCentroClienteId, setNuevaColumnaCentroClienteId] = useState("");
+  const [nuevaColumnaCentroId, setNuevaColumnaCentroId] = useState("");
+  const [centrosDisponibles, setCentrosDisponibles] = useState([]);
+  const [cargandoCentros, setCargandoCentros] = useState(false);
   const [nuevaColumnaEtiqueta, setNuevaColumnaEtiqueta] = useState("");
   const [creandoColumna, setCreandoColumna] = useState(false);
   const [columnaABorrar, setColumnaABorrar] = useState(null);
@@ -247,13 +251,35 @@ const PlanificacionPage = () => {
   const abrirNuevaColumna = () => {
     setNuevaColumnaTipo("cliente");
     setNuevaColumnaClienteId("");
+    setNuevaColumnaCentroClienteId("");
+    setNuevaColumnaCentroId("");
+    setCentrosDisponibles([]);
     setNuevaColumnaEtiqueta("");
     setDialogColumnaOpen(true);
   };
 
+  useEffect(() => {
+    if (!nuevaColumnaCentroClienteId) {
+      setCentrosDisponibles([]);
+      return;
+    }
+    const cliente = clientesDisponibles.find((c) => c.id === nuevaColumnaCentroClienteId);
+    if (!cliente) return;
+    setCargandoCentros(true);
+    axios
+      .get(`${API}/clients/${cliente.slug}/centros`)
+      .then((res) => setCentrosDisponibles(res.data))
+      .catch(() => setCentrosDisponibles([]))
+      .finally(() => setCargandoCentros(false));
+  }, [nuevaColumnaCentroClienteId, clientesDisponibles]);
+
   const crearColumna = async () => {
     if (nuevaColumnaTipo === "cliente" && !nuevaColumnaClienteId) {
       toast.error("Selecciona un cliente");
+      return;
+    }
+    if (nuevaColumnaTipo === "centro" && !nuevaColumnaCentroId) {
+      toast.error("Selecciona un centro");
       return;
     }
     if (nuevaColumnaTipo === "libre" && !nuevaColumnaEtiqueta.trim()) {
@@ -265,6 +291,7 @@ const PlanificacionPage = () => {
       await axios.post(`${API}/planificacion/columnas`, {
         tipo: nuevaColumnaTipo,
         cliente_id: nuevaColumnaTipo === "cliente" ? nuevaColumnaClienteId : null,
+        centro_id: nuevaColumnaTipo === "centro" ? nuevaColumnaCentroId : null,
         etiqueta_libre: nuevaColumnaTipo === "libre" ? nuevaColumnaEtiqueta.trim() : null,
       });
       toast.success("Columna añadida");
@@ -531,6 +558,18 @@ const PlanificacionPage = () => {
               </button>
               <button
                 type="button"
+                onClick={() => setNuevaColumnaTipo("centro")}
+                className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
+                  nuevaColumnaTipo === "centro"
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                    : "bg-white border-slate-200 text-slate-500"
+                }`}
+                data-testid="tipo-columna-centro-btn"
+              >
+                Centro
+              </button>
+              <button
+                type="button"
                 onClick={() => setNuevaColumnaTipo("libre")}
                 className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
                   nuevaColumnaTipo === "libre"
@@ -542,7 +581,7 @@ const PlanificacionPage = () => {
               </button>
             </div>
 
-            {nuevaColumnaTipo === "cliente" ? (
+            {nuevaColumnaTipo === "cliente" && (
               <div className="space-y-1.5">
                 <Label>Cliente</Label>
                 <Select value={nuevaColumnaClienteId} onValueChange={setNuevaColumnaClienteId}>
@@ -558,7 +597,60 @@ const PlanificacionPage = () => {
                   </SelectContent>
                 </Select>
               </div>
-            ) : (
+            )}
+
+            {nuevaColumnaTipo === "centro" && (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Cliente</Label>
+                  <Select
+                    value={nuevaColumnaCentroClienteId}
+                    onValueChange={(v) => {
+                      setNuevaColumnaCentroClienteId(v);
+                      setNuevaColumnaCentroId("");
+                    }}
+                  >
+                    <SelectTrigger data-testid="nueva-columna-centro-cliente-select">
+                      <SelectValue placeholder="Selecciona un cliente..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clientesDisponibles.map((cl) => (
+                        <SelectItem key={cl.id} value={cl.id}>
+                          {cl.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {nuevaColumnaCentroClienteId && (
+                  <div className="space-y-1.5">
+                    <Label>Centro</Label>
+                    <Select value={nuevaColumnaCentroId} onValueChange={setNuevaColumnaCentroId}>
+                      <SelectTrigger data-testid="nueva-columna-centro-select">
+                        <SelectValue
+                          placeholder={cargandoCentros ? "Cargando..." : "Selecciona un centro..."}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {centrosDisponibles.length === 0 && !cargandoCentros ? (
+                          <p className="px-3 py-2 text-xs text-slate-400">
+                            Este cliente no tiene centros. Añádelos desde su ficha.
+                          </p>
+                        ) : (
+                          centrosDisponibles.map((ce) => (
+                            <SelectItem key={ce.id} value={ce.id}>
+                              {ce.nombre}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nuevaColumnaTipo === "libre" && (
               <div className="space-y-1.5">
                 <Label htmlFor="nueva-columna-etiqueta">Etiqueta</Label>
                 <Input
