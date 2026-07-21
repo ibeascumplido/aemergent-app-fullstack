@@ -4823,6 +4823,7 @@ class TallaStock(BaseModel):
 
 class PrendaBase(BaseModel):
     nombre: str = Field(..., min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
     notas: Optional[str] = Field("", max_length=1000)
 
 
@@ -4832,6 +4833,7 @@ class PrendaCreate(PrendaBase):
 
 class PrendaUpdate(BaseModel):
     nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
     notas: Optional[str] = Field(None, max_length=1000)
     activo: Optional[bool] = None
 
@@ -4864,6 +4866,7 @@ async def crear_prenda(payload: PrendaCreate, _: dict = Depends(require_admin)):
     doc = {
         "id": str(uuid.uuid4()),
         "nombre": payload.nombre,
+        "marca": payload.marca,
         "notas": payload.notas,
         "activo": True,
         "tallas": [t.model_dump() for t in payload.tallas],
@@ -4949,6 +4952,40 @@ async def ajustar_stock_talla(
     for t in tallas:
         if t["talla"] == talla:
             t["cantidad"] = max(0, t["cantidad"] + payload.delta)
+            encontrada = True
+            break
+    if not encontrada:
+        raise HTTPException(status_code=404, detail="Talla no encontrada en esta prenda")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+class EstablecerStockPayload(BaseModel):
+    cantidad: int = Field(..., ge=0)
+
+
+@api_router.put("/ropa/{prenda_id}/tallas/{talla}/establecer", response_model=Prenda)
+async def establecer_stock_talla(
+    prenda_id: str,
+    talla: str,
+    payload: EstablecerStockPayload,
+    _: dict = Depends(require_admin),
+):
+    """Fija directamente el numero de existencias de una talla (ej. al
+    llegar un pedido de central y saber ya el total nuevo), en vez de ir
+    sumando de uno en uno con el ajuste rapido."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    tallas = doc.get("tallas", [])
+    encontrada = False
+    for t in tallas:
+        if t["talla"] == talla:
+            t["cantidad"] = payload.cantidad
             encontrada = True
             break
     if not encontrada:
