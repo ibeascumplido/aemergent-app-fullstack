@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   ClipboardList,
@@ -90,6 +90,7 @@ const horasDeSesion = (horaInicio, horaFin) => {
 const WorkOrderDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAdmin } = useAuth();
 
   const [parte, setParte] = useState(null);
@@ -98,6 +99,10 @@ const WorkOrderDetailPage = () => {
   const [operariosCatalogo, setOperariosCatalogo] = useState([]);
   const [tareasCatalogo, setTareasCatalogo] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [clientesParaVincular, setClientesParaVincular] = useState([]);
+  const [vinculandoCliente, setVinculandoCliente] = useState(false);
+  const [clienteAVincular, setClienteAVincular] = useState("");
+  const [dialogVincularOpen, setDialogVincularOpen] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
   // Edicion inline de la cabecera
@@ -146,19 +151,27 @@ const WorkOrderDetailPage = () => {
         if (!cancelado) setLoading(false);
         return;
       }
-      // Cliente, presupuestos y catalogos en paralelo
+      // Operarios y tareas: siempre necesarios, independientes del cliente
       try {
-        const [cRes, bRes, opsRes, tareasRes] = await Promise.all([
-          axios.get(`${API}/clients/${data.client_slug}`),
-          axios.get(`${API}/clients/${data.client_slug}/budgets`).catch(() => ({ data: [] })),
+        const [opsRes, tareasRes] = await Promise.all([
           axios.get(`${API}/users/operarios`).catch(() => ({ data: [] })),
           axios.get(`${API}/work-tasks`).catch(() => ({ data: [] })),
         ]);
         if (cancelado) return;
-        setCliente(cRes.data);
-        setPresupuestos(bRes.data);
         setOperariosCatalogo(opsRes.data);
         setTareasCatalogo(tareasRes.data);
+
+        // Cliente y presupuestos: solo si el parte tiene un cliente registrado
+        // (si es de cliente libre, client_slug es null y se omite sin romper nada)
+        if (data.client_slug) {
+          const [cRes, bRes] = await Promise.all([
+            axios.get(`${API}/clients/${data.client_slug}`).catch(() => ({ data: null })),
+            axios.get(`${API}/clients/${data.client_slug}/budgets`).catch(() => ({ data: [] })),
+          ]);
+          if (cancelado) return;
+          setCliente(cRes.data);
+          setPresupuestos(bRes.data);
+        }
       } catch (err) {
         // El cliente es informativo (link de vuelta); si falla seguimos igualmente
       } finally {
@@ -170,6 +183,16 @@ const WorkOrderDetailPage = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Acceso rapido desde el dashboard (Parte de trabajo): si llega
+  // ?nueva=1 y el parte ya cargo, abre "Nueva sesion" directamente.
+  useEffect(() => {
+    if (!loading && parte && searchParams.get("nueva") === "1") {
+      setSesionEditando(null);
+      setSessionDialogOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, parte]);
 
   const operariosPorId = useMemo(() => {
     const map = {};
@@ -341,6 +364,42 @@ const WorkOrderDetailPage = () => {
     setSessionDialogOpen(true);
   };
 
+  // --- Vincular a un cliente registrado (parte de cliente libre) --------
+
+  const abrirDialogVincular = async () => {
+    setClienteAVincular("");
+    setDialogVincularOpen(true);
+    if (clientesParaVincular.length === 0) {
+      try {
+        const res = await axios.get(`${API}/clients`);
+        setClientesParaVincular(res.data);
+      } catch (err) {
+        console.error("Error cargando clientes:", err);
+      }
+    }
+  };
+
+  const vincularCliente = async () => {
+    if (!clienteAVincular) {
+      toast.error("Selecciona un cliente");
+      return;
+    }
+    setVinculandoCliente(true);
+    try {
+      const res = await axios.patch(`${API}/work-orders/${id}`, { client_id: clienteAVincular });
+      setParte(res.data);
+      const cRes = await axios.get(`${API}/clients/${res.data.client_slug}`);
+      setCliente(cRes.data);
+      toast.success("Cliente vinculado");
+      setDialogVincularOpen(false);
+    } catch (err) {
+      console.error("Error vinculando cliente:", err);
+      toast.error("No se pudo vincular el cliente");
+    } finally {
+      setVinculandoCliente(false);
+    }
+  };
+
   const eliminarSesion = async () => {
     if (!sesionABorrar) return;
     setBorrandoSesion(true);
@@ -449,6 +508,25 @@ const WorkOrderDetailPage = () => {
                     <span className="text-sm text-slate-500 inline-flex items-center gap-1">
                       <Building2 className="w-3.5 h-3.5" />
                       {cliente.nombre}
+                    </span>
+                  )}
+                  {!cliente && parte.client_libre && (
+                    <span
+                      className="text-sm inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full"
+                      data-testid="badge-cliente-libre"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      {parte.client_libre} (sin vincular)
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={abrirDialogVincular}
+                          className="ml-1 underline hover:text-amber-900"
+                          data-testid="vincular-cliente-btn"
+                        >
+                          Vincular
+                        </button>
+                      )}
                     </span>
                   )}
                   {parte.budget_number && (
@@ -990,6 +1068,57 @@ const WorkOrderDetailPage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Vincular parte de cliente libre a un cliente registrado */}
+      <Dialog
+        open={dialogVincularOpen}
+        onOpenChange={(v) => !vinculandoCliente && setDialogVincularOpen(v)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Vincular a un cliente registrado</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">
+              Este parte se creó para{" "}
+              <span className="font-medium">"{parte.client_libre}"</span>, que aún no está
+              registrado. Elige el cliente real al que corresponde.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Cliente</Label>
+              <Select value={clienteAVincular} onValueChange={setClienteAVincular}>
+                <SelectTrigger data-testid="vincular-cliente-select">
+                  <SelectValue placeholder="Selecciona..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientesParaVincular.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setDialogVincularOpen(false)}
+              disabled={vinculandoCliente}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={vincularCliente}
+              disabled={vinculandoCliente}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="confirmar-vincular-btn"
+            >
+              {vinculandoCliente ? "Vinculando..." : "Vincular"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
