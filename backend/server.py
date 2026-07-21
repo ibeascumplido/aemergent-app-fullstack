@@ -87,6 +87,8 @@ class NotificationType(str, Enum):
     NEW_USER_REQUEST = "new_user_request"
     VACATION_REQUEST = "vacation_request"
     FOTO_COMENTARIO = "foto_comentario"
+    SOLICITUD_ROPA = "solicitud_ropa"
+    SOLICITUD_ROPA_RESUELTA = "solicitud_ropa_resuelta"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -3256,7 +3258,16 @@ ESTADOS_WORK_ORDER = ("abierto", "cerrado", "archivado")
 
 
 class WorkOrderBase(BaseModel):
-    client_id: str = Field(..., description="ID del cliente al que pertenece el parte")
+    client_id: Optional[str] = Field(
+        None, description="ID del cliente registrado (si lo tiene). Si el cliente aun no "
+        "esta dado de alta, se usa client_libre en su lugar; debe venir exactamente uno de "
+        "los dos al crear."
+    )
+    client_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre del cliente escrito a mano cuando no esta "
+        "registrado todavia. El admin puede vincularlo a un cliente real mas adelante desde "
+        "el propio parte."
+    )
     budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
     titulo: str = Field(..., min_length=1, max_length=200)
     notas: Optional[str] = Field("", max_length=4000)
@@ -3286,11 +3297,16 @@ class WorkOrderUpdate(BaseModel):
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
     mes_rejilla: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
+    client_id: Optional[str] = Field(
+        None, description="Solo para vincular un parte de cliente libre a un cliente real "
+        "ya dado de alta (admin). Al establecerlo se resuelve client_slug y se borra "
+        "client_libre."
+    )
 
 
 class WorkOrder(WorkOrderBase):
     id: str
-    client_slug: str
+    client_slug: Optional[str] = None
     budget_number: Optional[str] = None
     estado: str = "abierto"
     creado_por: str
@@ -3432,11 +3448,16 @@ async def _cargar_parte(work_order_id: str) -> dict:
 async def list_work_orders(
     client_id: Optional[str] = None,
     estado: Optional[str] = None,
+    sin_cliente: bool = False,
     _: dict = Depends(require_approved),
 ):
-    """Lista de partes con filtros opcionales."""
+    """Lista de partes con filtros opcionales. sin_cliente=True devuelve
+    los partes de cliente libre (aun sin vincular a un cliente real),
+    para que el admin los revise y complete."""
     query = {}
-    if client_id:
+    if sin_cliente:
+        query["client_id"] = None
+    elif client_id:
         query["client_id"] = client_id
     if estado:
         if estado not in ESTADOS_WORK_ORDER:
@@ -3461,8 +3482,19 @@ async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)
 async def create_work_order(
     payload: WorkOrderCreate, current_user: dict = Depends(require_approved)
 ):
-    """Crea la cabecera de un parte. Valida cliente (obligatorio) y presupuesto (opcional)."""
-    cliente = await _cargar_cliente_por_id(payload.client_id)
+    """Crea la cabecera de un parte. Necesita exactamente uno de
+    client_id (cliente registrado) o client_libre (nombre escrito a mano,
+    para cuando el cliente aun no esta dado de alta - el admin lo puede
+    vincular despues)."""
+    if bool(payload.client_id) == bool((payload.client_libre or "").strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="Indica exactamente uno: client_id (cliente registrado) o client_libre",
+        )
+
+    cliente = None
+    if payload.client_id:
+        cliente = await _cargar_cliente_por_id(payload.client_id)
 
     budget_number = None
     if payload.budget_template_id:
@@ -3474,8 +3506,9 @@ async def create_work_order(
     now = datetime.now(timezone.utc)
     doc = {
         "id": str(uuid.uuid4()),
-        "client_id": cliente["id"],
-        "client_slug": cliente["slug"],
+        "client_id": cliente["id"] if cliente else None,
+        "client_slug": cliente["slug"] if cliente else None,
+        "client_libre": None if cliente else payload.client_libre.strip(),
         "budget_template_id": payload.budget_template_id,
         "budget_number": budget_number,
         "titulo": payload.titulo.strip(),
@@ -3527,6 +3560,13 @@ async def update_work_order(
         # Solo admin puede archivar; cerrar sera via /close en 5A.3
         if updates["estado"] == "archivado" and current_user.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Solo admin puede archivar")
+
+    if "client_id" in updates and updates["client_id"]:
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede vincular el cliente")
+        cliente = await _cargar_cliente_por_id(updates["client_id"])
+        updates["client_slug"] = cliente["slug"]
+        updates["client_libre"] = None
 
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.work_orders.update_one({"id": work_order_id}, {"$set": updates})
@@ -4919,6 +4959,181 @@ async def ajustar_stock_talla(
     )
     doc = await db.ropa.find_one({"id": prenda_id})
     return Prenda(**doc)
+
+
+# =====================================================================
+# SOLICITUDES DE ROPA (Fase 9 parte 6)
+# ---------------------------------------------------------------------
+# Un operario pide una prenda+talla al admin desde el dashboard; el
+# admin aprueba (descuenta del stock de Ropa, misma logica que el
+# ajuste rapido +/-) o rechaza (no toca el stock). Notificaciones en
+# ambas direcciones via el sistema ya existente.
+# =====================================================================
+
+_ESTADO_SOLICITUD_ROPA_PATTERN = r"^(pendiente|aprobada|rechazada)$"
+
+
+class SolicitudRopaCreate(BaseModel):
+    prenda_id: str
+    talla: str = Field(..., min_length=1, max_length=20)
+    cantidad: int = Field(1, ge=1, le=20)
+    notas: Optional[str] = Field("", max_length=500)
+
+
+class SolicitudRopa(BaseModel):
+    id: str
+    operario_id: str
+    prenda_id: str
+    talla: str
+    cantidad: int
+    notas: Optional[str] = ""
+    estado: str = Field("pendiente", pattern=_ESTADO_SOLICITUD_ROPA_PATTERN)
+    resuelta_por: Optional[str] = None
+    resuelta_en: Optional[datetime] = None
+    creado_en: datetime
+
+
+class SolicitudRopaConNombres(SolicitudRopa):
+    operario_nombre: str
+    prenda_nombre: str
+
+
+@api_router.get("/solicitudes-ropa", response_model=List[SolicitudRopaConNombres])
+async def list_solicitudes_ropa(
+    estado: Optional[str] = None,
+    mias: bool = False,
+    current_user: dict = Depends(require_approved),
+):
+    query = {}
+    if mias:
+        query["operario_id"] = current_user["user_id"]
+    if estado:
+        if not re.match(_ESTADO_SOLICITUD_ROPA_PATTERN, estado):
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.solicitudes_ropa.find(query).sort("creado_en", -1)
+    solicitudes = [s async for s in cursor]
+
+    operario_ids = {s["operario_id"] for s in solicitudes}
+    prenda_ids = {s["prenda_id"] for s in solicitudes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+    prendas_map = {}
+    if prenda_ids:
+        async for p in db.ropa.find({"id": {"$in": list(prenda_ids)}}):
+            prendas_map[p["id"]] = p["nombre"]
+
+    return [
+        SolicitudRopaConNombres(
+            **s,
+            operario_nombre=operarios_map.get(s["operario_id"], "Operario"),
+            prenda_nombre=prendas_map.get(s["prenda_id"], "(prenda eliminada)"),
+        )
+        for s in solicitudes
+    ]
+
+
+@api_router.post("/solicitudes-ropa", response_model=SolicitudRopa)
+async def crear_solicitud_ropa(
+    payload: SolicitudRopaCreate, current_user: dict = Depends(require_approved)
+):
+    prenda = await db.ropa.find_one({"id": payload.prenda_id, "activo": True})
+    if not prenda:
+        raise HTTPException(status_code=404, detail="Prenda no encontrada")
+    if not any(t["talla"] == payload.talla for t in prenda.get("tallas", [])):
+        raise HTTPException(status_code=400, detail="Esa talla no existe para esta prenda")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "prenda_id": payload.prenda_id,
+        "talla": payload.talla,
+        "cantidad": payload.cantidad,
+        "notas": payload.notas,
+        "estado": "pendiente",
+        "resuelta_por": None,
+        "resuelta_en": None,
+        "creado_en": now,
+    }
+    await db.solicitudes_ropa.insert_one(doc)
+
+    await notify_admins(
+        notification_type=NotificationType.SOLICITUD_ROPA,
+        title=f"{current_user.get('name', 'Un operario')} pidió ropa",
+        message=f"{prenda['nombre']} talla {payload.talla} x{payload.cantidad}",
+        data={"solicitud_id": doc["id"]},
+    )
+
+    return SolicitudRopa(**doc)
+
+
+@api_router.put("/solicitudes-ropa/{solicitud_id}/aprobar", response_model=SolicitudRopa)
+async def aprobar_solicitud_ropa(
+    solicitud_id: str, current_user: dict = Depends(require_admin)
+):
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    prenda = await db.ropa.find_one({"id": doc["prenda_id"]})
+    if prenda:
+        tallas = prenda.get("tallas", [])
+        for t in tallas:
+            if t["talla"] == doc["talla"]:
+                t["cantidad"] = max(0, t["cantidad"] - doc["cantidad"])
+                break
+        await db.ropa.update_one(
+            {"id": prenda["id"]},
+            {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+        )
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_ropa.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "aprobada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_ROPA_RESUELTA,
+        title="Tu solicitud de ropa fue aprobada",
+        message=f"{prenda['nombre'] if prenda else ''} talla {doc['talla']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    return SolicitudRopa(**doc)
+
+
+@api_router.put("/solicitudes-ropa/{solicitud_id}/rechazar", response_model=SolicitudRopa)
+async def rechazar_solicitud_ropa(
+    solicitud_id: str, current_user: dict = Depends(require_admin)
+):
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_ropa.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "rechazada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_ROPA_RESUELTA,
+        title="Tu solicitud de ropa fue rechazada",
+        message=f"Talla {doc['talla']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    return SolicitudRopa(**doc)
 
 
 # Include the router in the main app
