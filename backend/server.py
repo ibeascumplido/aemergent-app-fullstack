@@ -2882,6 +2882,98 @@ async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
 
 
 # =====================================================================
+# CENTROS DE TRABAJO (Fase 9 parte 5)
+# ---------------------------------------------------------------------
+# Subgrupo dentro de un cliente: los sitios/centros concretos donde se
+# trabaja (ej. "IKEA - Alcorcon", "IKEA - Getafe"). Version ligera y
+# generica, sin los campos de frecuencia/horas de ClientLocation (esos
+# son especificos del seguimiento de visitas recurrentes de GALP). Sirve
+# sobre todo para dar mas precision a las columnas de Planificacion.
+# =====================================================================
+
+
+class CentroBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    direccion: Optional[str] = Field(None, max_length=300)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class CentroCreate(CentroBase):
+    pass
+
+
+class CentroUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    direccion: Optional[str] = Field(None, max_length=300)
+    notas: Optional[str] = Field(None, max_length=1000)
+    activo: Optional[bool] = None
+
+
+class Centro(CentroBase):
+    id: str
+    client_id: str
+    client_slug: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+@api_router.get("/clients/{slug}/centros", response_model=List[Centro])
+async def list_centros(slug: str, _: dict = Depends(require_approved)):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cursor = db.centros.find({"client_id": cliente["id"], "activo": True}).sort("nombre", 1)
+    return [Centro(**c) async for c in cursor]
+
+
+@api_router.post("/clients/{slug}/centros", response_model=Centro)
+async def crear_centro(slug: str, payload: CentroCreate, _: dict = Depends(require_admin)):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cliente["id"],
+        "client_slug": slug,
+        **payload.model_dump(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.centros.insert_one(doc)
+    return Centro(**doc)
+
+
+@api_router.put("/centros/{centro_id}", response_model=Centro)
+async def actualizar_centro(centro_id: str, payload: CentroUpdate, _: dict = Depends(require_admin)):
+    doc = await db.centros.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.centros.update_one({"id": centro_id}, {"$set": updates})
+    doc = await db.centros.find_one({"id": centro_id})
+    return Centro(**doc)
+
+
+@api_router.delete("/centros/{centro_id}")
+async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
+    doc = await db.centros.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    await db.centros.update_one(
+        {"id": centro_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+# =====================================================================
 # PLANIFICACION DE EQUIPO (Fase 7)
 # ---------------------------------------------------------------------
 # Rejilla independiente (no el calendario de vacaciones): dias en filas,
@@ -2894,8 +2986,9 @@ async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
 
 
 class ColumnaPlanificacionBase(BaseModel):
-    tipo: str = Field(..., pattern=r"^(cliente|libre)$")
+    tipo: str = Field(..., pattern=r"^(cliente|centro|libre)$")
     cliente_id: Optional[str] = None
+    centro_id: Optional[str] = None
     etiqueta_libre: Optional[str] = Field(None, max_length=50)
     color_fondo: Optional[str] = Field(None, max_length=20)
 
@@ -2914,6 +3007,7 @@ class ColumnaPlanificacionResuelta(BaseModel):
     id: str
     tipo: str
     cliente_id: Optional[str] = None
+    centro_id: Optional[str] = None
     etiqueta: str
     color_fondo: Optional[str] = None
     orden: int
@@ -2924,6 +3018,7 @@ class AsignacionOut(BaseModel):
     operario_id: str
     fecha: str
     destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
     destino_libre: Optional[str] = None
 
 
@@ -2943,6 +3038,7 @@ class TogglePlanificacionPayload(BaseModel):
     operario_id: str
     fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
     destino_libre: Optional[str] = Field(None, max_length=50)
 
 
@@ -2957,18 +3053,26 @@ async def list_columnas_planificacion(_: dict = Depends(require_approved)):
         async for cl in db.clients.find({"id": {"$in": cliente_ids}}):
             clientes_map[cl["id"]] = cl["nombre"]
 
+    centro_ids = [c["centro_id"] for c in columnas if c.get("centro_id")]
+    centros_map = {}
+    if centro_ids:
+        async for ce in db.centros.find({"id": {"$in": centro_ids}}):
+            centros_map[ce["id"]] = ce["nombre"]
+
     resueltas = []
     for c in columnas:
-        etiqueta = (
-            clientes_map.get(c["cliente_id"], "(cliente eliminado)")
-            if c.get("cliente_id")
-            else (c.get("etiqueta_libre") or "")
-        )
+        if c.get("centro_id"):
+            etiqueta = centros_map.get(c["centro_id"], "(centro eliminado)")
+        elif c.get("cliente_id"):
+            etiqueta = clientes_map.get(c["cliente_id"], "(cliente eliminado)")
+        else:
+            etiqueta = c.get("etiqueta_libre") or ""
         resueltas.append(
             ColumnaPlanificacionResuelta(
                 id=c["id"],
                 tipo=c["tipo"],
                 cliente_id=c.get("cliente_id"),
+                centro_id=c.get("centro_id"),
                 etiqueta=etiqueta,
                 color_fondo=c.get("color_fondo"),
                 orden=c["orden"],
@@ -2983,6 +3087,8 @@ async def crear_columna_planificacion(
 ):
     if payload.tipo == "cliente" and not payload.cliente_id:
         raise HTTPException(status_code=400, detail="Falta cliente_id")
+    if payload.tipo == "centro" and not payload.centro_id:
+        raise HTTPException(status_code=400, detail="Falta centro_id")
     if payload.tipo == "libre" and not (payload.etiqueta_libre or "").strip():
         raise HTTPException(status_code=400, detail="Falta etiqueta_libre")
 
@@ -2993,6 +3099,7 @@ async def crear_columna_planificacion(
         "id": str(uuid.uuid4()),
         "tipo": payload.tipo,
         "cliente_id": payload.cliente_id if payload.tipo == "cliente" else None,
+        "centro_id": payload.centro_id if payload.tipo == "centro" else None,
         "etiqueta_libre": payload.etiqueta_libre.strip() if payload.tipo == "libre" else None,
         "color_fondo": payload.color_fondo,
         "orden": orden,
@@ -3004,11 +3111,15 @@ async def crear_columna_planificacion(
     if payload.tipo == "cliente":
         cl = await db.clients.find_one({"id": payload.cliente_id})
         etiqueta = cl["nombre"] if cl else "(cliente eliminado)"
+    elif payload.tipo == "centro":
+        ce = await db.centros.find_one({"id": payload.centro_id})
+        etiqueta = ce["nombre"] if ce else "(centro eliminado)"
 
     return ColumnaPlanificacionResuelta(
         id=doc["id"],
         tipo=doc["tipo"],
         cliente_id=doc["cliente_id"],
+        centro_id=doc["centro_id"],
         etiqueta=etiqueta,
         color_fondo=doc["color_fondo"],
         orden=doc["orden"],
@@ -3052,11 +3163,15 @@ async def toggle_celda_planificacion(
     """Un clic = un toggle: si el operario ya esta asignado ese dia+destino,
     se quita. Si no, se comprueba que no tenga vacaciones aprobadas ese dia
     y se anade."""
-    if not payload.destino_cliente_id and not payload.destino_libre:
-        raise HTTPException(status_code=400, detail="Falta destino_cliente_id o destino_libre")
+    if not payload.destino_cliente_id and not payload.destino_centro_id and not payload.destino_libre:
+        raise HTTPException(
+            status_code=400, detail="Falta destino_cliente_id, destino_centro_id o destino_libre"
+        )
 
     query = {"operario_id": payload.operario_id, "fecha": payload.fecha}
-    if payload.destino_cliente_id:
+    if payload.destino_centro_id:
+        query["destino_centro_id"] = payload.destino_centro_id
+    elif payload.destino_cliente_id:
         query["destino_cliente_id"] = payload.destino_cliente_id
     else:
         query["destino_libre"] = payload.destino_libre
@@ -3081,6 +3196,7 @@ async def toggle_celda_planificacion(
         "operario_id": payload.operario_id,
         "fecha": payload.fecha,
         "destino_cliente_id": payload.destino_cliente_id,
+        "destino_centro_id": payload.destino_centro_id,
         "destino_libre": payload.destino_libre,
         "creado_por": current_user.get("id") or current_user.get("email") or "?",
         "creado_en": now,
