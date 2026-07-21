@@ -25,7 +25,7 @@ const Layout = () => {
     {
       label: "Planificación",
       icon: CalendarDays,
-      show: true,
+      show: isAdmin,
       section: "admin",
       dropdown: true,
       children: [
@@ -37,9 +37,9 @@ const Layout = () => {
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
     { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
-    { to: "/vehiculos", icon: Truck, label: "Vehículos", show: true, section: "admin" },
-    { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: true, section: "admin" },
-    { to: "/ropa", icon: Shirt, label: "Ropa", show: true, section: "admin" },
+    { to: "/vehiculos", icon: Truck, label: "Vehículos", show: isAdmin, section: "admin" },
+    { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: isAdmin, section: "admin" },
+    { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
 
