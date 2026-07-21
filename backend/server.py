@@ -3009,6 +3009,11 @@ class ColumnaPlanificacionResuelta(BaseModel):
     cliente_id: Optional[str] = None
     centro_id: Optional[str] = None
     etiqueta: str
+    cliente_nombre: Optional[str] = Field(
+        None, description="Nombre del cliente dueño del centro, para columnas "
+        "tipo 'centro' - evita confundir centros con el mismo nombre en "
+        "clientes distintos (ej. dos 'Sede Central')."
+    )
     color_fondo: Optional[str] = None
     orden: int
 
@@ -3048,21 +3053,30 @@ async def list_columnas_planificacion(_: dict = Depends(require_approved)):
     columnas = [c async for c in cursor]
 
     cliente_ids = [c["cliente_id"] for c in columnas if c.get("cliente_id")]
+    centro_ids = [c["centro_id"] for c in columnas if c.get("centro_id")]
+
+    centros_info = {}
+    if centro_ids:
+        async for ce in db.centros.find({"id": {"$in": centro_ids}}):
+            centros_info[ce["id"]] = {"nombre": ce["nombre"], "client_id": ce.get("client_id")}
+            if ce.get("client_id"):
+                cliente_ids.append(ce["client_id"])
+
     clientes_map = {}
     if cliente_ids:
         async for cl in db.clients.find({"id": {"$in": cliente_ids}}):
             clientes_map[cl["id"]] = cl["nombre"]
 
-    centro_ids = [c["centro_id"] for c in columnas if c.get("centro_id")]
-    centros_map = {}
-    if centro_ids:
-        async for ce in db.centros.find({"id": {"$in": centro_ids}}):
-            centros_map[ce["id"]] = ce["nombre"]
-
     resueltas = []
     for c in columnas:
+        cliente_nombre = None
         if c.get("centro_id"):
-            etiqueta = centros_map.get(c["centro_id"], "(centro eliminado)")
+            info = centros_info.get(c["centro_id"])
+            if info:
+                etiqueta = info["nombre"]
+                cliente_nombre = clientes_map.get(info["client_id"], "(cliente eliminado)")
+            else:
+                etiqueta = "(centro eliminado)"
         elif c.get("cliente_id"):
             etiqueta = clientes_map.get(c["cliente_id"], "(cliente eliminado)")
         else:
@@ -3074,6 +3088,7 @@ async def list_columnas_planificacion(_: dict = Depends(require_approved)):
                 cliente_id=c.get("cliente_id"),
                 centro_id=c.get("centro_id"),
                 etiqueta=etiqueta,
+                cliente_nombre=cliente_nombre,
                 color_fondo=c.get("color_fondo"),
                 orden=c["orden"],
             )
@@ -3108,12 +3123,16 @@ async def crear_columna_planificacion(
     await db.planificacion_columnas.insert_one(doc)
 
     etiqueta = payload.etiqueta_libre if payload.tipo == "libre" else "Cliente"
+    cliente_nombre = None
     if payload.tipo == "cliente":
         cl = await db.clients.find_one({"id": payload.cliente_id})
         etiqueta = cl["nombre"] if cl else "(cliente eliminado)"
     elif payload.tipo == "centro":
         ce = await db.centros.find_one({"id": payload.centro_id})
         etiqueta = ce["nombre"] if ce else "(centro eliminado)"
+        if ce and ce.get("client_id"):
+            cl = await db.clients.find_one({"id": ce["client_id"]})
+            cliente_nombre = cl["nombre"] if cl else "(cliente eliminado)"
 
     return ColumnaPlanificacionResuelta(
         id=doc["id"],
@@ -3121,6 +3140,7 @@ async def crear_columna_planificacion(
         cliente_id=doc["cliente_id"],
         centro_id=doc["centro_id"],
         etiqueta=etiqueta,
+        cliente_nombre=cliente_nombre,
         color_fondo=doc["color_fondo"],
         orden=doc["orden"],
     )
