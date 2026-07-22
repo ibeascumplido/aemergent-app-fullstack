@@ -4732,6 +4732,8 @@ _TIPO_HISTORIAL_PATTERN = r"^(averia|arreglo|revision)$"
 
 class MaquinariaBase(BaseModel):
     nombre: str = Field(..., min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
     anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
     ubicacion_actual: Optional[str] = Field(None, max_length=200)
     estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
@@ -4744,6 +4746,8 @@ class MaquinariaCreate(MaquinariaBase):
 
 class MaquinariaUpdate(BaseModel):
     nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
     anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
     ubicacion_actual: Optional[str] = Field(None, max_length=200)
     estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
