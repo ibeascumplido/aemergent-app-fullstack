@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Camera,
   Shirt,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,19 +86,34 @@ const NotificationBell = () => {
     }
   };
 
+  const calcularDestino = (notification) => {
+    const { type, data } = notification;
+    switch (type) {
+      case "foto_comentario":
+        return data?.lote_id ? `/fotos/lote/${data.lote_id}` : null;
+      case "solicitud_ropa":
+      case "solicitud_ropa_resuelta":
+        return "/ropa";
+      case "new_user_request":
+        return data?.user_id ? `/admin/users/${data.user_id}` : "/admin/users";
+      case "vacation_request":
+        return "/calendar";
+      case "vacation_approved":
+      case "vacation_rejected":
+        return "/my-calendar";
+      default:
+        return null;
+    }
+  };
+
   const handleClickNotification = async (notification) => {
     if (!notification.read) {
       await markAsRead(notification.id);
     }
-    if (notification.type === "foto_comentario" && notification.data?.lote_id) {
+    const destino = calcularDestino(notification);
+    if (destino) {
       setOpen(false);
-      navigate(`/fotos/lote/${notification.data.lote_id}`);
-    } else if (
-      notification.type === "solicitud_ropa" ||
-      notification.type === "solicitud_ropa_resuelta"
-    ) {
-      setOpen(false);
-      navigate("/ropa");
+      navigate(destino);
     }
   };
 
@@ -116,6 +132,10 @@ const NotificationBell = () => {
       case "solicitud_ropa":
       case "solicitud_ropa_resuelta":
         return <Shirt className="w-4 h-4 text-amber-500" />;
+      case "new_user_request":
+        return <UserPlus className="w-4 h-4 text-indigo-500" />;
+      case "vacation_request":
+        return <Palmtree className="w-4 h-4 text-orange-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
@@ -190,11 +210,7 @@ const NotificationBell = () => {
                 <div
                   key={notification.id}
                   className={`p-4 hover:bg-slate-50 transition-colors ${
-                    (notification.type === "foto_comentario" && notification.data?.lote_id) ||
-                    notification.type === "solicitud_ropa" ||
-                    notification.type === "solicitud_ropa_resuelta"
-                      ? "cursor-pointer"
-                      : ""
+                    calcularDestino(notification) ? "cursor-pointer" : ""
                   } ${
                     getNotificationBgColor(notification.type, notification.read)
                   }`}
