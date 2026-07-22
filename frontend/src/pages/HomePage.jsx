@@ -89,6 +89,95 @@ const HomePage = () => {
         </p>
       </div>
 
+      {/* Presupuestos Recientes + Acciones Rapidas: prioritario para el admin */}
+      {isAdmin && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border-slate-100 shadow-sm">
+              <CardHeader className="border-b border-slate-50 pb-4">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Presupuestos Recientes</CardTitle>
+                  <Link to="/budgets">
+                    <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white shadow-sm px-4" data-testid="view-all-budgets">
+                      Ver todos <ArrowRight className="w-4 h-4 ml-1.5" />
+                    </Button>
+                  </Link>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {recentBudgets.length === 0 ? (
+                  <div className="p-6 text-center text-slate-400" data-testid="no-budgets">
+                    No hay presupuestos todavía
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {recentBudgets.map((budget) => (
+                      <li key={budget.id} className="p-4 hover:bg-slate-50 transition-colors" data-testid={`budget-item-${budget.id}`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-slate-900">{budget.budget_number}</p>
+                            <p className="text-sm text-slate-500">{budget.cliente}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-mono font-medium text-slate-900">{formatCurrency(budget.total_con_iva || 0)}</p>
+                            <span className={`status-badge status-${budget.status}`}>
+                              {budget.status === 'pending' ? 'Pendiente' : budget.status === 'approved' ? 'Aprobado' : 'Rechazado'}
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Quick Actions */}
+            <Card className="border-slate-100 shadow-sm">
+              <CardHeader className="border-b border-slate-50 pb-4">
+                <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Acciones Rápidas</CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-3">
+                <Link to="/budgets/new">
+                  <Button variant="outline" className="w-full justify-start h-14 text-left">
+                    <FileText className="w-5 h-5 mr-3 text-red-500" />
+                    <div>
+                      <p className="font-medium">Nuevo Presupuesto</p>
+                      <p className="text-xs text-slate-500">Crear presupuesto desde plantilla</p>
+                    </div>
+                  </Button>
+                </Link>
+                <Link to="/calendar">
+                  <Button variant="outline" className="w-full justify-start h-14 text-left">
+                    <Calendar className="w-5 h-5 mr-3 text-red-500" />
+                    <div>
+                      <p className="font-medium">Ver Calendarios</p>
+                      <p className="text-xs text-slate-500">Gestionar vacaciones de todos</p>
+                    </div>
+                  </Button>
+                </Link>
+                <Link to="/clients">
+                  <Button variant="outline" className="w-full justify-start h-14 text-left">
+                    <Building2 className="w-5 h-5 mr-3 text-sky-500" />
+                    <div>
+                      <p className="font-medium">Clientes</p>
+                      <p className="text-xs text-slate-500">Fichas, fotos, partes e incidencias</p>
+                    </div>
+                  </Button>
+                </Link>
+                <Link to="/admin/users">
+                  <Button variant="outline" className="w-full justify-start h-14 text-left">
+                    <Users className="w-5 h-5 mr-3 text-purple-500" />
+                    <div>
+                      <p className="font-medium">Gestionar Usuarios</p>
+                      <p className="text-xs text-slate-500">Aprobar y configurar accesos</p>
+                    </div>
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          </div>
+)}
+
       {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
       {!isPending && <FotoRapidaFlow />}
       {!isPending && <ParteRapidoFlow />}
@@ -287,92 +376,6 @@ const HomePage = () => {
             </motion.div>
           </motion.div>
 
-          {/* Recent Budgets (Admin only) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="border-slate-100 shadow-sm">
-              <CardHeader className="border-b border-slate-50 pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Presupuestos Recientes</CardTitle>
-                  <Link to="/budgets">
-                    <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white shadow-sm px-4" data-testid="view-all-budgets">
-                      Ver todos <ArrowRight className="w-4 h-4 ml-1.5" />
-                    </Button>
-                  </Link>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                {recentBudgets.length === 0 ? (
-                  <div className="p-6 text-center text-slate-400" data-testid="no-budgets">
-                    No hay presupuestos todavía
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {recentBudgets.map((budget) => (
-                      <li key={budget.id} className="p-4 hover:bg-slate-50 transition-colors" data-testid={`budget-item-${budget.id}`}>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-medium text-slate-900">{budget.budget_number}</p>
-                            <p className="text-sm text-slate-500">{budget.cliente}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-mono font-medium text-slate-900">{formatCurrency(budget.total_con_iva || 0)}</p>
-                            <span className={`status-badge status-${budget.status}`}>
-                              {budget.status === 'pending' ? 'Pendiente' : budget.status === 'approved' ? 'Aprobado' : 'Rechazado'}
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Quick Actions */}
-            <Card className="border-slate-100 shadow-sm">
-              <CardHeader className="border-b border-slate-50 pb-4">
-                <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Acciones Rápidas</CardTitle>
-              </CardHeader>
-              <CardContent className="p-4 space-y-3">
-                <Link to="/budgets/new">
-                  <Button variant="outline" className="w-full justify-start h-14 text-left">
-                    <FileText className="w-5 h-5 mr-3 text-red-500" />
-                    <div>
-                      <p className="font-medium">Nuevo Presupuesto</p>
-                      <p className="text-xs text-slate-500">Crear presupuesto desde plantilla</p>
-                    </div>
-                  </Button>
-                </Link>
-                <Link to="/calendar">
-                  <Button variant="outline" className="w-full justify-start h-14 text-left">
-                    <Calendar className="w-5 h-5 mr-3 text-red-500" />
-                    <div>
-                      <p className="font-medium">Ver Calendarios</p>
-                      <p className="text-xs text-slate-500">Gestionar vacaciones de todos</p>
-                    </div>
-                  </Button>
-                </Link>
-                <Link to="/clients">
-                  <Button variant="outline" className="w-full justify-start h-14 text-left">
-                    <Building2 className="w-5 h-5 mr-3 text-sky-500" />
-                    <div>
-                      <p className="font-medium">Clientes</p>
-                      <p className="text-xs text-slate-500">Fichas, fotos, partes e incidencias</p>
-                    </div>
-                  </Button>
-                </Link>
-                <Link to="/admin/users">
-                  <Button variant="outline" className="w-full justify-start h-14 text-left">
-                    <Users className="w-5 h-5 mr-3 text-purple-500" />
-                    <div>
-                      <p className="font-medium">Gestionar Usuarios</p>
-                      <p className="text-xs text-slate-500">Aprobar y configurar accesos</p>
-                    </div>
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          </div>
         </>
       )}
     </div>
