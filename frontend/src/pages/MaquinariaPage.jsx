@@ -33,7 +33,7 @@ const ESTADOS = [
 
 const estadoInfo = (v) => ESTADOS.find((e) => e.value === v);
 
-const emptyForm = { nombre: "", anio_fabricacion: "", ubicacion_actual: "", estado: "operativo" };
+const emptyForm = { nombre: "", marca: "", modelo: "", anio_fabricacion: "", ubicacion_actual: "", estado: "operativo" };
 
 const MaquinariaPage = () => {
   const { isAdmin } = useAuth();
@@ -75,6 +75,8 @@ const MaquinariaPage = () => {
     try {
       await axios.post(`${API}/maquinaria`, {
         nombre: form.nombre.trim(),
+        marca: form.marca.trim() || null,
+        modelo: form.modelo.trim() || null,
         anio_fabricacion: form.anio_fabricacion ? Number(form.anio_fabricacion) : null,
         ubicacion_actual: form.ubicacion_actual.trim() || null,
         estado: form.estado,
@@ -155,6 +157,11 @@ const MaquinariaPage = () => {
                     <div className="min-w-0">
                       <p className="font-medium text-slate-900 truncate">{m.nombre}</p>
                       <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                        {(m.marca || m.modelo) && (
+                          <span className="text-xs text-slate-500">
+                            {[m.marca, m.modelo].filter(Boolean).join(" ")}
+                          </span>
+                        )}
                         {m.anio_fabricacion && (
                           <span className="text-xs text-slate-400">{m.anio_fabricacion}</span>
                         )}
@@ -194,6 +201,24 @@ const MaquinariaPage = () => {
                 placeholder="Ej. Desbrozadora Stihl FS 460"
                 data-testid="nombre-maquinaria-input"
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Marca</Label>
+                <Input
+                  value={form.marca}
+                  onChange={(e) => setForm((f) => ({ ...f, marca: e.target.value }))}
+                  data-testid="marca-maquinaria-input"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Modelo</Label>
+                <Input
+                  value={form.modelo}
+                  onChange={(e) => setForm((f) => ({ ...f, modelo: e.target.value }))}
+                  data-testid="modelo-maquinaria-input"
+                />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
