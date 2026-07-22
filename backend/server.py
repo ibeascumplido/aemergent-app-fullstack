@@ -2181,6 +2181,7 @@ class ClientLocationVisitConUbicacion(ClientLocationVisit):
     recalcule por su cuenta y se desincronice."""
 
     location_nombre: str
+    location_referencia_cliente: Optional[str] = None
     location_dificultad: Optional[str] = None
     num_operarios: int = 1
     horas_totales: float = 0
@@ -2215,6 +2216,7 @@ async def list_client_visits(
             ClientLocationVisitConUbicacion(
                 **v,
                 location_nombre=loc["nombre"] if loc else "(ubicación eliminada)",
+                location_referencia_cliente=loc.get("referencia_cliente") if loc else None,
                 location_dificultad=loc.get("dificultad") if loc else None,
                 num_operarios=_num_operarios_visita(v),
                 horas_totales=_horas_totales_visita(v),
