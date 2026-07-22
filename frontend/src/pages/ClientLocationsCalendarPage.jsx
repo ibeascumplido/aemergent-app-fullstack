@@ -600,19 +600,30 @@ const ClientLocationsCalendarPage = () => {
               )}
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="visita-fecha">Fecha</Label>
+              <Input
+                id="visita-fecha"
+                type="date"
+                value={form.fecha}
+                onChange={(e) => setForm((f) => ({ ...f, fecha: e.target.value }))}
+                data-testid="visita-fecha-input"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="visita-fecha">Fecha</Label>
-                <Input
-                  id="visita-fecha"
-                  type="date"
-                  value={form.fecha}
-                  onChange={(e) => setForm((f) => ({ ...f, fecha: e.target.value }))}
-                  data-testid="visita-fecha-input"
-                />
+                <Label className="text-slate-500">Horas estimadas</Label>
+                <div
+                  className="flex items-center h-9 px-3 rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-500"
+                  data-testid="visita-horas-estimadas"
+                  title="Configurada en la ficha de esta estación (Ubicaciones)"
+                >
+                  {ubicacionSeleccionada?.horas_por_visita ?? "—"} h
+                </div>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="visita-horas">Horas</Label>
+                <Label htmlFor="visita-horas">Horas reales</Label>
                 <Input
                   id="visita-horas"
                   type="number"
