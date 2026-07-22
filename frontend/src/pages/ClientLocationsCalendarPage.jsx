@@ -9,8 +9,9 @@ import {
   X,
   Search,
   Trash2,
-  Clock,
   Users,
+  CalendarDays,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,7 @@ const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
+const MONTHS_SHORT = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
 const DIFICULTAD_DOT = {
   facil: "bg-emerald-500",
@@ -113,13 +115,14 @@ const ClientLocationsCalendarPage = () => {
   const [visitas, setVisitas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState("month"); // "month" | "year"
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editando, setEditando] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [guardando, setGuardando] = useState(false);
 
-  const [popoverUbicacionOpen, setPopoverUbicacionOpen] = useState(false);
+  const [dialogUbicacionOpen, setDialogUbicacionOpen] = useState(false);
   const [buscarUbicacion, setBuscarUbicacion] = useState("");
   const [popoverOperariosOpen, setPopoverOperariosOpen] = useState(false);
   const [buscarOperario, setBuscarOperario] = useState("");
@@ -151,15 +154,15 @@ const ClientLocationsCalendarPage = () => {
   const cargarVisitas = async () => {
     setLoading(true);
     try {
-      const desde = formatDateString(new Date(year, month, 1));
-      const hasta = formatDateString(new Date(year, month + 1, 1));
+      const desde = formatDateString(new Date(year, 0, 1));
+      const hasta = formatDateString(new Date(year + 1, 0, 1));
       const res = await axios.get(`${API}/clients/${slug}/visits`, {
         params: { desde, hasta },
       });
       setVisitas(res.data);
     } catch (err) {
       console.error("Error cargando visitas:", err);
-      toast.error("Error al cargar las visitas del mes");
+      toast.error("Error al cargar las visitas del año");
     } finally {
       setLoading(false);
     }
@@ -173,7 +176,7 @@ const ClientLocationsCalendarPage = () => {
   useEffect(() => {
     cargarVisitas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, year, month]);
+  }, [slug, year]);
 
   const operariosPorId = useMemo(() => {
     const map = {};
@@ -196,6 +199,8 @@ const ClientLocationsCalendarPage = () => {
   const irMesAnterior = () => setCurrentDate(new Date(year, month - 1, 1));
   const irMesSiguiente = () => setCurrentDate(new Date(year, month + 1, 1));
   const irHoy = () => setCurrentDate(new Date());
+  const irAnoAnterior = () => setCurrentDate(new Date(year - 1, month, 1));
+  const irAnoSiguiente = () => setCurrentDate(new Date(year + 1, month, 1));
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -351,16 +356,41 @@ const ClientLocationsCalendarPage = () => {
             <p className="text-sm text-slate-500">{cliente?.nombre}</p>
           </div>
         </div>
-        <Button
-          onClick={() => abrirNuevaVisita(null)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white"
-          data-testid="nueva-visita-btn"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Nueva visita
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 border border-slate-200 rounded-lg p-0.5">
+            <Button
+              variant={viewMode === "month" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("month")}
+              className={viewMode === "month" ? "bg-indigo-600 hover:bg-indigo-700" : ""}
+            >
+              <CalendarIcon className="w-4 h-4 mr-1.5" />
+              Mes
+            </Button>
+            <Button
+              variant={viewMode === "year" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("year")}
+              className={viewMode === "year" ? "bg-indigo-600 hover:bg-indigo-700" : ""}
+              data-testid="vista-anual-btn"
+            >
+              <CalendarDays className="w-4 h-4 mr-1.5" />
+              Año
+            </Button>
+          </div>
+          <Button
+            onClick={() => abrirNuevaVisita(null)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            data-testid="nueva-visita-btn"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Nueva visita
+          </Button>
+        </div>
       </div>
 
+      {viewMode === "month" && (
+        <>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={irMesAnterior} className="h-8 w-8 p-0">
@@ -438,6 +468,11 @@ const ClientLocationsCalendarPage = () => {
                       <span className="text-[11px] font-medium text-indigo-900 truncate">
                         {v.location_nombre}
                       </span>
+                      {v.location_referencia_cliente && (
+                        <span className="text-[9px] text-indigo-400 font-mono shrink-0">
+                          {v.location_referencia_cliente}
+                        </span>
+                      )}
                     </div>
                     <span className="text-[10px] text-indigo-600 font-medium">
                       {v.num_operarios} {v.num_operarios === 1 ? "operario" : "operarios"} · {v.horas_totales}h
@@ -449,6 +484,81 @@ const ClientLocationsCalendarPage = () => {
           );
         })}
       </div>
+        </>
+      )}
+
+      {viewMode === "year" && (
+        <>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" onClick={irAnoAnterior} className="h-8 w-8 p-0">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="font-semibold text-slate-900 min-w-[100px] text-center">
+                {year}
+              </span>
+              <Button variant="ghost" size="sm" onClick={irAnoSiguiente} className="h-8 w-8 p-0">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            <Button variant="outline" size="sm" onClick={irHoy} className="border-slate-200">
+              Hoy
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {MONTHS_SHORT.map((nombreMes, monthIdx) => {
+              const diasMes = getDaysInMonth(year, monthIdx);
+              return (
+                <Card key={monthIdx} className="border-slate-100 shadow-sm">
+                  <CardContent className="p-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentDate(new Date(year, monthIdx, 1));
+                        setViewMode("month");
+                      }}
+                      className="text-sm font-semibold text-slate-700 hover:text-indigo-600 mb-1.5 block"
+                    >
+                      {MONTHS[monthIdx]}
+                    </button>
+                    <div className="grid grid-cols-7 gap-px">
+                      {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
+                        <div key={d} className="text-[8px] text-center text-slate-400 font-medium">
+                          {d}
+                        </div>
+                      ))}
+                      {diasMes.map((day, i) => {
+                        const fecha = formatDateString(day.fullDate);
+                        const tieneVisitas = (visitasPorDia[fecha] || []).length > 0;
+                        const esHoy = fecha === formatDateString(new Date());
+                        return (
+                          <div
+                            key={i}
+                            className={`aspect-square text-[9px] flex items-center justify-center rounded-sm ${
+                              !day.isCurrentMonth
+                                ? "text-slate-300"
+                                : esHoy
+                                ? "bg-red-100 text-red-600 font-bold"
+                                : tieneVisitas
+                                ? "bg-indigo-600 text-white font-bold"
+                                : "text-slate-600"
+                            }`}
+                            title={tieneVisitas ? `${(visitasPorDia[fecha] || []).length} visita(s)` : ""}
+                          >
+                            {day.date}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
+
 
       {loading && (
         <p className="text-xs text-slate-400 text-center mt-3">Cargando visitas...</p>
@@ -465,56 +575,22 @@ const ClientLocationsCalendarPage = () => {
             <div className="space-y-1.5">
               <Label>Ubicación</Label>
               {!editando ? (
-                <Popover open={popoverUbicacionOpen} onOpenChange={setPopoverUbicacionOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-start text-slate-600 font-normal border-slate-200"
-                      data-testid="visita-ubicacion-trigger"
-                    >
-                      <Search className="w-4 h-4 mr-2" />
-                      {ubicacionSeleccionada ? ubicacionSeleccionada.nombre : "Buscar ubicación..."}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="p-0 w-72 sm:w-96" align="start">
-                    <div className="p-2 border-b border-slate-100">
-                      <Input
-                        placeholder="Buscar por nombre..."
-                        value={buscarUbicacion}
-                        onChange={(e) => setBuscarUbicacion(e.target.value)}
-                        autoFocus
-                      />
-                    </div>
-                    <div className="max-h-64 overflow-y-auto p-1">
-                      {ubicacionesFiltradas.length === 0 ? (
-                        <p className="text-sm text-slate-400 p-3 text-center">Sin resultados</p>
-                      ) : (
-                        ubicacionesFiltradas.map((u) => (
-                          <button
-                            type="button"
-                            key={u.id}
-                            onClick={() => {
-                              setForm((f) => ({ ...f, location_id: u.id }));
-                              setPopoverUbicacionOpen(false);
-                            }}
-                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 text-sm text-left"
-                            data-testid={`ubicacion-opcion-${u.id}`}
-                          >
-                            {u.dificultad && (
-                              <span
-                                className={`w-2 h-2 rounded-full shrink-0 ${
-                                  DIFICULTAD_DOT[u.dificultad] || "bg-slate-300"
-                                }`}
-                              />
-                            )}
-                            <span className="truncate">{u.nombre}</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDialogUbicacionOpen(true)}
+                  className="w-full justify-start text-slate-600 font-normal border-slate-200"
+                  data-testid="visita-ubicacion-trigger"
+                >
+                  <Search className="w-4 h-4 mr-2" />
+                  {ubicacionSeleccionada
+                    ? `${ubicacionSeleccionada.nombre}${
+                        ubicacionSeleccionada.referencia_cliente
+                          ? ` · ${ubicacionSeleccionada.referencia_cliente}`
+                          : ""
+                      }`
+                    : "Buscar ubicación..."}
+                </Button>
               ) : (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-700">
                   <MapPin className="w-4 h-4 text-slate-400" />
@@ -686,6 +762,71 @@ const ClientLocationsCalendarPage = () => {
               </Button>
             </div>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialogo dedicado para elegir ubicacion (Fase 10): antes era un
+          Popover anidado dentro de este mismo Dialog, y en movil el
+          scroll de la lista de 39 estaciones no funcionaba bien. Un
+          Dialog independiente usa el mismo patron de scroll que ya
+          funciona correctamente en el Dialog principal (max-h + 
+          overflow-y-auto), sin el conflicto de scroll anidado. */}
+      <Dialog open={dialogUbicacionOpen} onOpenChange={setDialogUbicacionOpen}>
+        <DialogContent className="max-w-md max-h-[80vh] flex flex-col p-0">
+          <DialogHeader className="p-4 pb-2">
+            <DialogTitle>Elegir ubicación</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 pb-2">
+            <Input
+              placeholder="Buscar por nombre o código..."
+              value={buscarUbicacion}
+              onChange={(e) => setBuscarUbicacion(e.target.value)}
+              autoFocus
+              data-testid="buscar-ubicacion-dialog-input"
+            />
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-2">
+            {ubicacionesFiltradas.length === 0 ? (
+              <p className="text-sm text-slate-400 p-4 text-center">Sin resultados</p>
+            ) : (
+              ubicacionesFiltradas.map((u) => (
+                <button
+                  type="button"
+                  key={u.id}
+                  onClick={() => {
+                    setForm((f) => ({ ...f, location_id: u.id }));
+                    setDialogUbicacionOpen(false);
+                    setBuscarUbicacion("");
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-50 text-left"
+                  data-testid={`ubicacion-opcion-${u.id}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {u.dificultad && (
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          DIFICULTAD_DOT[u.dificultad] || "bg-slate-300"
+                        }`}
+                      />
+                    )}
+                    <span className="text-sm truncate">
+                      {u.nombre}
+                      {u.referencia_cliente && (
+                        <span className="text-slate-400 font-mono ml-1.5">
+                          {u.referencia_cliente}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {u.visitas_realizadas_ano > 0 && (
+                    <span className="text-[10px] text-slate-400 shrink-0">
+                      {u.horas_estimadas_ano}h est. · {u.horas_realizadas_ano}h real
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
