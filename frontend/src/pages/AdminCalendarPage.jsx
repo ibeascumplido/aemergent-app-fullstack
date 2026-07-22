@@ -274,44 +274,33 @@ const AdminCalendarPage = () => {
           {day.date}
         </div>
         
-        {/* 12 user slots - each is a horizontal strip */}
-        <div className="flex flex-col gap-[1px] px-0.5 pb-0.5 mt-0.5">
-          {userSlots.map((u) => {
-            const v = vacByUser[u.user_id];
-            if (!v) {
-              // Empty slot - subtle background to show the grid
-              return (
-                <div
-                  key={u.user_id}
-                  className="h-[5px] w-full rounded-sm bg-slate-100/60"
-                />
-              );
-            }
-            const isPending = v.status === "pending";
-            const isRejected = v.status === "rejected";
-            const bgColor = isPending ? "#F59E0B" : isRejected ? "#EF4444" : u.color || "#3B82F6";
-            
+        {/* Circulos con iniciales por operario (Fase 10): solo se muestran
+            los que tienen algo ese dia - no se reserva hueco para 12
+            posibles como antes. Aprobado usa el color del propio usuario. */}
+        <div className="flex flex-wrap gap-0.5 px-0.5 pb-0.5 mt-0.5">
+          {dayVacaciones.map((v) => {
+            const isPendingV = v.status === "pending";
+            const isRejectedV = v.status === "rejected";
+            const bgColor = isPendingV ? "#F59E0B" : isRejectedV ? "#EF4444" : v.user_color || "#3B82F6";
+            const iniciales =
+              v.user_abreviatura || (v.user_name || "?").slice(0, 2).toUpperCase();
+
             return (
               <button
-                key={u.user_id}
-                onClick={() => isPending && handleVacacionClick(v)}
-                className={`h-[5px] w-full rounded-sm transition-all ${
-                  isPending ? "animate-pulse cursor-pointer hover:h-[7px]" : 
-                  isRejected ? "opacity-40 cursor-default" : "cursor-default"
+                key={v.id}
+                onClick={() => isPendingV && handleVacacionClick(v)}
+                className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0 transition-all ${
+                  isPendingV ? "animate-pulse cursor-pointer hover:scale-110" :
+                  isRejectedV ? "opacity-50 cursor-default" : "cursor-default"
                 }`}
                 style={{
                   backgroundColor: bgColor,
-                  ...(v.tipo === "libre" ? {
-                    outline: isPending
-                      ? "2px solid #d97706"
-                      : isRejected
-                      ? "2px solid #b91c1c"
-                      : "2px solid #0f172a",
-                    outlineOffset: "-1px",
-                  } : {}),
+                  ...(v.tipo === "libre" ? { outline: "2px solid #0f172a", outlineOffset: "1px" } : {}),
                 }}
-                title={`${v.user_name || u.name} - ${v.tipo === "vacacion" ? "Vacaciones" : "Día Libre"} (${v.status})`}
-              />
+                title={`${v.user_name} - ${v.tipo === "vacacion" ? "Vacaciones" : "Día Libre"} (${v.status})`}
+              >
+                {iniciales}
+              </button>
             );
           })}
         </div>
@@ -617,16 +606,20 @@ const AdminCalendarPage = () => {
       {/* Leyenda */}
       <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-amber-500 animate-pulse"></div>
+          <div className="w-4 h-4 rounded-full bg-amber-500 animate-pulse"></div>
           <span>Pendiente (click para aprobar/rechazar)</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-green-500"></div>
-          <span>Aprobado</span>
+          <div className="w-4 h-4 rounded-full bg-slate-400"></div>
+          <span>Aprobado (color del propio empleado)</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-red-500"></div>
+          <div className="w-4 h-4 rounded-full bg-red-500 opacity-50"></div>
           <span>Rechazado</span>
+        </div>
+        <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+          <div className="w-4 h-4 rounded-full bg-slate-400" style={{ outline: "2px solid #0f172a", outlineOffset: "1px" }}></div>
+          <span>Día libre (mismo color + borde negro)</span>
         </div>
       </div>
 
