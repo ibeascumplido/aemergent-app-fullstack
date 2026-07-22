@@ -93,6 +93,7 @@ const RopaPage = () => {
 
   const abrirNuevo = () => {
     setForm(emptyForm);
+    setTallasForm([]);
     setDialogOpen(true);
   };
 
@@ -101,13 +102,16 @@ const RopaPage = () => {
       toast.error("El nombre de la prenda es obligatorio");
       return;
     }
+    const tallasLimpias = tallasForm
+      .map((t) => ({ talla: t.talla.trim(), cantidad: Number(t.cantidad) || 0 }))
+      .filter((t) => t.talla);
     setGuardando(true);
     try {
       await axios.post(`${API}/ropa`, {
         nombre: form.nombre.trim(),
         marca: form.marca.trim() || null,
         notas: form.notas.trim(),
-        tallas: [],
+        tallas: tallasLimpias,
       });
       toast.success("Prenda creada");
       setDialogOpen(false);
@@ -459,9 +463,55 @@ const RopaPage = () => {
                 rows={2}
               />
             </div>
-            <p className="text-xs text-slate-400">
-              Después de crearla, usa "Editar tallas" para añadir las tallas y su stock inicial.
-            </p>
+            <div className="space-y-1.5">
+              <Label>Tallas y stock inicial (opcional)</Label>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {tallasForm.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={t.talla}
+                      onChange={(e) =>
+                        setTallasForm((prev) =>
+                          prev.map((row, idx) => (idx === i ? { ...row, talla: e.target.value } : row))
+                        )
+                      }
+                      placeholder="Talla (S, M, 42...)"
+                      className="flex-1"
+                      data-testid={`nueva-talla-input-${i}`}
+                    />
+                    <Input
+                      type="number"
+                      min="0"
+                      value={t.cantidad}
+                      onChange={(e) =>
+                        setTallasForm((prev) =>
+                          prev.map((row, idx) =>
+                            idx === i ? { ...row, cantidad: e.target.value } : row
+                          )
+                        )
+                      }
+                      className="w-20"
+                      data-testid={`nueva-cantidad-input-${i}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => quitarFilaTalla(i)}
+                      className="text-slate-400 hover:text-red-600 shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={anadirFilaTalla}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                data-testid="anadir-fila-talla-nueva-btn"
+              >
+                + Añadir talla
+              </button>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={guardando}>
