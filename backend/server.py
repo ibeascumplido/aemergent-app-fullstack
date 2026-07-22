@@ -4469,8 +4469,29 @@ class VehiculoUpdate(BaseModel):
 class Vehiculo(VehiculoBase):
     id: str
     activo: bool = True
+    fotos: List[str] = Field(default_factory=list)
+    fotos_public_ids: List[str] = Field(default_factory=list)
     creado_en: datetime
     actualizado_en: datetime
+
+
+class FotoVehiculoPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+
+class RegistroKmBase(BaseModel):
+    mes: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    kilometros: int = Field(..., ge=0)
+
+
+class RegistroKmCreate(RegistroKmBase):
+    pass
+
+
+class RegistroKm(RegistroKmBase):
+    id: str
+    vehiculo_id: str
+    creado_en: datetime
 
 
 class AveriaVehiculoBase(BaseModel):
@@ -4504,6 +4525,8 @@ async def crear_vehiculo(payload: VehiculoCreate, _: dict = Depends(require_admi
         "id": str(uuid.uuid4()),
         **payload.model_dump(),
         "activo": True,
+        "fotos": [],
+        "fotos_public_ids": [],
         "creado_en": now,
         "actualizado_en": now,
     }
@@ -4543,6 +4566,99 @@ async def eliminar_vehiculo(vehiculo_id: str, _: dict = Depends(require_admin)):
         {"id": vehiculo_id},
         {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
     )
+    return {"ok": True}
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/fotos", response_model=Vehiculo)
+async def anadir_foto_vehiculo(
+    vehiculo_id: str, payload: FotoVehiculoPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    fotos = doc.get("fotos", []) + [url]
+    fotos_ids = doc.get("fotos_public_ids", []) + [public_id]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}/fotos/{indice}", response_model=Vehiculo)
+async def eliminar_foto_vehiculo(
+    vehiculo_id: str, indice: int, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    fotos = doc.get("fotos", [])
+    fotos_ids = doc.get("fotos_public_ids", [])
+    if indice < 0 or indice >= len(fotos):
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    public_id = fotos_ids[indice] if indice < len(fotos_ids) else None
+    await _borrar_logo_cloudinary(public_id)
+    fotos.pop(indice)
+    if indice < len(fotos_ids):
+        fotos_ids.pop(indice)
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+@api_router.get("/vehiculos/{vehiculo_id}/kilometros", response_model=List[RegistroKm])
+async def list_kilometros_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    cursor = db.km_vehiculo.find({"vehiculo_id": vehiculo_id}).sort("mes", -1)
+    return [RegistroKm(**r) async for r in cursor]
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/kilometros", response_model=RegistroKm)
+async def registrar_km_vehiculo(
+    vehiculo_id: str, payload: RegistroKmCreate, _: dict = Depends(require_admin)
+):
+    """Registro mensual de kilometraje (control de kms/mes). Un mes solo
+    puede tener un registro: si ya existe, se actualiza (upsert) en vez
+    de duplicarlo."""
+    vehiculo = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    existente = await db.km_vehiculo.find_one({"vehiculo_id": vehiculo_id, "mes": payload.mes})
+    now = datetime.now(timezone.utc)
+    if existente:
+        await db.km_vehiculo.update_one(
+            {"id": existente["id"]}, {"$set": {"kilometros": payload.kilometros}}
+        )
+        doc = await db.km_vehiculo.find_one({"id": existente["id"]})
+    else:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "vehiculo_id": vehiculo_id,
+            "mes": payload.mes,
+            "kilometros": payload.kilometros,
+            "creado_en": now,
+        }
+        await db.km_vehiculo.insert_one(doc)
+    # Mantener tambien el kilometraje "actual" del vehiculo sincronizado
+    # con el ultimo registro mensual introducido, para el resto de la app
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"kilometraje": payload.kilometros, "actualizado_en": now}},
+    )
+    return RegistroKm(**doc)
+
+
+@api_router.delete("/km-vehiculo/{registro_id}")
+async def eliminar_registro_km(registro_id: str, _: dict = Depends(require_admin)):
+    result = await db.km_vehiculo.delete_one({"id": registro_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
     return {"ok": True}
 
 
