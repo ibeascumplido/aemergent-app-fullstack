@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { motion } from "framer-motion";
 import {
   ChevronLeft,
   ChevronRight,
   Calendar as CalendarIcon,
+  CalendarDays,
   Sun,
   Palmtree,
   AlertCircle,
@@ -13,7 +13,7 @@ import {
   XCircle,
   MapPin,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import axios from "axios";
@@ -21,22 +21,30 @@ import axios from "axios";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const WEEKDAYS_LARGO = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-// Status colors
+// Colores por estado (Fase 10): pendiente = naranja, aceptada = verde,
+// rechazada = rojo. Dias libres usan la misma logica pero con un borde
+// negro grueso encima, para distinguirlos de las vacaciones.
 const STATUS_COLORS = {
-  pending: "#F59E0B",   // Yellow/Amber
-  approved: null,       // Use user's color
-  rejected: "#EF4444",  // Red
+  pending: "#F59E0B",
+  approved: "#16A34A",
+  rejected: "#EF4444",
 };
+
+const formatDateString = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
 
 const MyCalendarPage = () => {
   const { user, isPending } = useAuth();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState("month"); // "month" or "year"
+  const [viewMode, setViewMode] = useState("week"); // "week" | "month" | "year"
   const [vacaciones, setVacaciones] = useState([]);
   const [resumen, setResumen] = useState(null);
   const [misDestinos, setMisDestinos] = useState({}); // { fecha: [nombreDestino,...] }
@@ -107,6 +115,22 @@ const MyCalendarPage = () => {
     }
   }, [currentDate, fetchVacaciones, fetchResumen, fetchMisDestinos, isPending]);
 
+  // Proximo dia de vacaciones y proximo dia libre (de hoy en adelante,
+  // dentro del año cargado, sin contar las rechazadas)
+  const { proximaVacacion, proximoLibre } = useMemo(() => {
+    const hoy = formatDateString(new Date());
+    const futuras = vacaciones
+      .filter((v) => v.fecha >= hoy && v.status !== "rejected")
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return {
+      proximaVacacion: futuras.find((v) => v.tipo === "vacacion") || null,
+      proximoLibre: futuras.find((v) => v.tipo === "libre") || null,
+    };
+  }, [vacaciones]);
+
+  const formatearFechaCorta = (fecha) =>
+    new Date(fecha + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+
   const getDaysInMonth = (year, month) => {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
@@ -145,8 +169,16 @@ const MyCalendarPage = () => {
     return days;
   };
 
-  const formatDateString = (date) => {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const getWeekDays = (date) => {
+    const dia = date.getDay(); // 0=domingo
+    const offsetLunes = dia === 0 ? -6 : 1 - dia;
+    const lunes = new Date(date);
+    lunes.setDate(date.getDate() + offsetLunes);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(lunes);
+      d.setDate(lunes.getDate() + i);
+      return d;
+    });
   };
 
   const isToday = (date) => {
@@ -168,10 +200,8 @@ const MyCalendarPage = () => {
       return;
     }
 
-    // Check if there's an existing vacation
     const existing = vacaciones.find(v => v.fecha === dateStr);
-    
-    // If approved, cannot modify
+
     if (existing?.status === "approved") {
       toast.error("No puedes modificar vacaciones aprobadas");
       return;
@@ -181,7 +211,7 @@ const MyCalendarPage = () => {
       const response = await axios.post(`${API}/my-vacaciones`, null, {
         params: { fecha: dateStr, tipo: markMode }
       });
-      
+
       if (response.data.action === "deleted") {
         setVacaciones(prev => prev.filter(v => v.fecha !== dateStr));
         toast.success("Solicitud cancelada");
@@ -189,7 +219,7 @@ const MyCalendarPage = () => {
         setVacaciones(prev => [...prev, response.data.vacacion]);
         toast.success("Solicitud enviada (pendiente de aprobación)");
       }
-      
+
       fetchResumen();
     } catch (error) {
       console.error("Error toggling vacation:", error);
@@ -213,28 +243,103 @@ const MyCalendarPage = () => {
     setCurrentDate(new Date(currentDate.getFullYear() + 1, currentDate.getMonth(), 1));
   };
 
-  // Render month calendar
+  const handlePrevWeek = () => {
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() - 7);
+    setCurrentDate(d);
+  };
+
+  const handleNextWeek = () => {
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() + 7);
+    setCurrentDate(d);
+  };
+
+  // Estilo de un dia segun su vacacion/libre: color de fondo por estado,
+  // y si es "libre" un borde negro grueso por encima.
+  const estiloDia = (vacInfo) => {
+    if (!vacInfo) return {};
+    const status = vacInfo.status || "pending";
+    const bg = STATUS_COLORS[status];
+    const estilo = { backgroundColor: bg };
+    if (vacInfo.tipo === "libre") {
+      estilo.outline = "3px solid #0f172a";
+      estilo.outlineOffset = "-3px";
+    }
+    return estilo;
+  };
+
+  // --- Vista semanal: aqui es donde se ve el destino de trabajo -------
+
+  const renderWeekView = () => {
+    const dias = getWeekDays(currentDate);
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2">
+        {dias.map((fecha, i) => {
+          const dateStr = formatDateString(fecha);
+          const vacInfo = getVacacionInfo(dateStr);
+          const destinosHoy = misDestinos[dateStr] || [];
+          const hasAny = !!vacInfo;
+          const isVacacion = vacInfo?.tipo === "vacacion";
+          const status = vacInfo?.status || "pending";
+
+          return (
+            <Card
+              key={dateStr}
+              className={`border-slate-100 shadow-sm ${isToday(fecha) ? "ring-2 ring-red-400" : ""}`}
+            >
+              <CardContent className="p-3">
+                <button
+                  type="button"
+                  onClick={() => toggleVacacion(dateStr)}
+                  disabled={isPending || status === "approved"}
+                  className="w-full text-left rounded-lg p-2 mb-2 transition-all"
+                  style={hasAny ? { ...estiloDia(vacInfo), color: "white" } : {}}
+                >
+                  <p className={`text-xs font-semibold uppercase ${hasAny ? "text-white/90" : "text-slate-500"}`}>
+                    {WEEKDAYS_LARGO[i]}
+                  </p>
+                  <p className={`text-lg font-bold ${hasAny ? "text-white" : "text-slate-900"}`}>
+                    {fecha.getDate()} {MONTHS[fecha.getMonth()].slice(0, 3)}
+                  </p>
+                  {hasAny && (
+                    <p className="text-[11px] text-white/90 flex items-center gap-1 mt-0.5">
+                      {isVacacion ? <Palmtree className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
+                      {isVacacion ? "Vacaciones" : "Día libre"}
+                      {status === "pending" && " (pendiente)"}
+                      {status === "rejected" && " (rechazado)"}
+                    </p>
+                  )}
+                </button>
+
+                {destinosHoy.length > 0 ? (
+                  <div className="space-y-1">
+                    {destinosHoy.map((nombre, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-1.5 text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
+                      >
+                        <MapPin className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate font-medium">{nombre}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 px-1">Sin destino asignado</p>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // --- Vista mensual (para pedir dias, calendario mas compacto de un vistazo) --
+
   const renderMonthCalendar = (year, month, compact = false) => {
     const days = getDaysInMonth(year, month);
-    
-    // Helper to get background color based on status
-    const getStatusColor = (vacInfo) => {
-      if (!vacInfo) return null;
-      const status = vacInfo.status || "pending";
-      if (status === "pending") return STATUS_COLORS.pending;
-      if (status === "rejected") return STATUS_COLORS.rejected;
-      return user?.color || "#3B82F6"; // approved uses user color
-    };
 
-    // Helper: ring style for días libres (always visible, any status)
-    const getLibreRingStyle = (vacInfo) => {
-      if (!vacInfo || vacInfo.tipo !== "libre") return {};
-      const status = vacInfo.status || "pending";
-      if (status === "approved") return { outline: "3px solid #0f172a", outlineOffset: "-3px" };
-      if (status === "rejected") return { outline: "3px solid #b91c1c", outlineOffset: "-3px" };
-      return { outline: "3px solid #d97706", outlineOffset: "-3px" };
-    };
-    
     return (
       <div className={compact ? "" : "border border-slate-200 rounded-lg overflow-hidden"}>
         {!compact && (
@@ -256,8 +361,7 @@ const MyCalendarPage = () => {
             const hasAny = isVacacion || isLibre;
             const isTodayDate = isToday(day.fullDate);
             const isWeekend = day.fullDate.getDay() === 0 || day.fullDate.getDay() === 6;
-            
-            const bgColor = getStatusColor(vacInfo);
+
             const status = vacInfo?.status || "pending";
             const isApproved = status === "approved";
             const isPendingVac = status === "pending";
@@ -270,14 +374,12 @@ const MyCalendarPage = () => {
                   onClick={() => day.isCurrentMonth && toggleVacacion(dateStr)}
                   disabled={!day.isCurrentMonth || isPending || isApproved}
                   className={`aspect-square text-[10px] flex items-center justify-center transition-all ${
-                    !day.isCurrentMonth ? "text-slate-300" : 
-                    hasAny ? "text-white font-bold" : 
+                    !day.isCurrentMonth ? "text-slate-300" :
+                    hasAny ? "text-white font-bold" :
                     isTodayDate ? "bg-red-100 text-red-600 font-bold" :
                     isWeekend ? "text-slate-400" : "text-slate-700 hover:bg-slate-100"
-                  } ${isLibre && isApproved ? "ring-1 ring-inset ring-slate-900" : ""} ${
-                    isPendingVac && hasAny ? "animate-pulse" : ""
-                  }`}
-                  style={hasAny ? { backgroundColor: bgColor, ...getLibreRingStyle(vacInfo) } : {}}
+                  } ${isPendingVac && hasAny ? "animate-pulse" : ""}`}
+                  style={hasAny ? estiloDia(vacInfo) : {}}
                 >
                   {day.date}
                 </button>
@@ -290,12 +392,12 @@ const MyCalendarPage = () => {
                 onClick={() => day.isCurrentMonth && toggleVacacion(dateStr)}
                 disabled={!day.isCurrentMonth || isPending || isApproved}
                 className={`relative min-h-[60px] p-1 border border-slate-100 transition-all ${
-                  !day.isCurrentMonth ? "bg-slate-50 text-slate-400" : 
+                  !day.isCurrentMonth ? "bg-slate-50 text-slate-400" :
                   isWeekend ? "bg-slate-50/50" : "bg-white hover:bg-slate-50"
                 } ${isTodayDate ? "ring-2 ring-red-400 ring-inset" : ""} ${
                   hasAny ? "text-white" : ""
                 }`}
-                style={hasAny ? { backgroundColor: bgColor, ...getLibreRingStyle(vacInfo) } : {}}
+                style={hasAny ? estiloDia(vacInfo) : {}}
                 title={vacInfo?.rejection_comment ? `Rechazado: ${vacInfo.rejection_comment}` : ""}
               >
                 <span className={`text-sm font-medium ${hasAny ? "text-white" : ""}`}>
@@ -365,12 +467,23 @@ const MyCalendarPage = () => {
 
   return (
     <div data-testid="my-calendar-page">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Mi Calendario</h1>
-          <p className="text-slate-500 mt-1">Gestiona tus vacaciones y días libres</p>
+          <p className="text-slate-500 mt-1">
+            {viewMode === "week" ? "Tu semana: dónde trabajas y tus días libres" : "Gestiona tus vacaciones y días libres"}
+          </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant={viewMode === "week" ? "default" : "outline"}
+            onClick={() => setViewMode("week")}
+            className={viewMode === "week" ? "bg-red-500 hover:bg-red-600" : ""}
+            data-testid="vista-semana-btn"
+          >
+            <CalendarDays className="w-4 h-4 mr-2" />
+            Semana
+          </Button>
           <Button
             variant={viewMode === "month" ? "default" : "outline"}
             onClick={() => setViewMode("month")}
@@ -390,87 +503,27 @@ const MyCalendarPage = () => {
         </div>
       </div>
 
-      {/* Resumen */}
-      {resumen && (
-        <Card className="border-slate-100 shadow-sm mb-6">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg font-semibold">
-              Resumen {currentDate.getFullYear()}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-orange-50 rounded-lg p-4 text-center">
-                <Palmtree className="w-6 h-6 text-orange-500 mx-auto mb-2" />
-                <p className="text-xs text-slate-500 uppercase">Vacaciones</p>
-                <p className="text-2xl font-bold text-orange-600">
-                  {resumen.dias_aprobados || 0}/{resumen.dias_disponibles}
-                </p>
-                <p className="text-xs text-slate-500">{resumen.dias_restantes} restantes</p>
+      {/* Vista semanal: prioridad - aqui se ve el destino de trabajo */}
+      {viewMode === "week" && (
+        <>
+          <Card className="border-slate-100 shadow-sm mb-4">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <Button variant="ghost" size="sm" onClick={handlePrevWeek}>
+                  <ChevronLeft className="w-5 h-5" />
+                </Button>
+                <h2 className="text-base font-semibold text-slate-900">
+                  Semana del {formatearFechaCorta(formatDateString(getWeekDays(currentDate)[0]))}
+                </h2>
+                <Button variant="ghost" size="sm" onClick={handleNextWeek}>
+                  <ChevronRight className="w-5 h-5" />
+                </Button>
               </div>
-              <div className="bg-amber-50 rounded-lg p-4 text-center">
-                <Clock className="w-6 h-6 text-amber-500 mx-auto mb-2" />
-                <p className="text-xs text-slate-500 uppercase">Pendientes</p>
-                <p className="text-2xl font-bold text-amber-600">
-                  {(resumen.dias_pendientes || 0) + (resumen.dias_libres_pendientes || 0)}
-                </p>
-                <p className="text-xs text-slate-500">esperando aprobación</p>
-              </div>
-              <div className="bg-blue-50 rounded-lg p-4 text-center">
-                <Sun className="w-6 h-6 text-blue-500 mx-auto mb-2" />
-                <p className="text-xs text-slate-500 uppercase">Días Libres</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {resumen.dias_libres_aprobados || 0}/{resumen.dias_libres_disponibles}
-                </p>
-                <p className="text-xs text-slate-500">{resumen.dias_libres_restantes} restantes</p>
-              </div>
-              <div className="bg-green-50 rounded-lg p-4 text-center col-span-2">
-                <p className="text-xs text-slate-500 uppercase mb-1">Tu color</p>
-                <div 
-                  className="w-10 h-10 rounded-lg mx-auto mb-2 flex items-center justify-center text-white font-bold text-sm"
-                  style={{ backgroundColor: user?.color || "#3B82F6" }}
-                >
-                  {user?.abreviatura || user?.name?.slice(0, 2).toUpperCase()}
-                </div>
-                <p className="font-medium text-slate-700 text-sm">{user?.name}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          {renderWeekView()}
+        </>
       )}
-
-      {/* Modo de marcado */}
-      <Card className="border-slate-100 shadow-sm mb-4">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-600">Marcar como:</span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setMarkMode("vacacion")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
-                  markMode === "vacacion"
-                    ? "border-orange-500 bg-orange-50 text-orange-700"
-                    : "border-slate-200 hover:border-slate-300"
-                }`}
-              >
-                <Palmtree className="w-4 h-4" />
-                <span className="font-medium">Vacaciones</span>
-              </button>
-              <button
-                onClick={() => setMarkMode("libre")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
-                  markMode === "libre"
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-slate-200 hover:border-slate-300"
-                }`}
-              >
-                <Sun className="w-4 h-4" />
-                <span className="font-medium">Día Libre</span>
-              </button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Vista mensual */}
       {viewMode === "month" && (
@@ -528,12 +581,8 @@ const MyCalendarPage = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {MONTHS.map((monthName, monthIndex) => (
               <Card key={monthIndex} className="border-slate-100 shadow-sm">
-                <CardHeader className="pb-2 pt-3 px-3">
-                  <CardTitle className="text-sm font-semibold text-center text-slate-700">
-                    {monthName}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-2">
+                <CardContent className="p-2 pt-3">
+                  <p className="text-sm font-semibold text-center text-slate-700 mb-1">{monthName}</p>
                   <div className="grid grid-cols-7 mb-1">
                     {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
                       <div key={d} className="text-[8px] text-center text-slate-400 font-medium">
@@ -549,31 +598,93 @@ const MyCalendarPage = () => {
         </>
       )}
 
+      {/* Modo de marcado - solo tiene sentido en mes/año, donde se piden dias */}
+      {viewMode !== "week" && (
+        <Card className="border-slate-100 shadow-sm mt-4">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-slate-600">Marcar como:</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setMarkMode("vacacion")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
+                    markMode === "vacacion"
+                      ? "border-orange-500 bg-orange-50 text-orange-700"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <Palmtree className="w-4 h-4" />
+                  <span className="font-medium">Vacaciones</span>
+                </button>
+                <button
+                  onClick={() => setMarkMode("libre")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
+                    markMode === "libre"
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <Sun className="w-4 h-4" />
+                  <span className="font-medium">Día Libre</span>
+                </button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Resumen: ahora secundario, mas pequeno, con el proximo dia destacado */}
+      {resumen && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-orange-50 text-orange-700">
+            <Palmtree className="w-3.5 h-3.5" />
+            <span className="font-medium">{resumen.dias_restantes}</span>
+            <span className="text-orange-500">vacaciones restantes</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700">
+            <Sun className="w-3.5 h-3.5" />
+            <span className="font-medium">{resumen.dias_libres_restantes}</span>
+            <span className="text-blue-500">libres restantes</span>
+          </div>
+          {proximaVacacion && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-50 text-slate-600">
+              <CalendarDays className="w-3.5 h-3.5" />
+              Próximas vacaciones:{" "}
+              <span className="font-medium">{formatearFechaCorta(proximaVacacion.fecha)}</span>
+              {proximaVacacion.status === "pending" && " (pendiente)"}
+            </div>
+          )}
+          {proximoLibre && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-50 text-slate-600">
+              <CalendarDays className="w-3.5 h-3.5" />
+              Próximo día libre:{" "}
+              <span className="font-medium">{formatearFechaCorta(proximoLibre.fecha)}</span>
+              {proximoLibre.status === "pending" && " (pendiente)"}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Leyenda */}
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-xs text-slate-500">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-amber-500"></div>
+          <div className="w-3.5 h-3.5 rounded" style={{ backgroundColor: STATUS_COLORS.pending }}></div>
           <span>Pendiente</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded" style={{ backgroundColor: user?.color || "#3B82F6" }}></div>
-          <span>Vacaciones aprobadas</span>
+          <div className="w-3.5 h-3.5 rounded" style={{ backgroundColor: STATUS_COLORS.approved }}></div>
+          <span>Aceptada</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-red-500"></div>
-          <span>Rechazado</span>
+          <div className="w-3.5 h-3.5 rounded" style={{ backgroundColor: STATUS_COLORS.rejected }}></div>
+          <span>Rechazada</span>
         </div>
         <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-          <div className="w-4 h-4 rounded bg-amber-500" style={{ outline: "3px solid #d97706", outlineOffset: "-3px" }}></div>
-          <span>Día libre pendiente</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded" style={{ backgroundColor: user?.color || "#3B82F6", outline: "3px solid #0f172a", outlineOffset: "-3px" }}></div>
-          <span>Día libre aprobado</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-red-500" style={{ outline: "3px solid #b91c1c", outlineOffset: "-3px" }}></div>
-          <span>Día libre rechazado</span>
+          <div
+            className="w-3.5 h-3.5 rounded"
+            style={{ backgroundColor: STATUS_COLORS.approved, outline: "2px solid #0f172a", outlineOffset: "-2px" }}
+          ></div>
+          <span>Día libre (mismo color + borde negro)</span>
         </div>
       </div>
     </div>
