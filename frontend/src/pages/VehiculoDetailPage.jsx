@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowLeft, Truck, AlertTriangle, CheckCircle, Plus, Check, Trash2 } from "lucide-react";
+import { ArrowLeft, Truck, AlertTriangle, CheckCircle, Plus, Check, Trash2, X, Gauge } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,11 +74,23 @@ const VehiculoDetailPage = () => {
   const [anadiendo, setAnadiendo] = useState(false);
   const [aBorrar, setABorrar] = useState(null);
 
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [fotoAmpliada, setFotoAmpliada] = useState(null);
+  const [fotoABorrar, setFotoABorrar] = useState(null);
+
+  const [kilometrosLog, setKilometrosLog] = useState([]);
+  const hoyISOMes = () => new Date().toISOString().slice(0, 7);
+  const [nuevoMesKm, setNuevoMesKm] = useState(hoyISOMes());
+  const [nuevosKm, setNuevosKm] = useState("");
+  const [guardandoKm, setGuardandoKm] = useState(false);
+  const [kmABorrar, setKmABorrar] = useState(null);
+
   const cargar = async () => {
     try {
-      const [vRes, aRes] = await Promise.all([
+      const [vRes, aRes, kmRes] = await Promise.all([
         axios.get(`${API}/vehiculos/${vehiculoId}`),
         axios.get(`${API}/vehiculos/${vehiculoId}/averias`),
+        axios.get(`${API}/vehiculos/${vehiculoId}/kilometros`),
       ]);
       setVehiculo(vRes.data);
       setForm({
@@ -92,6 +104,7 @@ const VehiculoDetailPage = () => {
         notas: vRes.data.notas || "",
       });
       setAverias(aRes.data);
+      setKilometrosLog(kmRes.data);
     } catch (err) {
       console.error("Error cargando vehículo:", err);
       toast.error("No se pudo cargar el vehículo");
@@ -125,6 +138,75 @@ const VehiculoDetailPage = () => {
       toast.error("No se pudo guardar");
     } finally {
       setGuardando(false);
+    }
+  };
+
+  const subirFoto = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setSubiendoFoto(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        await axios.post(`${API}/vehiculos/${vehiculoId}/fotos`, { imagen: reader.result });
+        toast.success("Foto añadida");
+        await cargar();
+      } catch (err) {
+        console.error("Error subiendo foto:", err);
+        toast.error("No se pudo subir la foto");
+      } finally {
+        setSubiendoFoto(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const eliminarFoto = async () => {
+    if (fotoABorrar === null) return;
+    try {
+      await axios.delete(`${API}/vehiculos/${vehiculoId}/fotos/${fotoABorrar}`);
+      toast.success("Foto eliminada");
+      setFotoABorrar(null);
+      await cargar();
+    } catch (err) {
+      console.error("Error eliminando foto:", err);
+      toast.error("No se pudo eliminar");
+    }
+  };
+
+  const registrarKm = async () => {
+    if (!nuevosKm || Number(nuevosKm) < 0) {
+      toast.error("Introduce los kilómetros");
+      return;
+    }
+    setGuardandoKm(true);
+    try {
+      await axios.post(`${API}/vehiculos/${vehiculoId}/kilometros`, {
+        mes: nuevoMesKm,
+        kilometros: Number(nuevosKm),
+      });
+      toast.success("Kilometraje registrado");
+      setNuevosKm("");
+      await cargar();
+    } catch (err) {
+      console.error("Error registrando km:", err);
+      toast.error("No se pudo registrar");
+    } finally {
+      setGuardandoKm(false);
+    }
+  };
+
+  const eliminarRegistroKm = async () => {
+    if (!kmABorrar) return;
+    try {
+      await axios.delete(`${API}/km-vehiculo/${kmABorrar.id}`);
+      toast.success("Registro eliminado");
+      setKmABorrar(null);
+      await cargar();
+    } catch (err) {
+      console.error("Error eliminando registro:", err);
+      toast.error("No se pudo eliminar");
     }
   };
 
@@ -223,9 +305,48 @@ const VehiculoDetailPage = () => {
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <Badge alerta={alertaItv} etiqueta="ITV" />
-          <Badge alerta={alertaRevision} etiqueta="Revisión" />
+          <Badge alerta={alertaRevision} etiqueta="Revisión mecánica" />
         </div>
       </div>
+
+      <Card className="border-slate-100 mb-6">
+        <CardContent className="p-4">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Fotos</p>
+          <div className="flex flex-wrap gap-2">
+            {(vehiculo.fotos || []).map((url, i) => (
+              <div key={i} className="relative group">
+                <button
+                  type="button"
+                  onClick={() => setFotoAmpliada(url)}
+                  className="block w-20 h-20 rounded-lg overflow-hidden border border-slate-200"
+                  data-testid={`foto-vehiculo-${i}`}
+                >
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setFotoABorrar(i)}
+                    className="absolute top-1 right-1 bg-black/50 hover:bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {isAdmin && (
+              <label
+                className={`w-20 h-20 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer transition-colors ${
+                  subiendoFoto ? "border-slate-200 text-slate-300" : "border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500"
+                }`}
+              >
+                <input type="file" accept="image/*" onChange={subirFoto} disabled={subiendoFoto} className="hidden" />
+                <Plus className="w-6 h-6" />
+              </label>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-100 mb-6">
         <CardContent className="p-4 space-y-4">
@@ -293,7 +414,7 @@ const VehiculoDetailPage = () => {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Próxima revisión</Label>
+              <Label>Próxima revisión mecánica</Label>
               <Input
                 type="date"
                 value={form.fecha_proxima_revision}
@@ -332,6 +453,79 @@ const VehiculoDetailPage = () => {
           {guardando ? "Guardando..." : "Guardar cambios"}
         </Button>
       )}
+
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Gauge className="w-4 h-4 text-slate-400" />
+          Kilómetros mensuales
+        </h2>
+
+        <div className="flex items-end gap-2 mb-4 flex-wrap">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Mes</Label>
+            <Input
+              type="month"
+              value={nuevoMesKm}
+              onChange={(e) => setNuevoMesKm(e.target.value)}
+              className="w-40"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Kilómetros</Label>
+            <Input
+              type="number"
+              min="0"
+              value={nuevosKm}
+              onChange={(e) => setNuevosKm(e.target.value)}
+              placeholder="Ej. 45230"
+              className="w-32"
+              data-testid="nuevo-km-input"
+            />
+          </div>
+          <Button
+            onClick={registrarKm}
+            disabled={guardandoKm}
+            className="bg-slate-800 hover:bg-slate-900 text-white"
+            data-testid="registrar-km-btn"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Registrar
+          </Button>
+        </div>
+
+        {kilometrosLog.length === 0 ? (
+          <p className="text-sm text-slate-400">Sin registros de kilometraje todavía.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {kilometrosLog.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50"
+                data-testid={`km-registro-${r.id}`}
+              >
+                <span className="text-xs text-slate-500">
+                  {new Date(r.mes + "-01T00:00:00").toLocaleDateString("es-ES", {
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </span>
+                <span className="text-sm font-semibold text-slate-800">
+                  {r.kilometros.toLocaleString("es-ES")} km
+                </span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setKmABorrar(r)}
+                    className="text-slate-400 hover:text-red-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-3">Averías</h2>
@@ -426,6 +620,59 @@ const VehiculoDetailPage = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={eliminarAveria} className="bg-red-600 hover:bg-red-700">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setFotoAmpliada(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setFotoAmpliada(null)}
+            className="absolute top-4 right-4 text-white"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={fotoAmpliada}
+            alt=""
+            className="max-w-full max-h-full rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
+      <AlertDialog open={fotoABorrar !== null} onOpenChange={(open) => !open && setFotoABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar esta foto?</AlertDialogTitle>
+            <AlertDialogDescription>Esta acción no se puede deshacer.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={eliminarFoto} className="bg-red-600 hover:bg-red-700">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!kmABorrar} onOpenChange={(open) => !open && setKmABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar este registro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el registro de kilometraje de {kmABorrar && new Date(kmABorrar.mes + "-01T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={eliminarRegistroKm} className="bg-red-600 hover:bg-red-700">
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
