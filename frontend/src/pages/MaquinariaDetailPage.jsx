@@ -73,6 +73,8 @@ const MaquinariaDetailPage = () => {
       setMaquina(mRes.data);
       setForm({
         nombre: mRes.data.nombre || "",
+        marca: mRes.data.marca || "",
+        modelo: mRes.data.modelo || "",
         anio_fabricacion: mRes.data.anio_fabricacion || "",
         ubicacion_actual: mRes.data.ubicacion_actual || "",
         estado: mRes.data.estado || "operativo",
@@ -97,6 +99,8 @@ const MaquinariaDetailPage = () => {
     try {
       await axios.put(`${API}/maquinaria/${maquinariaId}`, {
         nombre: form.nombre.trim(),
+        marca: form.marca.trim() || null,
+        modelo: form.modelo.trim() || null,
         anio_fabricacion: form.anio_fabricacion ? Number(form.anio_fabricacion) : null,
         ubicacion_actual: form.ubicacion_actual.trim() || null,
         estado: form.estado,
@@ -216,6 +220,11 @@ const MaquinariaDetailPage = () => {
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight font-['Manrope']">
             {maquina.nombre}
           </h1>
+          {(maquina.marca || maquina.modelo) && (
+            <p className="text-sm text-slate-500">
+              {[maquina.marca, maquina.modelo].filter(Boolean).join(" ")}
+            </p>
+          )}
         </div>
         {estadoInfoBadge(form.estado)}
       </div>
@@ -269,6 +278,26 @@ const MaquinariaDetailPage = () => {
               onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
               disabled={!isAdmin}
             />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Marca</Label>
+              <Input
+                value={form.marca}
+                onChange={(e) => setForm((f) => ({ ...f, marca: e.target.value }))}
+                disabled={!isAdmin}
+                data-testid="marca-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Modelo</Label>
+              <Input
+                value={form.modelo}
+                onChange={(e) => setForm((f) => ({ ...f, modelo: e.target.value }))}
+                disabled={!isAdmin}
+                data-testid="modelo-input"
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
