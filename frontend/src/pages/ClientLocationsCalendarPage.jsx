@@ -818,11 +818,11 @@ const ClientLocationsCalendarPage = () => {
                       )}
                     </span>
                   </div>
-                  {u.visitas_realizadas_ano > 0 && (
-                    <span className="text-[10px] text-slate-400 shrink-0">
-                      {u.horas_estimadas_ano}h est. · {u.horas_realizadas_ano}h real
-                    </span>
-                  )}
+                  <span className="text-[10px] text-slate-400 shrink-0" data-testid={`horas-ubicacion-${u.id}`}>
+                    {u.visitas_realizadas_ano > 0
+                      ? `${u.horas_estimadas_ano}h est. · ${u.horas_realizadas_ano}h real`
+                      : `${u.horas_por_visita}h/visita (sin visitas aún)`}
+                  </span>
                 </button>
               ))
             )}
