@@ -147,7 +147,7 @@ const Layout = () => {
         } md:translate-x-0`}
         data-testid="sidebar"
       >
-        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
           <img 
             src="https://customer-assets.emergentagent.com/job_presupuesto-app-27/artifacts/yunqqtir_logo-final.png" 
             alt="INICIA" 
@@ -166,7 +166,7 @@ const Layout = () => {
           </div>
         </div>
         
-        <nav className="p-4 space-y-1 flex-1" onClick={() => setSidebarOpen(false)}>
+        <nav className="p-4 space-y-1 flex-1 overflow-y-auto min-h-0" onClick={() => setSidebarOpen(false)}>
           {itemsPersonales.map((item) => renderNavLink(item, false))}
 
           {itemsAdmin.length > 0 && (
@@ -184,7 +184,7 @@ const Layout = () => {
         </nav>
 
         {/* User info & logout */}
-        <div className="p-4 border-t border-slate-100">
+        <div className="p-4 border-t border-slate-100 shrink-0">
           <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 rounded-lg mb-3">
             <div 
               className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
