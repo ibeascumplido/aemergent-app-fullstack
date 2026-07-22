@@ -181,7 +181,7 @@ const VehiculosPage = () => {
                           }`}
                         >
                           <AlertTriangle className="w-3 h-3" />
-                          Revisión {alertaRevision === "vencida" ? "vencida" : "próxima"}
+                          Revisión mecánica {alertaRevision === "vencida" ? "vencida" : "próxima"}
                         </span>
                       )}
                     </div>
@@ -253,7 +253,7 @@ const VehiculosPage = () => {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Próxima revisión</Label>
+                <Label>Próxima revisión mecánica</Label>
                 <Input
                   type="date"
                   value={form.fecha_proxima_revision}
