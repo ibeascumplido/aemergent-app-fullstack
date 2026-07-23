@@ -3358,6 +3358,11 @@ class WorkOrder(WorkOrderBase):
     )
     firma_cliente_nombre: Optional[str] = None
     firma_cliente_en: Optional[datetime] = None
+    firma_habilitada_de_nuevo: bool = Field(
+        False, description="Fase 11: una vez firmado, el cliente NO puede volver a firmar por "
+        "su cuenta. Un operario o admin tiene que habilitarlo explicitamente aqui (un solo "
+        "uso: se desactiva solo en cuanto se registra la firma siguiente)."
+    )
 
 
 class WorkSessionBase(BaseModel):
@@ -3447,6 +3452,7 @@ class WorkOrderPublicView(BaseModel):
     firma_cliente: Optional[str] = None
     firma_cliente_nombre: Optional[str] = None
     firma_cliente_en: Optional[datetime] = None
+    firma_habilitada_de_nuevo: bool = False
 
 
 class FirmaClientePayload(BaseModel):
@@ -3761,6 +3767,7 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         firma_cliente=doc.get("firma_cliente"),
         firma_cliente_nombre=doc.get("firma_cliente_nombre"),
         firma_cliente_en=doc.get("firma_cliente_en"),
+        firma_habilitada_de_nuevo=doc.get("firma_habilitada_de_nuevo", False),
     )
 
 
@@ -3778,22 +3785,75 @@ async def ver_parte_publico(token: str):
     return await _construir_vista_publica(doc)
 
 
-@api_router.post("/public/firma/{token}")
-async def firmar_parte_publico(token: str, payload: FirmaClientePayload):
-    doc = await db.work_orders.find_one({"firma_cliente_token": token})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Enlace no valido")
+def _puede_firmar(doc: dict) -> bool:
+    """Fase 11: una vez hay firma guardada, solo se puede volver a firmar
+    si un operario/admin lo ha habilitado explicitamente (un solo uso)."""
+    return not doc.get("firma_cliente") or doc.get("firma_habilitada_de_nuevo", False)
+
+
+async def _guardar_firma_cliente(work_order_id: str, payload: "FirmaClientePayload") -> None:
     await db.work_orders.update_one(
-        {"id": doc["id"]},
+        {"id": work_order_id},
         {
             "$set": {
                 "firma_cliente": payload.firma,
                 "firma_cliente_nombre": payload.nombre.strip(),
                 "firma_cliente_en": datetime.now(timezone.utc),
+                "firma_habilitada_de_nuevo": False,
             }
         },
     )
+
+
+@api_router.post("/public/firma/{token}")
+async def firmar_parte_publico(token: str, payload: FirmaClientePayload):
+    doc = await db.work_orders.find_one({"firma_cliente_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Enlace no valido")
+    if not _puede_firmar(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Este parte ya esta firmado. Pide al operario o administrador que "
+            "habilite una nueva firma si hace falta corregirla.",
+        )
+    await _guardar_firma_cliente(doc["id"], payload)
     return {"ok": True}
+
+
+@api_router.post("/work-orders/{work_order_id}/firma-presencial")
+async def firmar_parte_presencial(
+    work_order_id: str, payload: FirmaClientePayload, _: dict = Depends(require_approved)
+):
+    """Firma presencial (Fase 11): el operario o admin le pasa su propio
+    movil al cliente para que firme ahi mismo, sin depender del enlace
+    publico remoto. Misma logica de bloqueo que la firma por enlace."""
+    doc = await _cargar_parte(work_order_id)
+    if not _puede_firmar(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Este parte ya esta firmado. Habilita una nueva firma si hace falta "
+            "corregirla.",
+        )
+    await _guardar_firma_cliente(work_order_id, payload)
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
+@api_router.post("/work-orders/{work_order_id}/habilitar-nueva-firma")
+async def habilitar_nueva_firma(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    """Desbloquea la firma para un unico uso siguiente (Fase 11): ni el
+    cliente por el enlace publico ni nadie mas puede volver a firmar
+    hasta que un operario o admin pase por aqui."""
+    doc = await _cargar_parte(work_order_id)
+    if not doc.get("firma_cliente"):
+        raise HTTPException(status_code=400, detail="Este parte todavia no tiene firma")
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"firma_habilitada_de_nuevo": True}}
+    )
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
 
 
 # --- PDF del parte (Fase 5A.3 parte 2b) -------------------------------------
