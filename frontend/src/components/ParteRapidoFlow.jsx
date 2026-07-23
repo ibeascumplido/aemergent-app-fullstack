@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { ClipboardList } from "lucide-react";
@@ -52,6 +53,7 @@ const formatearRangoSemana = (lunesISO) => {
  * uno o crear otro nuevo.
  */
 const ParteRapidoFlow = () => {
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const [tipoParte, setTipoParte] = useState("estandar"); // estandar | rejilla
@@ -216,12 +218,14 @@ const ParteRapidoFlow = () => {
 
       setDialogOpen(false);
       const destino = tipoParte === "rejilla" ? "" : "?nueva=1";
-      // Navegacion de pagina completa (no la de React Router): en movil,
-      // hacer navigate() justo al cerrar este dialogo resultaba fragil
-      // (a veces se quedaba en el dashboard sin entrar al parte). Un
-      // cambio de pagina completo es mas lento pero no puede verse
-      // interrumpido por nada del ciclo de cierre del dialogo.
-      window.location.href = `/work-orders/${workOrderId}${destino}`;
+      // IMPORTANTE: usar navigate() de React Router (SPA), NO
+      // window.location.href. La app es instalable en el movil
+      // (manifest.json con display:standalone) y una navegacion de
+      // pagina completa es justo el disparador conocido de un bug de
+      // iOS: reinicia la "app" instalada desde su start_url (osea, esta
+      // misma pantalla) en vez de respetar la URL de destino. navigate()
+      // usa el History API sin recargar la pagina, evitando ese problema.
+      navigate(`/work-orders/${workOrderId}${destino}`);
     } catch (err) {
       console.error("Error iniciando el parte:", err);
       toast.error(err?.response?.data?.detail || "No se pudo iniciar el parte");

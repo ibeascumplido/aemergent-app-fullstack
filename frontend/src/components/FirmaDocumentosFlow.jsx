@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { PenLine, CheckCircle2 } from "lucide-react";
@@ -29,6 +30,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
  * que se abra el dialogo de firma presencial automaticamente.
  */
 const FirmaDocumentosFlow = () => {
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const [clientes, setClientes] = useState([]);
@@ -83,10 +85,9 @@ const FirmaDocumentosFlow = () => {
     }
     setContinuando(true);
     setDialogOpen(false);
-    // Navegacion de pagina completa (ver ParteRapidoFlow.jsx): mas
-    // robusta en tactil movil que el navigate() de React Router justo
-    // al cerrar este dialogo.
-    window.location.href = `/work-orders/${parteSeleccionado}?firmar=1`;
+    // navigate() de React Router, no window.location.href - ver la nota
+    // en ParteRapidoFlow.jsx (bug de iOS standalone al recargar pagina).
+    navigate(`/work-orders/${parteSeleccionado}?firmar=1`);
   };
 
   return (
