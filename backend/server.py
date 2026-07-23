@@ -2952,6 +2952,14 @@ async def crear_centro(slug: str, payload: CentroCreate, _: dict = Depends(requi
     return Centro(**doc)
 
 
+@api_router.get("/centros/{centro_id}", response_model=Centro)
+async def obtener_centro(centro_id: str, _: dict = Depends(require_approved)):
+    doc = await db.centros.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    return Centro(**doc)
+
+
 @api_router.put("/centros/{centro_id}", response_model=Centro)
 async def actualizar_centro(centro_id: str, payload: CentroUpdate, _: dict = Depends(require_admin)):
     doc = await db.centros.find_one({"id": centro_id})
@@ -3270,6 +3278,14 @@ class WorkOrderBase(BaseModel):
         "registrado todavia. El admin puede vincularlo a un cliente real mas adelante desde "
         "el propio parte."
     )
+    centro_id: Optional[str] = Field(
+        None, description="ID del centro registrado (subgrupo del cliente), si aplica. "
+        "Opcional incluso con cliente registrado: no todos los clientes tienen centros."
+    )
+    centro_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre del centro escrito a mano cuando el "
+        "centro concreto no esta registrado todavia."
+    )
     budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
     titulo: str = Field(..., min_length=1, max_length=200)
     notas: Optional[str] = Field("", max_length=4000)
@@ -3282,9 +3298,22 @@ class WorkOrderBase(BaseModel):
     mes_rejilla: Optional[str] = Field(
         None,
         pattern=r"^\d{4}-\d{2}$",
-        description="Mes/año que representa la rejilla de zonas, formato 'YYYY-MM'. "
-        "Independiente de cuando se crea el parte (se puede hacer un parte con antelacion o "
-        "retroactivo). Si no se especifica, se usa el mes de creacion del parte.",
+        description="Mes/año que representa la rejilla de zonas, formato 'YYYY-MM'. Se usa "
+        "cuando rejilla_tipo='mensual' (o no se especifica rejilla_tipo, por compatibilidad "
+        "con partes creados antes de que existiera la opcion semanal).",
+    )
+    rejilla_tipo: Optional[str] = Field(
+        None,
+        pattern=r"^(mensual|semanal)$",
+        description="Solo aplica si usa_zonas=True: si la rejilla cubre un mes completo o "
+        "una semana concreta (ideal para trabajos puntuales de varios dias, tipicamente 4-5). "
+        "Si no se especifica, se asume 'mensual' (comportamiento historico).",
+    )
+    semana_inicio: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Lunes de la semana que representa la rejilla, solo cuando "
+        "rejilla_tipo='semanal'.",
     )
 
 
@@ -3299,10 +3328,16 @@ class WorkOrderUpdate(BaseModel):
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
     mes_rejilla: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
+    rejilla_tipo: Optional[str] = Field(None, pattern=r"^(mensual|semanal)$")
+    semana_inicio: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     client_id: Optional[str] = Field(
         None, description="Solo para vincular un parte de cliente libre a un cliente real "
         "ya dado de alta (admin). Al establecerlo se resuelve client_slug y se borra "
         "client_libre."
+    )
+    centro_id: Optional[str] = Field(
+        None, description="Solo para vincular un parte de centro libre a un centro real ya "
+        "dado de alta (admin). Al establecerlo se borra centro_libre."
     )
 
 
@@ -3449,6 +3484,7 @@ async def _cargar_parte(work_order_id: str) -> dict:
 @api_router.get("/work-orders", response_model=List[WorkOrder])
 async def list_work_orders(
     client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
     estado: Optional[str] = None,
     sin_cliente: bool = False,
     _: dict = Depends(require_approved),
@@ -3461,6 +3497,8 @@ async def list_work_orders(
         query["client_id"] = None
     elif client_id:
         query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
     if estado:
         if estado not in ESTADOS_WORK_ORDER:
             raise HTTPException(status_code=400, detail="Estado invalido")
@@ -3487,16 +3525,42 @@ async def create_work_order(
     """Crea la cabecera de un parte. Necesita exactamente uno de
     client_id (cliente registrado) o client_libre (nombre escrito a mano,
     para cuando el cliente aun no esta dado de alta - el admin lo puede
-    vincular despues)."""
+    vincular despues). El centro es opcional en ambos casos: si se pasa
+    centro_id debe pertenecer al cliente registrado; si el centro no esta
+    de alta se puede usar centro_libre en su lugar."""
     if bool(payload.client_id) == bool((payload.client_libre or "").strip()):
         raise HTTPException(
             status_code=400,
             detail="Indica exactamente uno: client_id (cliente registrado) o client_libre",
         )
+    if payload.centro_id and payload.centro_libre:
+        raise HTTPException(
+            status_code=400, detail="Indica como mucho uno: centro_id o centro_libre"
+        )
 
     cliente = None
     if payload.client_id:
         cliente = await _cargar_cliente_por_id(payload.client_id)
+
+    centro = None
+    if payload.centro_id:
+        centro = await db.centros.find_one({"id": payload.centro_id, "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        if cliente and centro.get("client_id") != cliente["id"]:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente indicado"
+            )
+
+    if payload.usa_zonas and payload.rejilla_tipo == "semanal":
+        if not payload.semana_inicio:
+            raise HTTPException(
+                status_code=400, detail="Falta semana_inicio para la rejilla semanal"
+            )
+        if date.fromisoformat(payload.semana_inicio).weekday() != 0:
+            raise HTTPException(
+                status_code=400, detail="semana_inicio debe ser un lunes"
+            )
 
     budget_number = None
     if payload.budget_template_id:
@@ -3511,12 +3575,16 @@ async def create_work_order(
         "client_id": cliente["id"] if cliente else None,
         "client_slug": cliente["slug"] if cliente else None,
         "client_libre": None if cliente else payload.client_libre.strip(),
+        "centro_id": centro["id"] if centro else None,
+        "centro_libre": None if centro else ((payload.centro_libre or "").strip() or None),
         "budget_template_id": payload.budget_template_id,
         "budget_number": budget_number,
         "titulo": payload.titulo.strip(),
         "notas": (payload.notas or "").strip(),
         "usa_zonas": payload.usa_zonas,
         "mes_rejilla": payload.mes_rejilla,
+        "rejilla_tipo": payload.rejilla_tipo if payload.usa_zonas else None,
+        "semana_inicio": payload.semana_inicio if payload.usa_zonas else None,
         "estado": "abierto",
         "creado_por": current_user.get("id") or current_user.get("email") or "?",
         "creado_en": now,
@@ -3569,6 +3637,19 @@ async def update_work_order(
         cliente = await _cargar_cliente_por_id(updates["client_id"])
         updates["client_slug"] = cliente["slug"]
         updates["client_libre"] = None
+
+    if "centro_id" in updates and updates["centro_id"]:
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede vincular el centro")
+        centro = await db.centros.find_one({"id": updates["centro_id"], "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        cliente_del_parte = doc.get("client_id") or updates.get("client_id")
+        if cliente_del_parte and centro.get("client_id") != cliente_del_parte:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente de este parte"
+            )
+        updates["centro_libre"] = None
 
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.work_orders.update_one({"id": work_order_id}, {"$set": updates})
@@ -3880,11 +3961,22 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     X), mapa de zonas a la derecha, y observaciones debajo. Sustituye por
     completo al informe de sesiones (_generar_pdf_parte) para este tipo de
     parte: el cliente no necesita ver duracion, operarios ni firmas aqui."""
-    if doc.get("mes_rejilla"):
+    if doc.get("rejilla_tipo") == "semanal" and doc.get("semana_inicio"):
+        dias = _dias_de_semana(doc["semana_inicio"])
+        _d_ini, _d_fin = date.fromisoformat(dias[0]), date.fromisoformat(dias[-1])
+        year = _d_fin.year
+        periodo_label = "SEMANA"
+        periodo_txt = f"{_d_ini.day} - {_d_fin.day} {_MESES_ES[_d_fin.month - 1]} {_d_fin.year}"
+    elif doc.get("mes_rejilla"):
         year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+        dias = _dias_del_mes(year, month)
+        periodo_label = "MES"
+        periodo_txt = _MESES_ES[month - 1].capitalize()
     else:
         year, month = doc["creado_en"].year, doc["creado_en"].month
-    dias = _dias_del_mes(year, month)
+        dias = _dias_del_mes(year, month)
+        periodo_label = "MES"
+        periodo_txt = _MESES_ES[month - 1].capitalize()
 
     tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
     tareas = [t async for t in tareas_cursor]
@@ -3978,13 +4070,13 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     story.append(banner)
     story.append(Spacer(1, 1))
 
-    # Fila CLIENTE / MES
+    # Fila CLIENTE / MES o SEMANA segun el tipo de rejilla
     info_fila = Table(
         [[
             Paragraph("CLIENTE", label_style),
             Paragraph(_p(cliente["nombre"]) if cliente else "", valor_style),
-            Paragraph("MES", label_style),
-            Paragraph(f"{_MESES_ES[month - 1].capitalize()}", valor_style),
+            Paragraph(periodo_label, label_style),
+            Paragraph(_p(periodo_txt), valor_style),
         ]],
         colWidths=[2.4 * cm, ANCHO_PAGINA - 2 * MARGEN - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
     )
@@ -4258,6 +4350,13 @@ def _dias_del_mes(year: int, month: int) -> List[str]:
     return dias
 
 
+def _dias_de_semana(lunes_iso: str) -> List[str]:
+    """Los 7 dias ISO de la semana que empieza en el lunes dado (Fase 10:
+    rejilla semanal, para trabajos puntuales de varios dias)."""
+    lunes = date.fromisoformat(lunes_iso)
+    return [(lunes + timedelta(days=i)).isoformat() for i in range(7)]
+
+
 async def _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id: str) -> None:
     """Compatibilidad con partes creados antes de este cambio: si la
     rejilla usaba sesiones auto-creadas para guardar las zonas, se migran
@@ -4300,11 +4399,14 @@ async def obtener_rejilla_zonas(
     if not doc.get("usa_zonas"):
         raise HTTPException(status_code=400, detail="Este parte no usa zonas")
 
-    if doc.get("mes_rejilla"):
+    if doc.get("rejilla_tipo") == "semanal" and doc.get("semana_inicio"):
+        dias = _dias_de_semana(doc["semana_inicio"])
+    elif doc.get("mes_rejilla"):
         year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+        dias = _dias_del_mes(year, month)
     else:
         year, month = doc["creado_en"].year, doc["creado_en"].month
-    dias = _dias_del_mes(year, month)
+        dias = _dias_del_mes(year, month)
 
     tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
     tareas = [
