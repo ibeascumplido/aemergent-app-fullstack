@@ -119,12 +119,12 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="work-orders/:id" element={
-                <ProtectedRoute requireBudgets>
+                <ProtectedRoute>
                   <WorkOrderDetailPage />
                 </ProtectedRoute>
               } />
               <Route path="work-orders/:id/rejilla" element={
-                <ProtectedRoute requireBudgets>
+                <ProtectedRoute>
                   <RejillaZonasPage />
                 </ProtectedRoute>
               } />
