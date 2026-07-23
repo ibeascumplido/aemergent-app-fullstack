@@ -19,6 +19,9 @@ import {
   Link2,
   Download,
   MapPin,
+  PenLine,
+  ShieldCheck,
+  Share2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,6 +57,7 @@ import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import SessionDialog from "@/components/SessionDialog";
 import GaleriaFotos from "@/components/GaleriaFotos";
+import SignaturePad from "@/components/SignaturePad";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -90,7 +94,7 @@ const horasDeSesion = (horaInicio, horaFin) => {
 const WorkOrderDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin } = useAuth();
 
   const [parte, setParte] = useState(null);
@@ -109,6 +113,13 @@ const WorkOrderDetailPage = () => {
   const [centroAVincular, setCentroAVincular] = useState("");
   const [dialogVincularCentroOpen, setDialogVincularCentroOpen] = useState(false);
   const [notFound, setNotFound] = useState(false);
+
+  const [dialogFirmaPresencialOpen, setDialogFirmaPresencialOpen] = useState(false);
+  const [nombreFirmaPresencial, setNombreFirmaPresencial] = useState("");
+  const [firmaPresencialDataUrl, setFirmaPresencialDataUrl] = useState(null);
+  const [enviandoFirmaPresencial, setEnviandoFirmaPresencial] = useState(false);
+  const [habilitandoFirma, setHabilitandoFirma] = useState(false);
+  const [compartiendoPdf, setCompartiendoPdf] = useState(false);
 
   // Edicion inline de la cabecera
   const [editandoCabecera, setEditandoCabecera] = useState(false);
@@ -197,11 +208,19 @@ const WorkOrderDetailPage = () => {
   }, [id]);
 
   // Acceso rapido desde el dashboard (Parte de trabajo): si llega
-  // ?nueva=1 y el parte ya cargo, abre "Nueva sesion" directamente.
+  // ?nueva=1 y el parte ya cargo, abre "Nueva sesion" directamente. Se
+  // limpia el parametro justo despues de usarlo (una sola vez), porque
+  // si no cada guardado posterior (que recarga "parte") lo volveria a
+  // disparar y la reabriria sola cada vez que se guarda una sesion.
   useEffect(() => {
     if (!loading && parte && searchParams.get("nueva") === "1") {
       setSesionEditando(null);
       setSessionDialogOpen(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("nueva");
+        return next;
+      }, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, parte]);
@@ -343,6 +362,94 @@ const WorkOrderDetailPage = () => {
       toast.error("No se pudo generar el PDF");
     } finally {
       setDescargandoPdf(false);
+    }
+  };
+
+  // Compartir PDF (Fase 11): usa el selector nativo del sistema
+  // (navigator.share) para que el propio movil ofrezca email, WhatsApp,
+  // Bluetooth o cualquier otra app instalada - eso no se puede programar
+  // canal por canal desde una web, pero el selector del sistema ya lo
+  // hace por nosotros. Si el navegador no lo soporta (tipico en
+  // ordenador), cae automaticamente a la descarga de siempre.
+  const handleCompartirPdf = async () => {
+    setCompartiendoPdf(true);
+    try {
+      const res = await axios.get(`${API}/work-orders/${id}/pdf`, { responseType: "blob" });
+      const archivo = new File([res.data], `parte-${id.slice(0, 8)}.pdf`, {
+        type: "application/pdf",
+      });
+      if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+        await navigator.share({
+          files: [archivo],
+          title: parte.titulo,
+          text: `Parte de trabajo: ${parte.titulo}`,
+        });
+      } else {
+        const blobUrl = window.URL.createObjectURL(archivo);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = archivo.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(blobUrl);
+        toast.info("Tu navegador no permite compartir directamente: se ha descargado el PDF");
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") {
+        console.error("Error compartiendo PDF:", err);
+        toast.error("No se pudo compartir el PDF");
+      }
+    } finally {
+      setCompartiendoPdf(false);
+    }
+  };
+
+  // Firma presencial (Fase 11): el operario le pasa el movil al cliente
+  // para que firme ahi mismo, sin depender del enlace remoto.
+  const abrirFirmaPresencial = () => {
+    setNombreFirmaPresencial("");
+    setFirmaPresencialDataUrl(null);
+    setDialogFirmaPresencialOpen(true);
+  };
+
+  const enviarFirmaPresencial = async () => {
+    if (!nombreFirmaPresencial.trim()) {
+      toast.error("Escribe el nombre de quien firma");
+      return;
+    }
+    if (!firmaPresencialDataUrl) {
+      toast.error("Falta la firma");
+      return;
+    }
+    setEnviandoFirmaPresencial(true);
+    try {
+      await axios.post(`${API}/work-orders/${id}/firma-presencial`, {
+        nombre: nombreFirmaPresencial.trim(),
+        firma: firmaPresencialDataUrl,
+      });
+      toast.success("Firma registrada");
+      setDialogFirmaPresencialOpen(false);
+      await fetchParte();
+    } catch (err) {
+      console.error("Error en firma presencial:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo registrar la firma");
+    } finally {
+      setEnviandoFirmaPresencial(false);
+    }
+  };
+
+  const handleHabilitarFirma = async () => {
+    setHabilitandoFirma(true);
+    try {
+      await axios.post(`${API}/work-orders/${id}/habilitar-nueva-firma`);
+      toast.success("Nueva firma habilitada");
+      await fetchParte();
+    } catch (err) {
+      console.error("Error habilitando firma:", err);
+      toast.error("No se pudo habilitar");
+    } finally {
+      setHabilitandoFirma(false);
     }
   };
 
@@ -712,6 +819,16 @@ const WorkOrderDetailPage = () => {
         <Button
           variant="outline"
           size="sm"
+          onClick={abrirFirmaPresencial}
+          className="border-slate-200"
+          data-testid="firma-presencial-btn"
+        >
+          <PenLine className="w-4 h-4 mr-2" />
+          Firma presencial
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleDescargarPdf}
           disabled={descargandoPdf}
           className="border-slate-200"
@@ -719,6 +836,17 @@ const WorkOrderDetailPage = () => {
         >
           <Download className="w-4 h-4 mr-2" />
           {descargandoPdf ? "Generando PDF..." : "Descargar PDF"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCompartirPdf}
+          disabled={compartiendoPdf}
+          className="border-slate-200"
+          data-testid="compartir-pdf-btn"
+        >
+          <Share2 className="w-4 h-4 mr-2" />
+          {compartiendoPdf ? "Preparando..." : "Compartir con el cliente"}
         </Button>
         <Button
           variant="outline"
@@ -796,14 +924,33 @@ const WorkOrderDetailPage = () => {
         )}
       </div>
 
-      {parte.firma_cliente_token && (
-        <div className="mb-6">
+      {(parte.firma_cliente_token || parte.firma_cliente) && (
+        <div className="mb-6 flex items-center gap-2 flex-wrap">
           {parte.firma_cliente ? (
-            <div className="inline-flex items-center gap-2 text-sm text-emerald-700 font-medium bg-emerald-50 px-3 py-1.5 rounded-lg">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              Firmado por el cliente: {parte.firma_cliente_nombre} (
-              {new Date(parte.firma_cliente_en).toLocaleDateString("es-ES")})
-            </div>
+            <>
+              <div className="inline-flex items-center gap-2 text-sm text-emerald-700 font-medium bg-emerald-50 px-3 py-1.5 rounded-lg">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                Firmado por el cliente: {parte.firma_cliente_nombre} (
+                {new Date(parte.firma_cliente_en).toLocaleDateString("es-ES")})
+              </div>
+              {parte.firma_habilitada_de_nuevo ? (
+                <span className="text-xs text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full">
+                  Nueva firma habilitada: el cliente ya puede volver a firmar
+                </span>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleHabilitarFirma}
+                  disabled={habilitandoFirma}
+                  className="text-slate-500"
+                  data-testid="habilitar-nueva-firma-btn"
+                >
+                  <ShieldCheck className="w-4 h-4 mr-1.5" />
+                  {habilitandoFirma ? "Habilitando..." : "Habilitar nueva firma"}
+                </Button>
+              )}
+            </>
           ) : (
             <div className="inline-flex items-center gap-2 text-sm text-amber-700 font-medium bg-amber-50 px-3 py-1.5 rounded-lg">
               <Link2 className="w-4 h-4 shrink-0" />
@@ -1245,6 +1392,55 @@ const WorkOrderDetailPage = () => {
               data-testid="confirmar-vincular-centro-btn"
             >
               {vinculandoCentro ? "Vinculando..." : "Vincular"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Firma presencial (Fase 11): el operario le pasa el movil al
+          cliente para que firme aqui mismo, sin depender del enlace. */}
+      <Dialog
+        open={dialogFirmaPresencialOpen}
+        onOpenChange={(v) => !enviandoFirmaPresencial && setDialogFirmaPresencialOpen(v)}
+      >
+        <DialogContent className="max-w-sm max-h-[85vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-2 shrink-0">
+            <DialogTitle>Firma presencial del cliente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 overflow-y-auto min-h-0 flex-1 px-6 py-2">
+            <p className="text-xs text-slate-400">
+              Pásale el móvil al cliente para que firme aquí directamente.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="nombre-firma-presencial">Nombre de quien firma</Label>
+              <Input
+                id="nombre-firma-presencial"
+                value={nombreFirmaPresencial}
+                onChange={(e) => setNombreFirmaPresencial(e.target.value)}
+                placeholder="Nombre y apellidos"
+                data-testid="nombre-firma-presencial-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Firma</Label>
+              <SignaturePad value={null} onChange={setFirmaPresencialDataUrl} />
+            </div>
+          </div>
+          <DialogFooter className="p-6 pt-3 border-t border-slate-100 shrink-0">
+            <Button
+              variant="ghost"
+              onClick={() => setDialogFirmaPresencialOpen(false)}
+              disabled={enviandoFirmaPresencial}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={enviarFirmaPresencial}
+              disabled={enviandoFirmaPresencial}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="confirmar-firma-presencial-btn"
+            >
+              {enviandoFirmaPresencial ? "Guardando..." : "Confirmar firma"}
             </Button>
           </DialogFooter>
         </DialogContent>
