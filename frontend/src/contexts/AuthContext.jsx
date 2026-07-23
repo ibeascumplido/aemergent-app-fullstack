@@ -35,15 +35,50 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
       return;
     }
-    
+
+    const intentar = () => axios.get(`${API}/auth/me`);
+
     try {
-      const response = await axios.get(`${API}/auth/me`);
+      const response = await intentar();
       setUser(response.data);
       setIsAuthenticated(true);
     } catch (error) {
-      localStorage.removeItem('session_token');
-      setUser(null);
-      setIsAuthenticated(false);
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        // El propio servidor confirma que el token no es valido: aqui
+        // si toca cerrar sesion de verdad.
+        localStorage.removeItem('session_token');
+        setUser(null);
+        setIsAuthenticated(false);
+      } else {
+        // Sin respuesta del servidor (error de red, timeout...): un
+        // solo reintento tras una breve espera antes de rendirse, util
+        // sobre todo en la carga inicial de la pagina con una conexion
+        // inestable (muy comun en movil). Si el reintento tambien
+        // falla, NO se cierra sesion (ver comentario en checkAuth) -
+        // simplemente se deja el estado como estaba.
+        await new Promise((r) => setTimeout(r, 1200));
+        try {
+          const response = await intentar();
+          setUser(response.data);
+          setIsAuthenticated(true);
+        } catch (error2) {
+          const status2 = error2?.response?.status;
+          if (status2 === 401 || status2 === 403) {
+            localStorage.removeItem('session_token');
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+          // Fase 12: solo cerrar sesion (borrar el token) cuando el
+          // propio servidor confirma que el token no es valido
+          // (401/403). Un fallo de red momentaneo (muy comun en movil:
+          // datos moviles, cambio entre wifi/datos, o Android recargando
+          // la pestana en segundo plano) NO significa que la sesion haya
+          // caducado - antes esto borraba el token ante CUALQUIER error,
+          // causando cierres de sesion intermitentes e injustificados
+          // especialmente en movil.
+        }
+      }
     } finally {
       setLoading(false);
     }
