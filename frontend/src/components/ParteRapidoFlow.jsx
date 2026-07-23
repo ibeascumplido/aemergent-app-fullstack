@@ -240,12 +240,12 @@ const ParteRapidoFlow = () => {
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !continuando && setDialogOpen(v)}>
-        <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-sm max-h-[85vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-2 shrink-0">
             <DialogTitle>Nuevo parte de trabajo</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto min-h-0 flex-1 px-6 py-2">
             {/* Tipo de parte */}
             <div className="space-y-1.5">
               <Label>Tipo de parte</Label>
@@ -492,7 +492,7 @@ const ParteRapidoFlow = () => {
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="p-6 pt-3 border-t border-slate-100 shrink-0">
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={continuando}>
               Cancelar
             </Button>
