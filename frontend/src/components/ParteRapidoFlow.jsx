@@ -232,15 +232,15 @@ const ParteRapidoFlow = () => {
       <button
         type="button"
         onClick={abrir}
-        className="mb-8 flex items-center justify-center gap-3 w-full py-4 rounded-xl text-white font-semibold text-lg shadow-sm transition-colors bg-indigo-600 hover:bg-indigo-700"
+        className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-lg border border-indigo-200 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-50 transition-colors"
         data-testid="parte-rapido-btn"
       >
-        <ClipboardList className="w-6 h-6" />
-        Parte de trabajo
+        <ClipboardList className="w-5 h-5" />
+        <span className="text-xs font-medium">Parte de trabajo</span>
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !continuando && setDialogOpen(v)}>
-        <DialogContent className="max-w-sm max-h-[85vh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
           <DialogHeader className="p-6 pb-2 shrink-0">
             <DialogTitle>Nuevo parte de trabajo</DialogTitle>
           </DialogHeader>

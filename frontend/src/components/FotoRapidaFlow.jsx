@@ -202,7 +202,7 @@ const FotoRapidaFlow = () => {
   if (paso === "boton") {
     return (
       <label
-        className="mb-8 flex items-center justify-center gap-3 w-full py-4 rounded-xl text-white font-semibold text-lg shadow-sm transition-colors bg-red-500 hover:bg-red-600 cursor-pointer"
+        className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-lg border border-red-200 bg-red-50/50 text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
         data-testid="foto-rapida-btn"
       >
         <input
@@ -215,15 +215,15 @@ const FotoRapidaFlow = () => {
           }}
           className="hidden"
         />
-        <Camera className="w-6 h-6" />
-        Foto rápida
+        <Camera className="w-5 h-5" />
+        <span className="text-xs font-medium">Foto rápida</span>
       </label>
     );
   }
 
   if (paso === "capturando") {
     return (
-      <div className="mb-8 border border-slate-200 rounded-xl p-4" data-testid="sesion-captura">
+      <div className="col-span-3 mb-8 border border-slate-200 rounded-xl p-4" data-testid="sesion-captura">
         <div className="flex items-center justify-between mb-3">
           <p className="font-semibold text-slate-900">
             {fotos.length} {fotos.length === 1 ? "foto" : "fotos"}

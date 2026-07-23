@@ -400,7 +400,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onS
   return (
     <Dialog open={open} onOpenChange={(v) => !guardando && onOpenChange(v)}>
       <DialogContent
-        className="max-w-lg max-h-[85vh] overflow-y-auto"
+        className="max-w-lg max-h-[85dvh] overflow-y-auto"
         data-testid="session-dialog"
       >
         <DialogHeader>
