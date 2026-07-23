@@ -566,7 +566,7 @@ const ClientLocationsCalendarPage = () => {
 
       {/* Dialogo crear/editar visita */}
       <Dialog open={dialogOpen} onOpenChange={(v) => !guardando && setDialogOpen(v)}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editando ? "Editar visita" : "Nueva visita"}</DialogTitle>
           </DialogHeader>
@@ -783,7 +783,7 @@ const ClientLocationsCalendarPage = () => {
           funciona correctamente en el Dialog principal (max-h + 
           overflow-y-auto), sin el conflicto de scroll anidado. */}
       <Dialog open={dialogUbicacionOpen} onOpenChange={setDialogUbicacionOpen}>
-        <DialogContent className="max-w-md max-h-[80vh] flex flex-col p-0">
+        <DialogContent className="max-w-md max-h-[80dvh] flex flex-col p-0">
           <DialogHeader className="p-4 pb-2">
             <DialogTitle>Elegir ubicación</DialogTitle>
           </DialogHeader>

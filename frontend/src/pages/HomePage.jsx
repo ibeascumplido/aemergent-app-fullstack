@@ -179,9 +179,13 @@ const HomePage = () => {
 )}
 
       {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
-      {!isPending && <FotoRapidaFlow />}
-      {!isPending && <ParteRapidoFlow />}
-      {!isPending && <SolicitudRopaFlow />}
+      {!isPending && (
+        <div className="grid grid-cols-3 gap-2 mb-8">
+          <FotoRapidaFlow />
+          <ParteRapidoFlow />
+          <SolicitudRopaFlow />
+        </div>
+      )}
 
       {isAdmin && <FotosPendientesAviso />}
 

@@ -1403,7 +1403,7 @@ const WorkOrderDetailPage = () => {
         open={dialogFirmaPresencialOpen}
         onOpenChange={(v) => !enviandoFirmaPresencial && setDialogFirmaPresencialOpen(v)}
       >
-        <DialogContent className="max-w-sm max-h-[85vh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
           <DialogHeader className="p-6 pb-2 shrink-0">
             <DialogTitle>Firma presencial del cliente</DialogTitle>
           </DialogHeader>
