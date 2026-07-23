@@ -95,6 +95,7 @@ const WorkOrderDetailPage = () => {
 
   const [parte, setParte] = useState(null);
   const [cliente, setCliente] = useState(null);
+  const [centro, setCentro] = useState(null);
   const [presupuestos, setPresupuestos] = useState([]);
   const [operariosCatalogo, setOperariosCatalogo] = useState([]);
   const [tareasCatalogo, setTareasCatalogo] = useState([]);
@@ -103,6 +104,10 @@ const WorkOrderDetailPage = () => {
   const [vinculandoCliente, setVinculandoCliente] = useState(false);
   const [clienteAVincular, setClienteAVincular] = useState("");
   const [dialogVincularOpen, setDialogVincularOpen] = useState(false);
+  const [centrosParaVincular, setCentrosParaVincular] = useState([]);
+  const [vinculandoCentro, setVinculandoCentro] = useState(false);
+  const [centroAVincular, setCentroAVincular] = useState("");
+  const [dialogVincularCentroOpen, setDialogVincularCentroOpen] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
   // Edicion inline de la cabecera
@@ -171,6 +176,13 @@ const WorkOrderDetailPage = () => {
           if (cancelado) return;
           setCliente(cRes.data);
           setPresupuestos(bRes.data);
+        }
+        if (data.centro_id) {
+          const cenRes = await axios
+            .get(`${API}/centros/${data.centro_id}`)
+            .catch(() => ({ data: null }));
+          if (cancelado) return;
+          setCentro(cenRes.data);
         }
       } catch (err) {
         // El cliente es informativo (link de vuelta); si falla seguimos igualmente
@@ -400,6 +412,42 @@ const WorkOrderDetailPage = () => {
     }
   };
 
+  // --- Vincular a un centro registrado (parte de centro libre) ----------
+
+  const abrirDialogVincularCentro = async () => {
+    setCentroAVincular("");
+    setDialogVincularCentroOpen(true);
+    if (cliente?.slug && centrosParaVincular.length === 0) {
+      try {
+        const res = await axios.get(`${API}/clients/${cliente.slug}/centros`);
+        setCentrosParaVincular(res.data);
+      } catch (err) {
+        console.error("Error cargando centros:", err);
+      }
+    }
+  };
+
+  const vincularCentro = async () => {
+    if (!centroAVincular) {
+      toast.error("Selecciona un centro");
+      return;
+    }
+    setVinculandoCentro(true);
+    try {
+      const res = await axios.patch(`${API}/work-orders/${id}`, { centro_id: centroAVincular });
+      setParte(res.data);
+      const cenRes = await axios.get(`${API}/centros/${res.data.centro_id}`);
+      setCentro(cenRes.data);
+      toast.success("Centro vinculado");
+      setDialogVincularCentroOpen(false);
+    } catch (err) {
+      console.error("Error vinculando centro:", err);
+      toast.error("No se pudo vincular el centro");
+    } finally {
+      setVinculandoCentro(false);
+    }
+  };
+
   const eliminarSesion = async () => {
     if (!sesionABorrar) return;
     setBorrandoSesion(true);
@@ -523,6 +571,31 @@ const WorkOrderDetailPage = () => {
                           onClick={abrirDialogVincular}
                           className="ml-1 underline hover:text-amber-900"
                           data-testid="vincular-cliente-btn"
+                        >
+                          Vincular
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {centro && (
+                    <span className="text-sm text-slate-500 inline-flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5" />
+                      {centro.nombre}
+                    </span>
+                  )}
+                  {!centro && parte.centro_libre && (
+                    <span
+                      className="text-sm inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full"
+                      data-testid="badge-centro-libre"
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      {parte.centro_libre} (sin vincular)
+                      {isAdmin && cliente && (
+                        <button
+                          type="button"
+                          onClick={abrirDialogVincularCentro}
+                          className="ml-1 underline hover:text-amber-900"
+                          data-testid="vincular-centro-btn"
                         >
                           Vincular
                         </button>
@@ -1115,6 +1188,63 @@ const WorkOrderDetailPage = () => {
               data-testid="confirmar-vincular-btn"
             >
               {vinculandoCliente ? "Vinculando..." : "Vincular"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vincular parte de centro libre a un centro registrado */}
+      <Dialog
+        open={dialogVincularCentroOpen}
+        onOpenChange={(v) => !vinculandoCentro && setDialogVincularCentroOpen(v)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Vincular a un centro registrado</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">
+              Este parte se creó para el centro{" "}
+              <span className="font-medium">"{parte.centro_libre}"</span>, que aún no está
+              registrado. Elige el centro real al que corresponde.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Centro</Label>
+              <Select value={centroAVincular} onValueChange={setCentroAVincular}>
+                <SelectTrigger data-testid="vincular-centro-select">
+                  <SelectValue placeholder="Selecciona..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {centrosParaVincular.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-slate-400">
+                      Este cliente no tiene centros registrados todavía.
+                    </p>
+                  ) : (
+                    centrosParaVincular.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setDialogVincularCentroOpen(false)}
+              disabled={vinculandoCentro}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={vincularCentro}
+              disabled={vinculandoCentro}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="confirmar-vincular-centro-btn"
+            >
+              {vinculandoCentro ? "Vinculando..." : "Vincular"}
             </Button>
           </DialogFooter>
         </DialogContent>

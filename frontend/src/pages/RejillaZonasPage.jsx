@@ -240,6 +240,14 @@ const RejillaZonasPage = () => {
                 <span className="ml-2 text-slate-400">
                   ·{" "}
                   {(() => {
+                    if (parte.rejilla_tipo === "semanal") {
+                      const fmt = (iso) => {
+                        const [y, m, d] = iso.split("-");
+                        return `${Number(d)} ${MESES_ES[Number(m) - 1].slice(0, 3)}`;
+                      };
+                      const [yFin] = dias[dias.length - 1].split("-");
+                      return `${fmt(dias[0])} - ${fmt(dias[dias.length - 1])} ${yFin}`;
+                    }
                     const [y, m] = dias[0].split("-");
                     return `${MESES_ES[Number(m) - 1]} de ${y}`;
                   })()}
