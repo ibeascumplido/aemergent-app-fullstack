@@ -27,7 +27,6 @@ const PublicSignPage = () => {
 
   const [nombre, setNombre] = useState("");
   const [firma, setFirma] = useState(null);
-  const [reFirmando, setReFirmando] = useState(false);
   const [enviando, setEnviando] = useState(false);
 
   const cargar = async () => {
@@ -49,7 +48,10 @@ const PublicSignPage = () => {
   }, [token]);
 
   const yaFirmado = !!parte?.firma_cliente;
-  const mostrandoFormulario = !yaFirmado || reFirmando;
+  // Fase 11: una vez firmado, solo se puede volver a firmar si un
+  // operario/admin lo ha habilitado desde el propio parte - el cliente
+  // ya NO tiene un boton de "firmar de nuevo" por su cuenta.
+  const puedeFirmar = !yaFirmado || parte?.firma_habilitada_de_nuevo;
 
   const handleFirmar = async () => {
     if (!nombre.trim()) {
@@ -67,7 +69,6 @@ const PublicSignPage = () => {
         firma,
       });
       toast.success("Firma registrada. Gracias.");
-      setReFirmando(false);
       setFirma(null);
       await cargar();
     } catch (err) {
@@ -196,7 +197,7 @@ const PublicSignPage = () => {
 
         <Card className="border-slate-100">
           <CardContent className="p-5 space-y-4">
-            {!mostrandoFormulario ? (
+            {!puedeFirmar ? (
               <>
                 <div className="flex items-center gap-2 text-emerald-600 font-medium text-sm">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -204,19 +205,19 @@ const PublicSignPage = () => {
                   {new Date(parte.firma_cliente_en).toLocaleString("es-ES")}
                 </div>
                 <SignaturePad value={parte.firma_cliente} onChange={() => {}} disabled />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setReFirmando(true)}
-                  className="text-slate-500"
-                  data-testid="volver-a-firmar-btn"
-                >
-                  Firmar de nuevo
-                </Button>
+                <p className="text-xs text-slate-400">
+                  Si hace falta corregir la firma, pide al operario o administrador que
+                  habilite una nueva desde el propio parte.
+                </p>
               </>
             ) : (
               <>
+                {yaFirmado && (
+                  <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                    Se ha habilitado una nueva firma para este parte, sustituyendo a la
+                    anterior.
+                  </p>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="nombre-firma">Tu nombre</Label>
                   <Input
@@ -239,21 +240,6 @@ const PublicSignPage = () => {
                 >
                   {enviando ? "Enviando..." : "Firmar y confirmar"}
                 </Button>
-                {yaFirmado && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setReFirmando(false);
-                      setFirma(null);
-                    }}
-                    disabled={enviando}
-                    className="w-full text-slate-500"
-                  >
-                    Cancelar
-                  </Button>
-                )}
               </>
             )}
           </CardContent>
