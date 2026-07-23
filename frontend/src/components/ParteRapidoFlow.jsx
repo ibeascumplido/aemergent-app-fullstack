@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { ClipboardList } from "lucide-react";
@@ -53,7 +52,6 @@ const formatearRangoSemana = (lunesISO) => {
  * uno o crear otro nuevo.
  */
 const ParteRapidoFlow = () => {
-  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const [tipoParte, setTipoParte] = useState("estandar"); // estandar | rejilla
@@ -218,7 +216,12 @@ const ParteRapidoFlow = () => {
 
       setDialogOpen(false);
       const destino = tipoParte === "rejilla" ? "" : "?nueva=1";
-      navigate(`/work-orders/${workOrderId}${destino}`);
+      // Navegacion de pagina completa (no la de React Router): en movil,
+      // hacer navigate() justo al cerrar este dialogo resultaba fragil
+      // (a veces se quedaba en el dashboard sin entrar al parte). Un
+      // cambio de pagina completo es mas lento pero no puede verse
+      // interrumpido por nada del ciclo de cierre del dialogo.
+      window.location.href = `/work-orders/${workOrderId}${destino}`;
     } catch (err) {
       console.error("Error iniciando el parte:", err);
       toast.error(err?.response?.data?.detail || "No se pudo iniciar el parte");
