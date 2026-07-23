@@ -225,6 +225,22 @@ const WorkOrderDetailPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, parte]);
 
+  // Acceso rapido desde el dashboard (Firma de documentos): si llega
+  // ?firmar=1 abre el dialogo de firma presencial directamente. Mismo
+  // cuidado que con ?nueva=1: se limpia el parametro tras usarlo una
+  // sola vez para que no se reabra en cada recarga posterior del parte.
+  useEffect(() => {
+    if (!loading && parte && searchParams.get("firmar") === "1") {
+      abrirFirmaPresencial();
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("firmar");
+        return next;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, parte]);
+
   const operariosPorId = useMemo(() => {
     const map = {};
     operariosCatalogo.forEach((o) => (map[o.user_id] = o.name));

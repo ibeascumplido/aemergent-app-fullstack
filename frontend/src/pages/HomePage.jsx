@@ -10,6 +10,7 @@ import FotosPendientesAviso from "@/components/FotosPendientesAviso";
 import FotoRapidaFlow from "@/components/FotoRapidaFlow";
 import ParteRapidoFlow from "@/components/ParteRapidoFlow";
 import SolicitudRopaFlow from "@/components/SolicitudRopaFlow";
+import FirmaDocumentosFlow from "@/components/FirmaDocumentosFlow";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -180,10 +181,11 @@ const HomePage = () => {
 
       {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
       {!isPending && (
-        <div className="grid grid-cols-3 gap-2 mb-8">
+        <div className="grid grid-cols-2 gap-3 mb-8">
           <FotoRapidaFlow />
           <ParteRapidoFlow />
           <SolicitudRopaFlow />
+          <FirmaDocumentosFlow />
         </div>
       )}
 
