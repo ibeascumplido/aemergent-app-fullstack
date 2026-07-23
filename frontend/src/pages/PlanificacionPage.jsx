@@ -192,14 +192,34 @@ const PlanificacionPage = () => {
     const rect = e.currentTarget.getBoundingClientRect();
     const PANEL_ANCHO = 220;
     const PANEL_ALTO_ESTIMADO = 280;
+    const MARGEN = 8;
+
     let left = rect.left + window.scrollX;
     if (left + PANEL_ANCHO > window.scrollX + window.innerWidth) {
-      left = window.scrollX + window.innerWidth - PANEL_ANCHO - 8;
+      left = window.scrollX + window.innerWidth - PANEL_ANCHO - MARGEN;
     }
+    if (left < window.scrollX + MARGEN) {
+      left = window.scrollX + MARGEN;
+    }
+
     let top = rect.bottom + window.scrollY + 4;
     if (rect.bottom + PANEL_ALTO_ESTIMADO > window.innerHeight) {
       top = rect.top + window.scrollY - PANEL_ALTO_ESTIMADO - 4;
     }
+    // Clamp definitivo (Fase 12): lo anterior solo "voltea" el panel de
+    // abajo a arriba de la celda, pero si tampoco cabe por arriba (movil
+    // con poca altura disponible, celda cerca del final de mes) el panel
+    // se salia por encima de la pantalla y solo se veian los ultimos 1-2
+    // operarios. Aqui se fuerza a quedarse siempre dentro de la pantalla;
+    // si ni asi cabe entero, el propio panel ya hace scroll interno
+    // (max-h-[280px] overflow-y-auto mas abajo).
+    const minTop = window.scrollY + MARGEN;
+    const maxTop = Math.max(
+      minTop,
+      window.scrollY + window.innerHeight - PANEL_ALTO_ESTIMADO - MARGEN
+    );
+    top = Math.min(Math.max(top, minTop), maxTop);
+
     setPanelAbierto({ fecha, columna, top, left });
   };
 
