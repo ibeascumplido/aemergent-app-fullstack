@@ -202,7 +202,7 @@ const FotoRapidaFlow = () => {
   if (paso === "boton") {
     return (
       <label
-        className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-lg border border-red-200 bg-red-50/50 text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-900 border border-emerald-900/40 hover:border-emerald-700/60 transition-colors cursor-pointer overflow-hidden"
         data-testid="foto-rapida-btn"
       >
         <input
@@ -215,15 +215,24 @@ const FotoRapidaFlow = () => {
           }}
           className="hidden"
         />
-        <Camera className="w-5 h-5" />
-        <span className="text-xs font-medium">Foto rápida</span>
+        <div
+          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
+          style={{ backgroundColor: "#34d399", top: "calc(50% + 6px)" }}
+        />
+        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
+          <Camera
+            className="w-6 h-6 text-emerald-400"
+            style={{ filter: "drop-shadow(0 0 6px rgba(52,211,153,0.7))" }}
+          />
+        </div>
+        <span className="text-sm font-medium text-slate-100">Foto rápida</span>
       </label>
     );
   }
 
   if (paso === "capturando") {
     return (
-      <div className="col-span-3 mb-8 border border-slate-200 rounded-xl p-4" data-testid="sesion-captura">
+      <div className="col-span-2 mb-8 border border-slate-200 rounded-xl p-4" data-testid="sesion-captura">
         <div className="flex items-center justify-between mb-3">
           <p className="font-semibold text-slate-900">
             {fotos.length} {fotos.length === 1 ? "foto" : "fotos"}

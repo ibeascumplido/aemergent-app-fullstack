@@ -88,11 +88,20 @@ const SolicitudRopaFlow = () => {
       <button
         type="button"
         onClick={abrir}
-        className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-lg border border-amber-200 bg-amber-50/50 text-amber-700 hover:bg-amber-50 transition-colors"
+        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-purple-950 via-slate-900 to-slate-900 border border-purple-900/40 hover:border-purple-700/60 transition-colors overflow-hidden"
         data-testid="solicitud-ropa-btn"
       >
-        <Shirt className="w-5 h-5" />
-        <span className="text-xs font-medium">Solicitud de ropa</span>
+        <div
+          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
+          style={{ backgroundColor: "#c084fc", top: "calc(50% + 6px)" }}
+        />
+        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
+          <Shirt
+            className="w-6 h-6 text-purple-400"
+            style={{ filter: "drop-shadow(0 0 6px rgba(192,132,252,0.7))" }}
+          />
+        </div>
+        <span className="text-sm font-medium text-slate-100">Solicitud de ropa</span>
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !enviando && setDialogOpen(v)}>

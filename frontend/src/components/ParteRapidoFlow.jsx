@@ -232,11 +232,20 @@ const ParteRapidoFlow = () => {
       <button
         type="button"
         onClick={abrir}
-        className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-lg border border-indigo-200 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-50 transition-colors"
+        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-sky-950 via-slate-900 to-slate-900 border border-sky-900/40 hover:border-sky-700/60 transition-colors overflow-hidden"
         data-testid="parte-rapido-btn"
       >
-        <ClipboardList className="w-5 h-5" />
-        <span className="text-xs font-medium">Parte de trabajo</span>
+        <div
+          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
+          style={{ backgroundColor: "#38bdf8", top: "calc(50% + 6px)" }}
+        />
+        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
+          <ClipboardList
+            className="w-6 h-6 text-sky-400"
+            style={{ filter: "drop-shadow(0 0 6px rgba(56,189,248,0.7))" }}
+          />
+        </div>
+        <span className="text-sm font-medium text-slate-100">Parte de trabajo</span>
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !continuando && setDialogOpen(v)}>
