@@ -480,18 +480,35 @@ const ParteRapidoFlow = () => {
                 {cargandoPartes ? (
                   <p className="text-xs text-slate-400">Buscando partes abiertos...</p>
                 ) : partesAbiertos && partesAbiertos.length > 0 ? (
-                  <Select value={parteSeleccionado} onValueChange={setParteSeleccionado}>
-                    <SelectTrigger data-testid="parte-existente-select">
-                      <SelectValue placeholder="Elige un parte abierto..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {partesAbiertos.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.titulo}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-1.5" data-testid="lista-partes-existentes">
+                    {partesAbiertos.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setParteSeleccionado(p.id)}
+                        className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                          parteSeleccionado === p.id
+                            ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300"
+                        }`}
+                        data-testid={`parte-existente-opcion-${p.id}`}
+                      >
+                        {p.titulo}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setParteSeleccionado("")}
+                      className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                        !parteSeleccionado
+                          ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium"
+                          : "border-dashed border-slate-200 text-slate-400 hover:border-slate-300"
+                      }`}
+                      data-testid="crear-parte-nuevo-opcion"
+                    >
+                      + Crear uno nuevo
+                    </button>
+                  </div>
                 ) : (
                   <p className="text-xs text-slate-400">
                     No hay partes abiertos para esta combinación: se creará uno nuevo.
