@@ -25,6 +25,11 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.utils import ImageReader
+from pypdf import PdfReader, PdfWriter
+import pypdfium2 as pdfium
+from PIL import Image as PILImage
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -1702,6 +1707,291 @@ async def _borrar_logo_cloudinary(public_id: Optional[str]) -> None:
         await asyncio.to_thread(cloudinary.uploader.destroy, public_id)
     except Exception:
         logger.warning("No se pudo borrar un logo antiguo de Cloudinary", exc_info=True)
+
+
+async def _subir_pdf_cloudinary(pdf_bytes: bytes, carpeta: str) -> tuple:
+    """Sube un PDF (bytes crudos) a Cloudinary como recurso 'raw'.
+    Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            pdf_bytes,
+            folder=carpeta,
+            resource_type="raw",
+        )
+    except Exception as e:
+        logger.error("Error subiendo PDF a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el PDF") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
+async def _borrar_pdf_cloudinary(public_id: Optional[str]) -> None:
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(cloudinary.uploader.destroy, public_id, resource_type="raw")
+    except Exception:
+        logger.warning("No se pudo borrar un PDF antiguo de Cloudinary", exc_info=True)
+
+
+# =====================================================================
+# DOCUMENTOS PARA FIRMAR (Fase 14)
+# ---------------------------------------------------------------------
+# Subir un PDF cualquiera (contrato, albaran externo, etc.) y firmarlo
+# desde el movil colocando la firma en el punto EXACTO de la pagina que
+# se elija - no un sitio fijo. El usuario ve la pagina renderizada como
+# imagen, toca donde quiere la firma, y el backend la incrusta ahi
+# mismo usando pypdf+reportlab (la misma tecnica que un "watermark":
+# se crea una pagina superpuesta solo con la firma en su sitio, y se
+# fusiona sobre la pagina real).
+# =====================================================================
+
+
+def _es_pdf_base64(valor: Optional[str]) -> bool:
+    return bool(valor) and valor.startswith("data:application/pdf")
+
+
+class DocumentoFirmaCreate(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    pdf: str = Field(..., description="Data-URI base64 del PDF original")
+
+
+class DocumentoFirma(BaseModel):
+    id: str
+    nombre: str
+    pdf_url: str
+    pdf_public_id: str
+    num_paginas: int
+    firmado: bool = False
+    firma_pagina: Optional[int] = None
+    firmado_por: Optional[str] = None
+    firmado_por_nombre: Optional[str] = None
+    firmado_en: Optional[datetime] = None
+    pdf_firmado_url: Optional[str] = None
+    pdf_firmado_public_id: Optional[str] = None
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+class FirmarDocumentoPayload(BaseModel):
+    pagina: int = Field(..., ge=0, description="Indice de pagina, empezando en 0")
+    x_frac: float = Field(
+        ..., ge=0, le=1, description="Punto tocado, fraccion del ancho (0=izq, 1=der)"
+    )
+    y_frac: float = Field(
+        ..., ge=0, le=1, description="Punto tocado, fraccion del alto (0=arriba, 1=abajo)"
+    )
+    firma: str = Field(..., description="Data-URI base64 (PNG) de la firma")
+    nombre_firmante: str = Field(..., min_length=1, max_length=200)
+
+
+@api_router.post("/documentos-firma", response_model=DocumentoFirma)
+async def crear_documento_firma(
+    payload: DocumentoFirmaCreate, current_user: dict = Depends(require_approved)
+):
+    if not _es_pdf_base64(payload.pdf):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
+
+    try:
+        _, datos_b64 = payload.pdf.split(",", 1)
+        pdf_bytes = base64.b64decode(datos_b64)
+        num_paginas = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="No se pudo leer el PDF") from e
+
+    url, public_id = await _subir_pdf_cloudinary(pdf_bytes, "inicia-gestion/documentos-firma")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre.strip(),
+        "pdf_url": url,
+        "pdf_public_id": public_id,
+        "num_paginas": num_paginas,
+        "firmado": False,
+        "firma_pagina": None,
+        "firmado_por": None,
+        "firmado_por_nombre": None,
+        "firmado_en": None,
+        "pdf_firmado_url": None,
+        "pdf_firmado_public_id": None,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.documentos_firma.insert_one(doc)
+    return DocumentoFirma(**doc)
+
+
+@api_router.get("/documentos-firma", response_model=List[DocumentoFirma])
+async def list_documentos_firma(
+    solo_pendientes: bool = False, _: dict = Depends(require_approved)
+):
+    query = {}
+    if solo_pendientes:
+        query["firmado"] = False
+    cursor = db.documentos_firma.find(query).sort("creado_en", -1)
+    return [DocumentoFirma(**d) async for d in cursor]
+
+
+@api_router.get("/documentos-firma/{doc_id}", response_model=DocumentoFirma)
+async def obtener_documento_firma(doc_id: str, _: dict = Depends(require_approved)):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return DocumentoFirma(**doc)
+
+
+async def _descargar_bytes(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        resp = await client_http.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
+@api_router.get("/documentos-firma/{doc_id}/pagina/{pagina}")
+async def obtener_pagina_documento(
+    doc_id: str, pagina: int, _: dict = Depends(require_approved)
+):
+    """Renderiza una pagina del PDF como PNG, para que el frontend la
+    muestre y el usuario pueda tocar donde quiere colocar la firma."""
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if pagina < 0 or pagina >= doc["num_paginas"]:
+        raise HTTPException(status_code=400, detail="Numero de pagina invalido")
+
+    try:
+        pdf_bytes = await _descargar_bytes(doc["pdf_url"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="No se pudo descargar el PDF") from e
+
+    def _renderizar():
+        pdf = pdfium.PdfDocument(pdf_bytes)
+        page = pdf[pagina]
+        bitmap = page.render(scale=2.0)
+        img = bitmap.to_pil()
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    try:
+        png_bytes = await asyncio.to_thread(_renderizar)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="No se pudo generar la vista previa") from e
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@api_router.post("/documentos-firma/{doc_id}/firmar", response_model=DocumentoFirma)
+async def firmar_documento(
+    doc_id: str,
+    payload: FirmarDocumentoPayload,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if doc["firmado"]:
+        raise HTTPException(status_code=400, detail="Este documento ya esta firmado")
+    if payload.pagina < 0 or payload.pagina >= doc["num_paginas"]:
+        raise HTTPException(status_code=400, detail="Numero de pagina invalido")
+    if not _es_logo_base64(payload.firma):
+        raise HTTPException(status_code=400, detail="Formato de firma no valido")
+
+    try:
+        pdf_bytes_original = await _descargar_bytes(doc["pdf_url"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="No se pudo descargar el PDF original") from e
+
+    _, firma_b64 = payload.firma.split(",", 1)
+    firma_bytes = base64.b64decode(firma_b64)
+
+    def _incrustar_firma():
+        reader = PdfReader(io.BytesIO(pdf_bytes_original))
+        writer = PdfWriter()
+        pagina_objetivo = reader.pages[payload.pagina]
+        ancho_pt = float(pagina_objetivo.mediabox.width)
+        alto_pt = float(pagina_objetivo.mediabox.height)
+
+        firma_img = PILImage.open(io.BytesIO(firma_bytes))
+        ratio_firma = firma_img.height / firma_img.width
+        ancho_firma_pt = ancho_pt * 0.25
+        alto_firma_pt = ancho_firma_pt * ratio_firma
+
+        # El punto tocado (origen arriba-izquierda, como en pantalla) se
+        # convierte a coordenadas PDF (origen abajo-izquierda), y la
+        # firma se centra sobre ese punto.
+        centro_x = payload.x_frac * ancho_pt
+        centro_y_desde_arriba = payload.y_frac * alto_pt
+        pdf_x = centro_x - ancho_firma_pt / 2
+        pdf_y = (alto_pt - centro_y_desde_arriba) - alto_firma_pt / 2
+        pdf_x = max(0, min(pdf_x, ancho_pt - ancho_firma_pt))
+        pdf_y = max(0, min(pdf_y, alto_pt - alto_firma_pt))
+
+        overlay_buf = io.BytesIO()
+        c = rl_canvas.Canvas(overlay_buf, pagesize=(ancho_pt, alto_pt))
+        c.drawImage(
+            ImageReader(firma_img),
+            pdf_x,
+            pdf_y,
+            width=ancho_firma_pt,
+            height=alto_firma_pt,
+            mask="auto",
+        )
+        c.save()
+        overlay_buf.seek(0)
+        overlay_reader = PdfReader(overlay_buf)
+        pagina_objetivo.merge_page(overlay_reader.pages[0])
+
+        for p in reader.pages:
+            writer.add_page(p)
+
+        salida = io.BytesIO()
+        writer.write(salida)
+        return salida.getvalue()
+
+    try:
+        pdf_firmado_bytes = await asyncio.to_thread(_incrustar_firma)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="No se pudo incrustar la firma") from e
+
+    url_firmado, public_id_firmado = await _subir_pdf_cloudinary(
+        pdf_firmado_bytes, "inicia-gestion/documentos-firma"
+    )
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    await db.documentos_firma.update_one(
+        {"id": doc_id},
+        {
+            "$set": {
+                "firmado": True,
+                "firma_pagina": payload.pagina,
+                "firmado_por": current_user["user_id"],
+                "firmado_por_nombre": (usuario["name"] if usuario else None)
+                or payload.nombre_firmante.strip(),
+                "firmado_en": now,
+                "pdf_firmado_url": url_firmado,
+                "pdf_firmado_public_id": public_id_firmado,
+            }
+        },
+    )
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    return DocumentoFirma(**doc)
+
+
+@api_router.delete("/documentos-firma/{doc_id}")
+async def eliminar_documento_firma(doc_id: str, _: dict = Depends(require_admin)):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_pdf_cloudinary(doc.get("pdf_public_id"))
+    await _borrar_pdf_cloudinary(doc.get("pdf_firmado_public_id"))
+    await db.documentos_firma.delete_one({"id": doc_id})
+    return {"ok": True}
+
 
 
 async def _subir_audio_cloudinary(data_uri: str) -> tuple:
