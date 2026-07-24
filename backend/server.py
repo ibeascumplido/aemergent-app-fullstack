@@ -2986,6 +2986,277 @@ async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
 
 
 # =====================================================================
+# TAREAS PENDIENTES POR CLIENTE/CENTRO (Fase 13)
+# ---------------------------------------------------------------------
+# Checklist compartido admin+operario por cliente (y opcionalmente por
+# un centro concreto de ese cliente). Cualquier aprobado puede crear y
+# marcar como hecha (con foto opcional); solo admin puede borrar. El
+# operario ve automaticamente las tareas de "su jardin de hoy" cruzando
+# con sus asignaciones de Planificacion del dia.
+# =====================================================================
+
+
+class TareaCentroCreate(BaseModel):
+    client_id: str
+    centro_id: Optional[str] = Field(
+        None, description="Si se indica, la tarea es especifica de ese centro. Si se "
+        "omite, aplica a todo el cliente en general."
+    )
+    descripcion: str = Field(..., min_length=1, max_length=500)
+    prioridad: int = Field(3, ge=1, le=5, description="1 (baja) a 5 (maxima)")
+
+
+class TareaCentroUpdate(BaseModel):
+    descripcion: Optional[str] = Field(None, min_length=1, max_length=500)
+    prioridad: Optional[int] = Field(None, ge=1, le=5)
+
+
+class CompletarTareaPayload(BaseModel):
+    foto: Optional[str] = Field(None, description="Data-URI base64 de la foto, opcional")
+
+
+class TareaCentro(BaseModel):
+    id: str
+    client_id: str
+    centro_id: Optional[str] = None
+    descripcion: str
+    prioridad: int
+    completada: bool = False
+    completada_por: Optional[str] = None
+    completada_por_nombre: Optional[str] = None
+    completada_en: Optional[datetime] = None
+    foto_url: Optional[str] = None
+    foto_public_id: Optional[str] = None
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class TareaCentroConNombres(TareaCentro):
+    client_nombre: str
+    centro_nombre: Optional[str] = None
+
+
+async def _resolver_nombres_tareas(tareas: list) -> List[TareaCentroConNombres]:
+    """Adjunta el nombre del cliente y del centro (si aplica) a cada
+    tarea, para no tener que hacerlo por separado en cada endpoint."""
+    client_ids = {t["client_id"] for t in tareas}
+    centro_ids = {t["centro_id"] for t in tareas if t.get("centro_id")}
+    clientes_map = {}
+    if client_ids:
+        async for c in db.clients.find({"id": {"$in": list(client_ids)}}):
+            clientes_map[c["id"]] = c["nombre"]
+    centros_map = {}
+    if centro_ids:
+        async for ce in db.centros.find({"id": {"$in": list(centro_ids)}}):
+            centros_map[ce["id"]] = ce["nombre"]
+    return [
+        TareaCentroConNombres(
+            **t,
+            client_nombre=clientes_map.get(t["client_id"], "(cliente eliminado)"),
+            centro_nombre=centros_map.get(t["centro_id"]) if t.get("centro_id") else None,
+        )
+        for t in tareas
+    ]
+
+
+@api_router.get("/tareas-centro", response_model=List[TareaCentroConNombres])
+async def list_tareas_centro(
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+    solo_pendientes: bool = False,
+    _: dict = Depends(require_approved),
+):
+    query = {}
+    if client_id:
+        query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
+    if solo_pendientes:
+        query["completada"] = False
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
+    tareas = [t async for t in cursor]
+    return await _resolver_nombres_tareas(tareas)
+
+
+@api_router.get("/tareas-centro/pendientes-todas", response_model=List[TareaCentroConNombres])
+async def list_todas_pendientes(_: dict = Depends(require_admin)):
+    """Vista para el dashboard del administrador: todas las tareas
+    pendientes de cualquier cliente/centro, ordenadas por prioridad."""
+    cursor = db.tareas_centro.find({"completada": False}).sort(
+        [("prioridad", -1), ("creado_en", 1)]
+    )
+    tareas = [t async for t in cursor]
+    return await _resolver_nombres_tareas(tareas)
+
+
+@api_router.get("/tareas-centro/mis-tareas-hoy", response_model=List[TareaCentroConNombres])
+async def mis_tareas_hoy(current_user: dict = Depends(require_approved)):
+    """Cruza las asignaciones de Planificacion de hoy del operario con
+    las tareas pendientes de esos clientes/centros. Si esta asignado a
+    varios sitios el mismo dia, se agregan las tareas de todos."""
+    hoy = date.today().isoformat()
+    asignaciones_cursor = db.asignaciones.find(
+        {"operario_id": current_user["user_id"], "fecha": hoy}
+    )
+    asignaciones = [a async for a in asignaciones_cursor]
+
+    client_ids_hoy = {a["destino_cliente_id"] for a in asignaciones if a.get("destino_cliente_id")}
+    centro_ids_hoy = {a["destino_centro_id"] for a in asignaciones if a.get("destino_centro_id")}
+
+    if not client_ids_hoy and not centro_ids_hoy:
+        return []
+
+    # Si el destino es un centro, tambien hay que resolver su cliente
+    # (para incluir las tareas generales "de todo el cliente")
+    if centro_ids_hoy:
+        async for ce in db.centros.find({"id": {"$in": list(centro_ids_hoy)}}):
+            if ce.get("client_id"):
+                client_ids_hoy.add(ce["client_id"])
+
+    query = {
+        "completada": False,
+        "client_id": {"$in": list(client_ids_hoy)},
+    }
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
+    tareas = [t async for t in cursor]
+    # Filtrar: solo tareas generales del cliente (centro_id None) o del
+    # centro concreto al que esta asignado hoy
+    tareas = [
+        t for t in tareas
+        if not t.get("centro_id") or t["centro_id"] in centro_ids_hoy
+    ]
+    return await _resolver_nombres_tareas(tareas)
+
+
+@api_router.post("/tareas-centro", response_model=TareaCentroConNombres)
+async def crear_tarea_centro(
+    payload: TareaCentroCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if payload.centro_id:
+        centro = await db.centros.find_one({"id": payload.centro_id, "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        if centro.get("client_id") != payload.client_id:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente indicado"
+            )
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
+        "descripcion": payload.descripcion.strip(),
+        "prioridad": payload.prioridad,
+        "completada": False,
+        "completada_por": None,
+        "completada_por_nombre": None,
+        "completada_en": None,
+        "foto_url": None,
+        "foto_public_id": None,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.tareas_centro.insert_one(doc)
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}", response_model=TareaCentroConNombres)
+async def actualizar_tarea_centro(
+    tarea_id: str, payload: TareaCentroUpdate, _: dict = Depends(require_approved)
+):
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if "descripcion" in updates:
+        updates["descripcion"] = updates["descripcion"].strip()
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/completar", response_model=TareaCentroConNombres)
+async def completar_tarea_centro(
+    tarea_id: str,
+    payload: CompletarTareaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Cualquier aprobado puede marcarla como hecha (admin u operario);
+    en la practica es el operario en el sitio quien la da por buena."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    updates = {
+        "completada": True,
+        "completada_por": current_user["user_id"],
+        "completada_por_nombre": usuario["name"] if usuario else "?",
+        "completada_en": datetime.now(timezone.utc),
+        "actualizado_en": datetime.now(timezone.utc),
+    }
+    if payload.foto:
+        if not _es_logo_base64(payload.foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        url, public_id = await _subir_logo_cloudinary(payload.foto)
+        updates["foto_url"] = url
+        updates["foto_public_id"] = public_id
+
+    await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/reabrir", response_model=TareaCentroConNombres)
+async def reabrir_tarea_centro(tarea_id: str, _: dict = Depends(require_approved)):
+    """Deshace una marca de completada por error, sin perder la foto que
+    hubiera (si se vuelve a completar, la foto se sustituye)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {
+            "$set": {
+                "completada": False,
+                "completada_por": None,
+                "completada_por_nombre": None,
+                "completada_en": None,
+                "actualizado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.delete("/tareas-centro/{tarea_id}")
+async def eliminar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    if doc.get("foto_public_id"):
+        await _borrar_logo_cloudinary(doc["foto_public_id"])
+    await db.tareas_centro.delete_one({"id": tarea_id})
+    return {"ok": True}
+
+
+# =====================================================================
 # PLANIFICACION DE EQUIPO (Fase 7)
 # ---------------------------------------------------------------------
 # Rejilla independiente (no el calendario de vacaciones): dias en filas,
