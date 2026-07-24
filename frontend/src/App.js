@@ -29,12 +29,14 @@ import PublicSignPage from "@/pages/PublicSignPage";
 import LoginPage from "@/components/auth/LoginPage";
 import AuthCallback from "@/components/auth/AuthCallback";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 function App() {
   return (
     <div className="App">
-      <AuthProvider>
-        <BrowserRouter>
+      <ErrorBoundary>
+        <AuthProvider>
+          <BrowserRouter>
           <Routes>
             {/* Public routes */}
             <Route path="/login" element={<LoginPage />} />
@@ -133,6 +135,7 @@ function App() {
         </BrowserRouter>
         <Toaster position="top-right" />
       </AuthProvider>
+      </ErrorBoundary>
     </div>
   );
 }
