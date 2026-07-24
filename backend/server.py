@@ -3130,6 +3130,56 @@ async def mis_tareas_hoy(current_user: dict = Depends(require_approved)):
     return await _resolver_nombres_tareas(tareas)
 
 
+class DestinoHoy(BaseModel):
+    client_id: str
+    client_nombre: str
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None
+
+
+@api_router.get("/tareas-centro/mis-destinos-hoy", response_model=List[DestinoHoy])
+async def mis_destinos_hoy(current_user: dict = Depends(require_approved)):
+    """Los destinos (cliente+centro) a los que esta asignado el operario
+    hoy, ya resueltos con nombre - para que la pantalla de 'anadir tarea
+    rapida' sepa a que sitio ligarla sin que el operario tenga que
+    elegirlo el mismo."""
+    hoy = date.today().isoformat()
+    asignaciones_cursor = db.asignaciones.find(
+        {"operario_id": current_user["user_id"], "fecha": hoy}
+    )
+    asignaciones = [a async for a in asignaciones_cursor]
+
+    resultado = []
+    vistos = set()
+    for a in asignaciones:
+        client_id = a.get("destino_cliente_id")
+        centro_id = a.get("destino_centro_id")
+        if centro_id and not client_id:
+            centro = await db.centros.find_one({"id": centro_id})
+            if centro:
+                client_id = centro.get("client_id")
+        if not client_id:
+            continue
+        clave = (client_id, centro_id)
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        cliente = await db.clients.find_one({"id": client_id})
+        centro_nombre = None
+        if centro_id:
+            centro = await db.centros.find_one({"id": centro_id})
+            centro_nombre = centro["nombre"] if centro else None
+        resultado.append(
+            DestinoHoy(
+                client_id=client_id,
+                client_nombre=cliente["nombre"] if cliente else "(cliente eliminado)",
+                centro_id=centro_id,
+                centro_nombre=centro_nombre,
+            )
+        )
+    return resultado
+
+
 @api_router.post("/tareas-centro", response_model=TareaCentroConNombres)
 async def crear_tarea_centro(
     payload: TareaCentroCreate, current_user: dict = Depends(require_approved)
