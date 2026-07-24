@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import CentrosDeCliente from "@/components/CentrosDeCliente";
+import TareasCliente from "@/components/TareasCliente";
 import {
   Dialog,
   DialogContent,
@@ -488,6 +489,8 @@ const ClientDetailPage = () => {
       {cliente && <GaleriaFotos clientId={cliente.id} titulo="Fotografías" />}
 
       {cliente && <CentrosDeCliente clientSlug={slug} />}
+
+      {cliente && <TareasCliente clientId={cliente.id} clientSlug={slug} />}
 
       {/* Tarjeta: Ubicaciones (Fase 6 parte 1) */}
       <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-ubicaciones">

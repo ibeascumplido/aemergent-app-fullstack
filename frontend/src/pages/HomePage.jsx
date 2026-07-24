@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
 import axios from "axios";
 import FotosPendientesAviso from "@/components/FotosPendientesAviso";
+import TareasHoyWidget from "@/components/TareasHoyWidget";
+import TareasAdminWidget from "@/components/TareasAdminWidget";
 import FotoRapidaFlow from "@/components/FotoRapidaFlow";
 import ParteRapidoFlow from "@/components/ParteRapidoFlow";
 import SolicitudRopaFlow from "@/components/SolicitudRopaFlow";
@@ -190,6 +192,9 @@ const HomePage = () => {
       )}
 
       {isAdmin && <FotosPendientesAviso />}
+
+      {!isPending && <TareasHoyWidget />}
+      {isAdmin && <TareasAdminWidget />}
 
       {/* Pending Approval Notice */}
       {isPending && (
