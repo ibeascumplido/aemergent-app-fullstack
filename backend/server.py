@@ -28,8 +28,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfgen import canvas as rl_canvas
 from reportlab.lib.utils import ImageReader
 from pypdf import PdfReader, PdfWriter
-import pypdfium2 as pdfium
 from PIL import Image as PILImage
+try:
+    import pypdfium2 as pdfium
+    _PYPDFIUM2_DISPONIBLE = True
+except Exception:
+    # CRITICO: pypdfium2 incluye un binario precompilado (PDFium) que
+    # puede no ser compatible con el entorno concreto donde corre el
+    # servidor. Si fallara al importarse, NUNCA debe tumbar todo el
+    # backend - solo la vista previa de paginas de un PDF queda
+    # inhabilitada (ver obtener_pagina_documento mas abajo), el resto de
+    # la aplicacion sigue funcionando con total normalidad.
+    pdfium = None
+    _PYPDFIUM2_DISPONIBLE = False
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -1857,6 +1868,11 @@ async def obtener_pagina_documento(
 ):
     """Renderiza una pagina del PDF como PNG, para que el frontend la
     muestre y el usuario pueda tocar donde quiere colocar la firma."""
+    if not _PYPDFIUM2_DISPONIBLE:
+        raise HTTPException(
+            status_code=503,
+            detail="La vista previa de PDF no esta disponible en este servidor ahora mismo.",
+        )
     doc = await db.documentos_firma.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
