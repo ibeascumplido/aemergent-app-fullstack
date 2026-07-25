@@ -51,6 +51,8 @@ const UserDetailPage = () => {
         puesto: res.data.puesto || "",
         fechaUltima: res.data.fecha_ultima_revision_medica || "",
         fechaProxima: res.data.fecha_proxima_revision_medica || "",
+        horaProxima: res.data.hora_proxima_revision_medica || "",
+        lugarProxima: res.data.lugar_proxima_revision_medica || "",
         telefono: res.data.telefono || "",
         dni: res.data.dni || "",
         direccion: res.data.direccion || "",
@@ -100,6 +102,8 @@ const UserDetailPage = () => {
         puesto: form.puesto.trim(),
         fecha_ultima_revision_medica: form.fechaUltima || null,
         fecha_proxima_revision_medica: form.fechaProxima || null,
+        hora_proxima_revision_medica: form.horaProxima.trim(),
+        lugar_proxima_revision_medica: form.lugarProxima.trim(),
         telefono: form.telefono.trim(),
         dni: form.dni.trim(),
         direccion: form.direccion.trim(),
@@ -320,8 +324,29 @@ const UserDetailPage = () => {
                 data-testid="fecha-proxima-input"
               />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="hora-proxima">Hora de la cita</Label>
+              <Input
+                id="hora-proxima"
+                type="time"
+                value={form.horaProxima}
+                onChange={(e) => setForm((f) => ({ ...f, horaProxima: e.target.value }))}
+                data-testid="hora-proxima-input"
+              />
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="lugar-proxima">Lugar de la cita</Label>
+              <Input
+                id="lugar-proxima"
+                value={form.lugarProxima}
+                onChange={(e) => setForm((f) => ({ ...f, lugarProxima: e.target.value }))}
+                placeholder="Ej. Clínica Mutua Madrileña, C/ Ejemplo 12, Madrid"
+                data-testid="lugar-proxima-input"
+              />
+            </div>
           </div>
           <p className="text-xs text-slate-400">
+            La cita (fecha, hora y lugar) aparecerá en el calendario del propio trabajador.
             Avisa aquí en la ficha cuando falten {DIAS_AVISO_PREVIO} días o menos para la
             próxima revisión, o si ya se ha pasado la fecha.
           </p>

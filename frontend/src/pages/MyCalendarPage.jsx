@@ -12,6 +12,7 @@ import {
   CheckCircle,
   XCircle,
   MapPin,
+  Stethoscope,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -194,6 +195,19 @@ const MyCalendarPage = () => {
     return vacaciones.find(v => v.fecha === dateStr);
   };
 
+  // Cita de reconocimiento medico (Fase 17): un unico dia por usuario,
+  // guardado directamente en su ficha (fecha/hora/lugar), no en la
+  // coleccion de vacaciones.
+  const citaMedica =
+    user?.fecha_proxima_revision_medica
+      ? {
+          fecha: user.fecha_proxima_revision_medica,
+          hora: user.hora_proxima_revision_medica || "",
+          lugar: user.lugar_proxima_revision_medica || "",
+        }
+      : null;
+  const esCitaMedica = (dateStr) => citaMedica?.fecha === dateStr;
+
   const toggleVacacion = async (dateStr) => {
     if (isPending) {
       toast.error("Tu cuenta está pendiente de aprobación");
@@ -327,6 +341,23 @@ const MyCalendarPage = () => {
                 ) : (
                   <p className="text-xs text-slate-400 px-1">Sin destino asignado</p>
                 )}
+
+                {esCitaMedica(dateStr) && (
+                  <div
+                    className="flex items-start gap-1.5 text-sm text-fuchsia-700 bg-fuchsia-50 rounded-lg px-2 py-1.5 mt-1.5"
+                    data-testid={`cita-medica-${dateStr}`}
+                  >
+                    <Stethoscope className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        Reconocimiento médico{citaMedica.hora ? ` · ${citaMedica.hora}` : ""}
+                      </p>
+                      {citaMedica.lugar && (
+                        <p className="text-xs text-fuchsia-600 truncate">{citaMedica.lugar}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );
@@ -415,6 +446,18 @@ const MyCalendarPage = () => {
                         <span className="truncate">{nombre}</span>
                       </span>
                     ))}
+                  </div>
+                )}
+                {esCitaMedica(dateStr) && (
+                  <div className="mt-0.5 flex justify-center">
+                    <span
+                      className="inline-flex items-center gap-0.5 text-[8px] leading-tight px-1 py-0.5 rounded bg-fuchsia-600 text-white max-w-full truncate"
+                      title={`Reconocimiento médico${citaMedica.hora ? " · " + citaMedica.hora : ""}${citaMedica.lugar ? " · " + citaMedica.lugar : ""}`}
+                      data-testid={`cita-medica-mes-${dateStr}`}
+                    >
+                      <Stethoscope className="w-2 h-2 shrink-0" />
+                      <span className="truncate">Reconocimiento</span>
+                    </span>
                   </div>
                 )}
                 {hasAny && (
