@@ -10,6 +10,7 @@ import {
   Users,
   Calendar as CalendarIcon,
   Filter,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -55,6 +66,8 @@ const AdminCalendarPage = () => {
   const [showActionModal, setShowActionModal] = useState(false);
   const [rejectComment, setRejectComment] = useState("");
   const [pendingCount, setPendingCount] = useState(0);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [borrando, setBorrando] = useState(false);
 
   const fetchVacaciones = useCallback(async () => {
     try {
@@ -131,6 +144,25 @@ const AdminCalendarPage = () => {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selectedVacacion) return;
+    setBorrando(true);
+    try {
+      await axios.delete(`${API}/admin/vacaciones/${selectedVacacion.id}`);
+      toast.success("Día eliminado");
+      fetchVacaciones();
+      fetchResumen();
+      setConfirmDeleteOpen(false);
+      setShowActionModal(false);
+      setSelectedVacacion(null);
+      setRejectComment("");
+    } catch (error) {
+      toast.error("Error al eliminar");
+    } finally {
+      setBorrando(false);
+    }
+  };
+
   const getDaysInMonth = (year, month) => {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
@@ -191,10 +223,8 @@ const AdminCalendarPage = () => {
   };
 
   const handleVacacionClick = (vacacion) => {
-    if (vacacion.status === "pending") {
-      setSelectedVacacion(vacacion);
-      setShowActionModal(true);
-    }
+    setSelectedVacacion(vacacion);
+    setShowActionModal(true);
   };
 
   const handlePrevMonth = () => {
@@ -288,10 +318,9 @@ const AdminCalendarPage = () => {
             return (
               <button
                 key={v.id}
-                onClick={() => isPendingV && handleVacacionClick(v)}
-                className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0 transition-all ${
-                  isPendingV ? "animate-pulse cursor-pointer hover:scale-110" :
-                  isRejectedV ? "opacity-50 cursor-default" : "cursor-default"
+                onClick={() => handleVacacionClick(v)}
+                className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0 transition-all cursor-pointer hover:scale-110 ${
+                  isPendingV ? "animate-pulse" : isRejectedV ? "opacity-50" : ""
                 }`}
                 style={{
                   backgroundColor: bgColor,
@@ -607,15 +636,15 @@ const AdminCalendarPage = () => {
       <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded-full bg-amber-500 animate-pulse"></div>
-          <span>Pendiente (click para aprobar/rechazar)</span>
+          <span>Pendiente (click para aprobar, rechazar o borrar)</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded-full bg-slate-400"></div>
-          <span>Aprobado (color del propio empleado)</span>
+          <span>Aprobado (click para borrar)</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded-full bg-red-500 opacity-50"></div>
-          <span>Rechazado</span>
+          <span>Rechazado (click para borrar)</span>
         </div>
         <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
           <div className="w-4 h-4 rounded-full bg-slate-400" style={{ outline: "2px solid #0f172a", outlineOffset: "1px" }}></div>
@@ -623,11 +652,13 @@ const AdminCalendarPage = () => {
         </div>
       </div>
 
-      {/* Approve/Reject Modal */}
+      {/* Approve/Reject/Delete Modal */}
       <Dialog open={showActionModal} onOpenChange={setShowActionModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Revisar Solicitud</DialogTitle>
+            <DialogTitle>
+              {selectedVacacion?.status === "pending" ? "Revisar solicitud" : "Detalle del día"}
+            </DialogTitle>
           </DialogHeader>
           
           {selectedVacacion && (
@@ -667,23 +698,45 @@ const AdminCalendarPage = () => {
                       })}
                     </p>
                   </div>
+                  <div className="col-span-2">
+                    <p className="text-slate-500">Estado</p>
+                    <p className="font-medium">
+                      {selectedVacacion.status === "pending" && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">
+                          Pendiente
+                        </span>
+                      )}
+                      {selectedVacacion.status === "approved" && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                          Aprobado
+                        </span>
+                      )}
+                      {selectedVacacion.status === "rejected" && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+                          Rechazado
+                        </span>
+                      )}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="comment">Comentario (opcional, solo si rechazas)</Label>
-                <Textarea
-                  id="comment"
-                  value={rejectComment}
-                  onChange={(e) => setRejectComment(e.target.value)}
-                  placeholder="Ej: Ya hay otro compañero esos días..."
-                  rows={2}
-                />
-              </div>
+              {selectedVacacion.status === "pending" && (
+                <div className="space-y-2">
+                  <Label htmlFor="comment">Comentario (opcional, solo si rechazas)</Label>
+                  <Textarea
+                    id="comment"
+                    value={rejectComment}
+                    onChange={(e) => setRejectComment(e.target.value)}
+                    placeholder="Ej: Ya hay otro compañero esos días..."
+                    rows={2}
+                  />
+                </div>
+              )}
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 sm:gap-0 flex-wrap">
             <Button
               variant="outline"
               onClick={() => {
@@ -695,23 +748,66 @@ const AdminCalendarPage = () => {
               Cancelar
             </Button>
             <Button
-              variant="destructive"
-              onClick={() => handleReject(selectedVacacion?.id)}
-              className="bg-red-500 hover:bg-red-600"
+              variant="outline"
+              onClick={() => setConfirmDeleteOpen(true)}
+              className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+              data-testid="btn-borrar-dia"
             >
-              <X className="w-4 h-4 mr-2" />
-              Rechazar
+              <Trash2 className="w-4 h-4 mr-2" />
+              Borrar
             </Button>
-            <Button
-              onClick={() => handleApprove(selectedVacacion?.id)}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              <Check className="w-4 h-4 mr-2" />
-              Aprobar
-            </Button>
+            {selectedVacacion?.status === "pending" && (
+              <>
+                <Button
+                  variant="destructive"
+                  onClick={() => handleReject(selectedVacacion?.id)}
+                  className="bg-red-500 hover:bg-red-600"
+                >
+                  <X className="w-4 h-4 mr-2" />
+                  Rechazar
+                </Button>
+                <Button
+                  onClick={() => handleApprove(selectedVacacion?.id)}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Aprobar
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Confirmacion de borrado: el admin puede borrar cualquier dia
+          (pendiente, aprobado o rechazado) en cualquier momento. */}
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Borrar este día?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedVacacion && (
+                <>
+                  Se eliminará {selectedVacacion.tipo === "vacacion" ? "el día de vacaciones" : "el día libre"} de{" "}
+                  <strong>{selectedVacacion.user_name}</strong> del{" "}
+                  {new Date(selectedVacacion.fecha + "T00:00:00").toLocaleDateString("es-ES")}
+                  , sea cual sea su estado actual. Esta acción no se puede deshacer.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={borrando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={borrando}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {borrando ? "Borrando..." : "Borrar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
