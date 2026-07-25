@@ -4275,6 +4275,9 @@ class WorkOrderUpdate(BaseModel):
 
 class WorkOrder(WorkOrderBase):
     id: str
+    numero: Optional[str] = Field(
+        None, description="Numero correlativo tipo PT-YYYY-MM-DD-NNN, generado al crear el parte"
+    )
     client_slug: Optional[str] = None
     budget_number: Optional[str] = None
     estado: str = "abierto"
@@ -4376,8 +4379,11 @@ class WorkOrderPublicView(BaseModel):
     """Lo minimo necesario para que el cliente revise y firme, sin exponer
     IDs internos, datos de otros clientes ni el propio token."""
 
+    numero: Optional[str] = None
     titulo: str
     cliente_nombre: str
+    cliente_logo_url: Optional[str] = None
+    centro_nombre: Optional[str] = None
     estado: str
     creado_en: datetime
     sessions: List[SesionPublica]
@@ -4410,6 +4416,31 @@ async def _cargar_cliente_por_id(client_id: str) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return doc
+
+
+async def _generar_numero_parte(fecha: datetime) -> str:
+    """PT-YYYY-MM-DD-NNN: NNN es el consecutivo del dia, contando los partes
+    que ya tengan numero asignado ese mismo dia. No es transaccional (bajo
+    volumen esperado), pero es estable: una vez asignado, un parte no
+    cambia de numero."""
+    dia = fecha.strftime("%Y-%m-%d")
+    existentes = await db.work_orders.count_documents(
+        {"numero": {"$regex": f"^PT-{dia}-"}}
+    )
+    return f"PT-{dia}-{existentes + 1:03d}"
+
+
+async def _asegurar_numero_parte(doc: dict) -> str:
+    """Los partes creados antes de tener este campo no tienen numero: se les
+    asigna uno la primera vez que se consultan (usando su fecha de creacion
+    original, no la de hoy) y se guarda para que no vuelva a cambiar."""
+    if doc.get("numero"):
+        return doc["numero"]
+    fecha = doc.get("creado_en") or datetime.now(timezone.utc)
+    numero = await _generar_numero_parte(fecha)
+    await db.work_orders.update_one({"id": doc["id"]}, {"$set": {"numero": numero}})
+    doc["numero"] = numero
+    return numero
 
 
 async def _cargar_parte(work_order_id: str) -> dict:
@@ -4449,6 +4480,7 @@ async def list_work_orders(
 async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)):
     """Detalle del parte incluyendo todas sus sesiones ordenadas por fecha."""
     doc = await _cargar_parte(work_order_id)
+    await _asegurar_numero_parte(doc)
     sessions_cursor = db.work_sessions.find({"work_order_id": work_order_id}).sort(
         [("fecha", 1), ("hora_inicio", 1)]
     )
@@ -4508,8 +4540,10 @@ async def create_work_order(
         budget_number = bud.get("budget_number")
 
     now = datetime.now(timezone.utc)
+    numero = await _generar_numero_parte(now)
     doc = {
         "id": str(uuid.uuid4()),
+        "numero": numero,
         "client_id": cliente["id"] if cliente else None,
         "client_slug": cliente["slug"] if cliente else None,
         "client_libre": None if cliente else payload.client_libre.strip(),
@@ -4630,7 +4664,19 @@ async def generar_enlace_firma(
 async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
     """Arma la vista publica de un parte: resuelve nombres de operarios/tareas
     y filtra cada sesion segun su campo visibilidad."""
-    cliente = await db.clients.find_one({"id": doc["client_id"]})
+    await _asegurar_numero_parte(doc)
+    cliente = await db.clients.find_one({"id": doc["client_id"]}) if doc.get("client_id") else None
+    centro = (
+        await db.client_locations.find_one({"id": doc["centro_id"]})
+        if doc.get("centro_id")
+        else None
+    )
+    cliente_nombre = (
+        (cliente["nombre"] if cliente else None)
+        or doc.get("client_libre")
+        or (centro["nombre"] if centro else None)
+        or ""
+    )
     sessions_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort(
         [("fecha", 1), ("hora_inicio", 1)]
     )
@@ -4691,8 +4737,11 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         sessions_publicas.append(SesionPublica(**item))
 
     return WorkOrderPublicView(
+        numero=doc.get("numero"),
         titulo=doc["titulo"],
-        cliente_nombre=cliente["nombre"] if cliente else "",
+        cliente_nombre=cliente_nombre,
+        cliente_logo_url=cliente.get("logo_url") if cliente else None,
+        centro_nombre=centro["nombre"] if centro else None,
         estado=doc["estado"],
         creado_en=doc["creado_en"],
         sessions=sessions_publicas,
@@ -4833,88 +4882,270 @@ def _decode_firma_pdf(
         return None
 
 
+_COLOR_MARCA = colors.HexColor("#AF1A1C")
+_COLOR_MARCA_SUAVE = colors.HexColor("#FDF2F2")
+_LOGO_INICIA_PATH = ROOT_DIR / "assets" / "logo_inicia.png"
+
+
+def _logo_inicia_image(max_width_cm: float = 4.2, max_height_cm: float = 1.4):
+    """Logo de la empresa (Inicia Facility Management) para la cabecera del
+    PDF. Si el archivo no esta presente en el deploy, devuelve None y el
+    PDF se genera igualmente (solo sin logo), nunca rompe la generacion."""
+    if not _LOGO_INICIA_PATH.exists():
+        return None
+    try:
+        img = RLImage(str(_LOGO_INICIA_PATH))
+        max_w = max_width_cm * cm
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo cargar el logo de Inicia para el PDF", exc_info=True)
+        return None
+
+
 def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
-        leftMargin=2 * cm,
-        rightMargin=2 * cm,
+        topMargin=1.3 * cm,
+        bottomMargin=1.3 * cm,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
         title=vista.titulo,
     )
     styles = getSampleStyleSheet()
-    titulo_style = ParagraphStyle(
-        "TituloParte", parent=styles["Heading1"], fontSize=16, spaceAfter=4
+    ANCHO_TOTAL = doc.width
+    SEPARADOR = 0.35 * cm
+
+    numero_style = ParagraphStyle(
+        "NumeroParte", parent=styles["Normal"], fontSize=16, textColor=_COLOR_MARCA,
+        fontName="Helvetica-Bold", alignment=2,
     )
-    subtitulo_style = ParagraphStyle(
-        "Subtitulo", parent=styles["Normal"], fontSize=10,
-        textColor=colors.HexColor("#64748b"), spaceAfter=12,
+    etiqueta_cabecera_style = ParagraphStyle(
+        "EtiquetaCabecera", parent=styles["Normal"], fontSize=8,
+        textColor=colors.HexColor("#64748b"), alignment=2, spaceAfter=2,
     )
-    sesion_titulo_style = ParagraphStyle(
-        "SesionTitulo", parent=styles["Heading3"], fontSize=12,
-        spaceBefore=10, spaceAfter=4,
+    seccion_style = ParagraphStyle(
+        "Seccion", parent=styles["Normal"], fontSize=11, textColor=_COLOR_MARCA,
+        fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=6,
     )
-    normal_style = ParagraphStyle(
-        "NormalP", parent=styles["Normal"], fontSize=9.5, leading=13
+    badge_etiqueta_style = ParagraphStyle(
+        "BadgeEtiqueta", parent=styles["Normal"], fontSize=7.5,
+        textColor=colors.HexColor("#94a3b8"), spaceAfter=2,
     )
-    etiqueta_style = ParagraphStyle(
-        "Etiqueta", parent=styles["Normal"], fontSize=8,
-        textColor=colors.HexColor("#94a3b8"), spaceAfter=4,
+    badge_valor_style = ParagraphStyle(
+        "BadgeValor", parent=styles["Normal"], fontSize=11,
+        textColor=colors.HexColor("#0f172a"), fontName="Helvetica-Bold",
+    )
+    campo_etiqueta_style = ParagraphStyle(
+        "CampoEtiqueta", parent=styles["Normal"], fontSize=7.5,
+        textColor=colors.HexColor("#94a3b8"), spaceAfter=1,
+    )
+    campo_valor_style = ParagraphStyle(
+        "CampoValor", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=8, leading=13,
+    )
+    caption_style = ParagraphStyle(
+        "Caption", parent=styles["Normal"], fontSize=8,
+        textColor=colors.HexColor("#64748b"), spaceAfter=6,
+    )
+    legal_style = ParagraphStyle(
+        "Legal", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.HexColor("#475569"),
+    )
+    footer_style = ParagraphStyle(
+        "Footer", parent=styles["Normal"], fontSize=9,
+        textColor=colors.white, fontName="Helvetica-Bold", alignment=1,
+    )
+
+    def _caja_borde(contenido, ancho=None, color_borde=colors.HexColor("#e2e8f0"), fondo=colors.white):
+        t = Table([[contenido]], colWidths=[ancho])
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BOX", (0, 0), (-1, -1), 0.75, color_borde),
+                    ("BACKGROUND", (0, 0), (-1, -1), fondo),
+                    ("TOPPADDING", (0, 0), (-1, -1), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ]
+            )
+        )
+        return t
+
+    # --- Cabecera: logo + numero de parte ---------------------------------
+    logo_img = _logo_inicia_image()
+    bloque_derecha = [
+        Paragraph("PARTE DE TRABAJO", etiqueta_cabecera_style),
+        Paragraph(_p(vista.numero or "—"), numero_style),
+    ]
+    cabecera = Table(
+        [[logo_img or Paragraph("INICIA", numero_style), bloque_derecha]],
+        colWidths=[9 * cm, None],
+    )
+    cabecera.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
     )
 
     story = [
-        Paragraph(_p(vista.titulo), titulo_style),
-        Paragraph(
-            f"{_p(vista.cliente_nombre)} &nbsp;&middot;&nbsp; Estado: {_p(vista.estado)}",
-            subtitulo_style,
-        ),
+        cabecera,
+        Spacer(1, 10),
         HRFlowable(width="100%", color=colors.HexColor("#e2e8f0"), thickness=1),
-        Spacer(1, 12),
+        Spacer(1, 14),
     ]
 
+    # --- Badges: Cliente/Centro (con logo), Estado, Fecha ------------------
+    cliente_logo_img = _decode_firma_pdf(vista.cliente_logo_url, max_width_cm=2.2, max_height_cm=1.0)
+    nombre_cliente_centro = vista.cliente_nombre or "—"
+    if vista.centro_nombre and vista.centro_nombre != vista.cliente_nombre:
+        nombre_cliente_centro = f"{nombre_cliente_centro} · {vista.centro_nombre}"
+
+    bloque_cliente = [Paragraph("CLIENTE / CENTRO", badge_etiqueta_style)]
+    if cliente_logo_img:
+        bloque_cliente.append(cliente_logo_img)
+        bloque_cliente.append(Spacer(1, 2))
+    bloque_cliente.append(Paragraph(_p(nombre_cliente_centro), badge_valor_style))
+
+    bloque_estado = [
+        Paragraph("ESTADO", badge_etiqueta_style),
+        Paragraph(_p(vista.estado.upper()), badge_valor_style),
+    ]
+    bloque_fecha = [
+        Paragraph("FECHA DEL PARTE", badge_etiqueta_style),
+        Paragraph(_p(_formatear_fecha_es(vista.creado_en.strftime("%Y-%m-%d"))), badge_valor_style),
+    ]
+
+    ANCHO_BADGE = (ANCHO_TOTAL - 2 * SEPARADOR) / 3
+
+    fila_badges = Table(
+        [[
+            _caja_borde(bloque_cliente, ancho=ANCHO_BADGE, fondo=_COLOR_MARCA_SUAVE),
+            "",
+            _caja_borde(bloque_estado, ancho=ANCHO_BADGE),
+            "",
+            _caja_borde(bloque_fecha, ancho=ANCHO_BADGE),
+        ]],
+        colWidths=[ANCHO_BADGE, SEPARADOR, ANCHO_BADGE, SEPARADOR, ANCHO_BADGE],
+    )
+    fila_badges.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(fila_badges)
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("DETALLE DEL TRABAJO", seccion_style))
+
     if not vista.sessions:
-        story.append(Paragraph("Todavia no hay sesiones registradas en este parte.", normal_style))
+        story.append(Paragraph("Todavía no hay sesiones registradas en este parte.", campo_valor_style))
 
     for s in vista.sessions:
-        titulo_sesion = _formatear_fecha_es(s.fecha)
+        columna_izquierda = []
+        columna_izquierda.append(Paragraph("FECHA", campo_etiqueta_style))
+        columna_izquierda.append(Paragraph(_p(_formatear_fecha_es(s.fecha)), campo_valor_style))
         if s.hora_inicio and s.hora_fin:
-            titulo_sesion += f"  &nbsp;&nbsp;  {s.hora_inicio} - {s.hora_fin}"
-        story.append(Paragraph(titulo_sesion, sesion_titulo_style))
-
+            columna_izquierda.append(Paragraph("HORARIO", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(f"{s.hora_inicio} - {s.hora_fin}"), campo_valor_style))
         if s.operarios:
-            story.append(Paragraph(f"<b>Operarios:</b> {_p(', '.join(s.operarios))}", normal_style))
+            columna_izquierda.append(Paragraph("OPERARIOS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(", ".join(s.operarios)), campo_valor_style))
         if s.tareas:
-            story.append(Paragraph(f"<b>Tareas:</b> {_p(', '.join(s.tareas))}", normal_style))
+            columna_izquierda.append(Paragraph("TAREAS REALIZADAS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(", ".join(s.tareas)), campo_valor_style))
         if s.notas:
-            story.append(Paragraph(f"<b>Notas:</b> {_p(s.notas)}", normal_style))
-
+            columna_izquierda.append(Paragraph("NOTAS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(s.notas), campo_valor_style))
         if s.firmante:
-            story.append(Spacer(1, 6))
-            story.append(Paragraph(f"Responsable de la jornada: {_p(s.firmante)}", etiqueta_style))
-        firma_img = _decode_firma_pdf(s.firma_responsable, max_width_cm=4.5)
+            columna_izquierda.append(Paragraph("RESPONSABLE DE LA JORNADA", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(s.firmante), campo_valor_style))
+
+        ANCHO_IZQ_SESION = ANCHO_TOTAL * 0.56
+        ANCHO_DER_SESION = ANCHO_TOTAL - ANCHO_IZQ_SESION - SEPARADOR
+
+        firma_img = _decode_firma_pdf(s.firma_responsable, max_width_cm=5.5, max_height_cm=4.5)
+        bloque_firma_operario = [Paragraph("FIRMA DEL OPERARIO", seccion_style)]
         if firma_img:
-            story.append(firma_img)
+            bloque_firma_operario.append(firma_img)
+        else:
+            bloque_firma_operario.append(Paragraph("Pendiente de firma.", caption_style))
 
-        story.append(Spacer(1, 8))
+        fila_sesion = Table(
+            [[
+                columna_izquierda,
+                "",
+                _caja_borde(bloque_firma_operario, ancho=ANCHO_DER_SESION, color_borde=_COLOR_MARCA),
+            ]],
+            colWidths=[ANCHO_IZQ_SESION, SEPARADOR, ANCHO_DER_SESION],
+        )
+        fila_sesion.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(fila_sesion)
+        story.append(Spacer(1, 10))
         story.append(HRFlowable(width="100%", color=colors.HexColor("#f1f5f9"), thickness=0.5))
-        story.append(Spacer(1, 4))
+        story.append(Spacer(1, 10))
 
-    story.append(Spacer(1, 16))
-    story.append(Paragraph("Firma del cliente", sesion_titulo_style))
+    # --- Firma del cliente --------------------------------------------------
+    story.append(Paragraph("FIRMA DEL CLIENTE", seccion_style))
     if vista.firma_cliente:
         fecha_txt = (
             vista.firma_cliente_en.strftime("%d/%m/%Y %H:%M") if vista.firma_cliente_en else ""
         )
         story.append(
-            Paragraph(f"Firmado por {_p(vista.firma_cliente_nombre)} el {fecha_txt}", etiqueta_style)
+            Paragraph(f"Firmado por {_p(vista.firma_cliente_nombre)} el {fecha_txt}", caption_style)
         )
-        firma_img = _decode_firma_pdf(vista.firma_cliente, max_width_cm=6.0)
-        if firma_img:
-            story.append(firma_img)
+        firma_cliente_img = _decode_firma_pdf(vista.firma_cliente, max_width_cm=15.0, max_height_cm=5.0)
+        contenido_firma_cliente = [firma_cliente_img] if firma_cliente_img else [
+            Paragraph("Pendiente de firma.", caption_style)
+        ]
+        story.append(_caja_borde(contenido_firma_cliente, ancho=ANCHO_TOTAL))
+        story.append(Spacer(1, 10))
+        story.append(
+            Paragraph(
+                "✓ Este documento tiene validez legal y confirma la realización de los "
+                "trabajos descritos.",
+                legal_style,
+            )
+        )
     else:
-        story.append(Paragraph("Pendiente de firma.", normal_style))
+        story.append(_caja_borde([Paragraph("Pendiente de firma.", caption_style)], ancho=ANCHO_TOTAL))
+
+    story.append(Spacer(1, 18))
+    pie = Table(
+        [[Paragraph(f"GENERADO EL {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}", footer_style)]],
+        colWidths=[ANCHO_TOTAL],
+    )
+    pie.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    story.append(pie)
 
     doc.build(story)
     return buffer.getvalue()
@@ -5197,7 +5428,7 @@ async def descargar_pdf_parte(
     else:
         vista = await _construir_vista_publica(doc)
         pdf_bytes = _generar_pdf_parte(vista)
-    filename = f"parte-{doc['id'][:8]}.pdf"
+    filename = f"{(doc.get('numero') or doc['id'][:8])}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
