@@ -12,6 +12,8 @@ import {
   Camera,
   Shirt,
   UserPlus,
+  CloudRain,
+  HardHat,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -101,6 +103,13 @@ const NotificationBell = () => {
       case "vacation_approved":
       case "vacation_rejected":
         return "/my-calendar";
+      case "aviso_climatologico":
+        return "/prevencion";
+      case "solicitud_epi":
+      case "justificante_medico":
+        return "/admin/prevencion";
+      case "solicitud_epi_resuelta":
+        return "/prevencion";
       default:
         return null;
     }
@@ -136,6 +145,12 @@ const NotificationBell = () => {
         return <UserPlus className="w-4 h-4 text-indigo-500" />;
       case "vacation_request":
         return <Palmtree className="w-4 h-4 text-orange-500" />;
+      case "aviso_climatologico":
+        return <CloudRain className="w-4 h-4 text-amber-500" />;
+      case "solicitud_epi":
+      case "solicitud_epi_resuelta":
+      case "justificante_medico":
+        return <HardHat className="w-4 h-4 text-amber-600" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }

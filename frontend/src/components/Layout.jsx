@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true, section: "personal" },
+    { to: "/prevencion", icon: HardHat, label: "Prevención", show: true, section: "personal" },
     {
       label: "Planificación",
       icon: CalendarDays,
@@ -40,6 +41,7 @@ const Layout = () => {
     { to: "/vehiculos", icon: Truck, label: "Vehículos", show: isAdmin, section: "admin" },
     { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: isAdmin, section: "admin" },
     { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
+    { to: "/admin/prevencion", icon: HardHat, label: "Prevención", show: isAdmin, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
 
