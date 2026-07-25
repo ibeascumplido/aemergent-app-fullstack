@@ -1426,6 +1426,22 @@ async def bulk_action_vacaciones(request: Request):
     
     return {"message": f"{result.modified_count} requests {action}d successfully"}
 
+# Admin: Delete any vacation/dia libre in any state (assigned, pending or
+# rejected) - a diferencia del borrado propio (/my-vacaciones/{fecha}), el
+# admin puede borrar en cualquier momento y con cualquier estado.
+@api_router.delete("/admin/vacaciones/{vacacion_id}")
+async def admin_delete_vacacion(vacacion_id: str, request: Request):
+    """Elimina una solicitud de vacaciones/dia libre, sea cual sea su estado
+    (pendiente, aprobada o rechazada). Solo admin."""
+    await require_admin(request)
+
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+
+    await db.vacaciones.delete_one({"id": vacacion_id})
+    return {"message": "Vacation deleted successfully"}
+
 @api_router.get("/admin/vacaciones/resumen")
 async def get_all_resumen(request: Request, year: Optional[int] = None):
     """Get all users' vacation summary (admin only)"""
