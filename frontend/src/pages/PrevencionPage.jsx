@@ -96,7 +96,7 @@ const PrevencionPage = () => {
   const [justificantes, setJustificantes] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [epiForm, setEpiForm] = useState({ tipo: "", cantidad: 1, notas: "" });
+  const [epiForm, setEpiForm] = useState({ tipo: "", tipoLibre: "", cantidad: 1, notas: "" });
   const [enviandoEpi, setEnviandoEpi] = useState(false);
 
   const [descripcionJustificante, setDescripcionJustificante] = useState("");
@@ -135,15 +135,20 @@ const PrevencionPage = () => {
       toast.error("Selecciona qué material necesitas");
       return;
     }
+    const esLibre = epiForm.tipo === "otro";
+    if (esLibre && !epiForm.tipoLibre.trim()) {
+      toast.error("Escribe el nombre del material");
+      return;
+    }
     setEnviandoEpi(true);
     try {
       await axios.post(`${API}/solicitudes-epi`, {
-        tipo: epiForm.tipo,
+        tipo: esLibre ? epiForm.tipoLibre.trim() : epiForm.tipo,
         cantidad: Number(epiForm.cantidad) || 1,
         notas: epiForm.notas.trim(),
       });
       toast.success("Solicitud enviada al administrador");
-      setEpiForm({ tipo: "", cantidad: 1, notas: "" });
+      setEpiForm({ tipo: "", tipoLibre: "", cantidad: 1, notas: "" });
       await cargar();
     } catch (err) {
       console.error("Error solicitando EPI:", err);
@@ -387,6 +392,17 @@ const PrevencionPage = () => {
                   </SelectContent>
                 </Select>
               </div>
+              {epiForm.tipo === "otro" && (
+                <div className="space-y-1.5">
+                  <Label>¿Qué material necesitas?</Label>
+                  <Input
+                    value={epiForm.tipoLibre}
+                    onChange={(e) => setEpiForm((f) => ({ ...f, tipoLibre: e.target.value }))}
+                    placeholder="Escribe el material"
+                    data-testid="epi-tipo-libre-input"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1.5 col-span-1">
                   <Label>Cantidad</Label>
