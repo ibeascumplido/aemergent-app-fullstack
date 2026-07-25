@@ -17,6 +17,9 @@ import VehiculoDetailPage from "@/pages/VehiculoDetailPage";
 import MaquinariaPage from "@/pages/MaquinariaPage";
 import MaquinariaDetailPage from "@/pages/MaquinariaDetailPage";
 import RopaPage from "@/pages/RopaPage";
+import PrevencionPage from "@/pages/PrevencionPage";
+import AdminPrevencionPage from "@/pages/AdminPrevencionPage";
+import DocumentoFirmaPage from "@/pages/DocumentoFirmaPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
@@ -95,6 +98,13 @@ function App() {
               <Route path="maquinaria" element={<MaquinariaPage />} />
               <Route path="maquinaria/:maquinariaId" element={<MaquinariaDetailPage />} />
               <Route path="ropa" element={<RopaPage />} />
+              <Route path="prevencion" element={<PrevencionPage />} />
+              <Route path="documentos-firma/:docId" element={<DocumentoFirmaPage />} />
+              <Route path="admin/prevencion" element={
+                <ProtectedRoute requireAdmin>
+                  <AdminPrevencionPage />
+                </ProtectedRoute>
+              } />
               <Route path="clients/:id" element={
                 <ProtectedRoute requireBudgets>
                   <ClientDetailPage />
