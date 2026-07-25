@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Building2,
@@ -8,21 +7,24 @@ import {
   ClipboardList,
   FileText,
   Users,
-  ListTodo,
-  MessageSquare,
+  Camera,
   ChevronRight,
   Plus,
-  Clock,
   MapPin,
+  LayoutGrid,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import CentrosDeCliente from "@/components/CentrosDeCliente";
 import TareasCliente from "@/components/TareasCliente";
+import IncidenciasCliente from "@/components/IncidenciasCliente";
+import ContactosCliente from "@/components/ContactosCliente";
+import ComentariosCliente from "@/components/ComentariosCliente";
 import {
   Dialog,
   DialogContent,
@@ -49,58 +51,6 @@ const colorDe = (nombre) => {
   for (let i = 0; i < nombre.length; i++) h = nombre.charCodeAt(i) + ((h << 5) - h);
   return COLORES[Math.abs(h) % COLORES.length];
 };
-
-// Definición de las secciones del dashboard del cliente que aun son
-// maqueta ("Fotografías" ya se quito de aqui: ahora es una seccion real,
-// GaleriaFotos, mas arriba en la pagina).
-// Cada una tendrá su propia página/panel en entregas siguientes.
-const SECCIONES = [
-  {
-    key: "incidencias",
-    titulo: "Incidencias",
-    descripcion: "Problemas y avisos abiertos",
-    icon: AlertTriangle,
-    color: "orange",
-  },
-  {
-    key: "contactos",
-    titulo: "Contactos de responsables",
-    descripcion: "Personas de contacto y roles",
-    icon: Users,
-    color: "purple",
-  },
-  {
-    key: "pendientes",
-    titulo: "Trabajos pendientes",
-    descripcion: "Asuntos y tareas por resolver",
-    icon: ListTodo,
-    color: "emerald",
-  },
-  {
-    key: "comentarios",
-    titulo: "Comentarios del operario",
-    descripcion: "Notas con fecha y asunto",
-    icon: MessageSquare,
-    color: "amber",
-  },
-];
-
-// Mapa de estilos por color (Tailwind necesita clases literales, no se pueden interpolar).
-const COLOR_CLASSES = {
-  sky: { bg: "bg-sky-50", text: "text-sky-600" },
-  orange: { bg: "bg-orange-50", text: "text-orange-600" },
-  indigo: { bg: "bg-indigo-50", text: "text-indigo-600" },
-  red: { bg: "bg-red-50", text: "text-red-500" },
-  purple: { bg: "bg-purple-50", text: "text-purple-600" },
-  emerald: { bg: "bg-emerald-50", text: "text-emerald-600" },
-  amber: { bg: "bg-amber-50", text: "text-amber-600" },
-};
-
-const container = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.05 } },
-};
-const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
 const ClientDetailPage = () => {
   // El parámetro de ruta es el slug del cliente (URL-friendly, estable).
@@ -155,8 +105,6 @@ const ClientDetailPage = () => {
           setSummary(resSummary.data);
         }
       } catch (err) {
-        // Silencioso: si no hay cliente, ya lo maneja el fetch principal.
-        // Un 404 aqui solo pasa si se llama con slug invalido.
         if (err?.response?.status !== 404) {
           console.error("Error cargando presupuestos del cliente:", err);
         }
@@ -167,33 +115,22 @@ const ClientDetailPage = () => {
     return () => { cancelado = true; };
   }, [slug]);
 
-  // Formateador de euros (es-ES, base imponible)
   const fmtEur = (n) =>
-    new Intl.NumberFormat("es-ES", {
-      style: "currency",
-      currency: "EUR",
-    }).format(Number(n) || 0);
+    new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n) || 0);
 
   // ==============================
   // Partes de trabajo (Fase 5A.2 parte 1)
   // ==============================
   const [partes, setPartes] = useState([]);
   const [partesSummary, setPartesSummary] = useState({
-    total: 0,
-    abiertos: 0,
-    cerrados: 0,
-    archivados: 0,
-    total_horas: 0,
+    total: 0, abiertos: 0, cerrados: 0, archivados: 0, total_horas: 0,
   });
   const [loadingPartes, setLoadingPartes] = useState(true);
 
   const [dialogNuevoParte, setDialogNuevoParte] = useState(false);
   const mesActual = new Date().toISOString().slice(0, 7);
   const [nuevoParteForm, setNuevoParteForm] = useState({
-    titulo: "",
-    budget_template_id: "",
-    usa_zonas: false,
-    mes_rejilla: mesActual,
+    titulo: "", budget_template_id: "", usa_zonas: false, mes_rejilla: mesActual,
   });
   const [creandoParte, setCreandoParte] = useState(false);
 
@@ -240,18 +177,48 @@ const ClientDetailPage = () => {
         if (!cancelado) setLoadingUbicaciones(false);
       }
     })();
-    return () => {
-      cancelado = true;
-    };
+    return () => { cancelado = true; };
   }, [slug]);
 
+  // ==============================
+  // Contadores ligeros para el Resumen (Fase 16): centros, tareas
+  // pendientes e incidencias abiertas. Solo se piden una vez que ya
+  // tenemos el id real del cliente.
+  // ==============================
+  const [centrosCount, setCentrosCount] = useState(0);
+  const [tareasPendientesCount, setTareasPendientesCount] = useState(0);
+  const [incidenciasAbiertasCount, setIncidenciasAbiertasCount] = useState(0);
+  const [loadingResumen, setLoadingResumen] = useState(true);
+
+  useEffect(() => {
+    if (!cliente?.id) return;
+    let cancelado = false;
+    setLoadingResumen(true);
+    (async () => {
+      try {
+        const [resCentros, resTareas, resIncidencias] = await Promise.all([
+          axios.get(`${API}/clients/${slug}/centros`).catch(() => ({ data: [] })),
+          axios
+            .get(`${API}/tareas-centro`, { params: { client_id: cliente.id, solo_pendientes: true } })
+            .catch(() => ({ data: [] })),
+          axios
+            .get(`${API}/incidencias`, { params: { client_id: cliente.id, solo_abiertas: true } })
+            .catch(() => ({ data: [] })),
+        ]);
+        if (!cancelado) {
+          setCentrosCount(resCentros.data.length);
+          setTareasPendientesCount(resTareas.data.length);
+          setIncidenciasAbiertasCount(resIncidencias.data.length);
+        }
+      } finally {
+        if (!cancelado) setLoadingResumen(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [cliente?.id, slug]);
+
   const abrirNuevoParte = () => {
-    setNuevoParteForm({
-      titulo: "",
-      budget_template_id: "",
-      usa_zonas: false,
-      mes_rejilla: mesActual,
-    });
+    setNuevoParteForm({ titulo: "", budget_template_id: "", usa_zonas: false, mes_rejilla: mesActual });
     setDialogNuevoParte(true);
   };
 
@@ -297,12 +264,9 @@ const ClientDetailPage = () => {
       archivado: { txt: "Archivado", cls: "bg-amber-100 text-amber-700" },
     };
     const b = map[estado] || map.abierto;
-    return (
-      <span className={`text-xs px-1.5 py-0.5 rounded ${b.cls}`}>{b.txt}</span>
-    );
+    return <span className={`text-xs px-1.5 py-0.5 rounded ${b.cls}`}>{b.txt}</span>;
   };
 
-  // Estado de carga inicial.
   if (loading) {
     return (
       <div data-testid="client-detail-loading" className="p-8 text-center text-slate-400">
@@ -311,7 +275,6 @@ const ClientDetailPage = () => {
     );
   }
 
-  // Cliente inexistente en la base de datos.
   if (notFound || !cliente) {
     return (
       <div data-testid="client-not-found">
@@ -332,18 +295,11 @@ const ClientDetailPage = () => {
     );
   }
 
-  // Logo real del cliente: viene del backend en cliente.logo_url (data-URI base64 o URL).
-  // Si no hay o falla la carga, mostramos el icono Building2 con color de marca.
   const logoUrl = cliente.logo_url || null;
-
-  const abrirSeccion = (seccion) => {
-    // Entregas siguientes engancharán rutas reales por sección.
-    toast.info(`${seccion.titulo}: próximamente disponible`);
-  };
 
   return (
     <div data-testid="client-detail-page">
-      {/* Volver + breadcrumb ligero */}
+      {/* Volver + cabecera con logo + nombre — siempre visible, fuera de las pestañas */}
       <div className="mb-6">
         <Button
           variant="ghost"
@@ -355,7 +311,6 @@ const ClientDetailPage = () => {
           Clientes
         </Button>
 
-        {/* Cabecera con logo + nombre */}
         <div className="flex items-center gap-5">
           <div
             className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 shadow-sm"
@@ -382,248 +337,349 @@ const ClientDetailPage = () => {
         </div>
       </div>
 
-      {/* Tarjeta especial: Presupuestos asociados con totales reales */}
-      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-presupuestos">
-        <CardContent className="p-6">
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
-                <FileText className="w-6 h-6 text-red-500" />
-              </div>
-              <div>
-                <p className="font-semibold text-slate-900">Presupuestos asociados</p>
-                <p className="text-sm text-slate-500">
-                  {loadingBudgets
-                    ? "Cargando..."
-                    : `${summary.count} ${summary.count === 1 ? "presupuesto" : "presupuestos"} en total`}
+      <Tabs defaultValue="resumen" className="w-full">
+        <div className="overflow-x-auto -mx-1 px-1 mb-6 pb-1">
+          <TabsList className="inline-flex w-max h-auto p-1 gap-0.5">
+            <TabsTrigger value="resumen" className="gap-1.5" data-testid="tab-resumen">
+              <LayoutGrid className="w-3.5 h-3.5" /> Resumen
+            </TabsTrigger>
+            <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-partes">
+              <ClipboardList className="w-3.5 h-3.5" /> Partes de trabajo
+            </TabsTrigger>
+            <TabsTrigger value="actividad" className="gap-1.5" data-testid="tab-actividad">
+              <Camera className="w-3.5 h-3.5" /> Actividad
+            </TabsTrigger>
+            <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-incidencias">
+              <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
+            </TabsTrigger>
+            <TabsTrigger value="centros" className="gap-1.5" data-testid="tab-centros">
+              <Building2 className="w-3.5 h-3.5" /> Centros
+            </TabsTrigger>
+            <TabsTrigger value="contactos" className="gap-1.5" data-testid="tab-contactos">
+              <Users className="w-3.5 h-3.5" /> Contactos
+            </TabsTrigger>
+            <TabsTrigger value="ubicaciones" className="gap-1.5" data-testid="tab-ubicaciones">
+              <MapPin className="w-3.5 h-3.5" /> Ubicaciones
+            </TabsTrigger>
+            <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-presupuestos">
+              <FileText className="w-3.5 h-3.5" /> Presupuestos
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* ============== RESUMEN ============== */}
+        <TabsContent value="resumen" className="mt-0">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Card className="border-slate-100">
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Partes abiertos</p>
+                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
+                  {loadingPartes ? "…" : partesSummary.abiertos}
                 </p>
-              </div>
-            </div>
-            {!loadingBudgets && summary.count > 0 && (
-              <button
-                type="button"
-                onClick={() => navigate(`/budgets?cliente=${encodeURIComponent(slug)}`)}
-                className="text-sm text-indigo-600 hover:text-indigo-700 font-medium inline-flex items-center gap-1"
-                data-testid="ver-todos-presupuestos"
-              >
-                Ver todos <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
+              </CardContent>
+            </Card>
+            <Card className="border-slate-100">
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Tareas pendientes</p>
+                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
+                  {loadingResumen ? "…" : tareasPendientesCount}
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-100">
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Incidencias abiertas</p>
+                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
+                  {loadingResumen ? "…" : incidenciasAbiertasCount}
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="border-slate-100">
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Centros</p>
+                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
+                  {loadingResumen ? "…" : centrosCount}
+                </p>
+              </CardContent>
+            </Card>
           </div>
+        </TabsContent>
 
-          {/* Totales facturado + pendiente */}
-          {!loadingBudgets && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              <div className="rounded-lg bg-green-50 border border-green-100 p-4">
-                <p className="text-xs uppercase tracking-wider text-green-700 font-medium">
-                  Facturado
-                </p>
-                <p className="text-2xl font-bold text-green-900 font-['JetBrains_Mono'] mt-1">
-                  {fmtEur(summary.total_facturado)}
-                </p>
-                <p className="text-xs text-green-700 mt-1">base imponible</p>
-              </div>
-              <div className="rounded-lg bg-amber-50 border border-amber-100 p-4">
-                <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">
-                  Pendiente por facturar
-                </p>
-                <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
-                  {fmtEur(summary.total_pendiente)}
-                </p>
-                <p className="text-xs text-amber-700 mt-1">base imponible</p>
-              </div>
-            </div>
-          )}
-
-          {/* Lista compacta de presupuestos recientes */}
-          {loadingBudgets ? (
-            <p className="text-sm text-slate-400 text-center py-4">Cargando presupuestos...</p>
-          ) : presupuestos.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-4" data-testid="no-presupuestos">
-              Este cliente aun no tiene presupuestos vinculados
-            </p>
-          ) : (
-            <div className="divide-y divide-slate-100 border-t border-slate-100">
-              {presupuestos.slice(0, 5).map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => navigate(`/budgets/${b.id}`)}
-                  className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
-                  data-testid={`presupuesto-row-${b.id}`}
+        {/* ============== PARTES DE TRABAJO ============== */}
+        <TabsContent value="partes" className="mt-0">
+          <Card className="border-slate-100 shadow-sm" data-testid="section-partes">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
+                    <ClipboardList className="w-6 h-6 text-indigo-500" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">Partes de trabajo</p>
+                    <p className="text-sm text-slate-500">
+                      {loadingPartes
+                        ? "Cargando..."
+                        : `${partesSummary.total} ${partesSummary.total === 1 ? "parte" : "partes"} · ${partesSummary.total_horas} h totales`}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={abrirNuevoParte}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+                  size="sm"
+                  data-testid="btn-nuevo-parte"
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-medium text-indigo-600 text-sm">
-                        {b.budget_number}
-                      </span>
-                      <span className="text-xs text-slate-400">{b.budget_date}</span>
-                      {b.facturado && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                          Facturado
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-700 truncate mt-0.5">
-                      {b.titulo || b.servicios_descripcion || "Sin titulo"}
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nuevo parte
+                </Button>
+              </div>
+
+              {!loadingPartes && partesSummary.total > 0 && (
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
+                    <p className="text-xs uppercase tracking-wider text-emerald-700 font-medium">Abiertos</p>
+                    <p className="text-2xl font-bold text-emerald-900 font-['JetBrains_Mono'] mt-1">
+                      {partesSummary.abiertos}
                     </p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-mono font-medium text-slate-900 text-sm">
-                      {fmtEur(b.total_base)}
+                  <div className="rounded-lg bg-slate-100 border border-slate-200 p-3 text-center">
+                    <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">Cerrados</p>
+                    <p className="text-2xl font-bold text-slate-800 font-['JetBrains_Mono'] mt-1">
+                      {partesSummary.cerrados}
                     </p>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-                </button>
-              ))}
-              {presupuestos.length > 5 && (
-                <p className="text-xs text-slate-400 text-center pt-3">
-                  Mostrando 5 de {presupuestos.length}. Pulsa "Ver todos" para el listado completo.
-                </p>
+                  <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-center">
+                    <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">Archivados</p>
+                    <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
+                      {partesSummary.archivados}
+                    </p>
+                  </div>
+                </div>
               )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
-      {cliente && <GaleriaFotos clientId={cliente.id} titulo="Fotografías" />}
+              {loadingPartes ? (
+                <p className="text-sm text-slate-400 text-center py-4">Cargando partes...</p>
+              ) : partes.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-4" data-testid="no-partes">
+                  Este cliente aun no tiene partes de trabajo
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 border-t border-slate-100">
+                  {partes.slice(0, 8).map((wo) => (
+                    <button
+                      key={wo.id}
+                      type="button"
+                      onClick={() => navigate(`/work-orders/${wo.id}`)}
+                      className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
+                      data-testid={`parte-row-${wo.id}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-slate-900 text-sm truncate max-w-xs">
+                            {wo.titulo}
+                          </span>
+                          {estadoBadge(wo.estado)}
+                          {wo.budget_number && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-mono">
+                              {wo.budget_number}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Creado {new Date(wo.creado_en).toLocaleDateString("es-ES")}
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                    </button>
+                  ))}
+                  {partes.length > 8 && (
+                    <p className="text-xs text-slate-400 text-center pt-3">
+                      Mostrando 8 de {partes.length}
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {cliente && <CentrosDeCliente clientSlug={slug} />}
+        {/* ============== ACTIVIDAD: fotos + comentarios + tareas juntos ============== */}
+        <TabsContent value="actividad" className="mt-0 space-y-6">
+          <GaleriaFotos clientId={cliente.id} titulo="Fotografías" />
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <ComentariosCliente clientId={cliente.id} />
+            </CardContent>
+          </Card>
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <TareasCliente clientId={cliente.id} clientSlug={slug} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {cliente && <TareasCliente clientId={cliente.id} clientSlug={slug} />}
+        {/* ============== INCIDENCIAS ============== */}
+        <TabsContent value="incidencias" className="mt-0">
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <IncidenciasCliente clientId={cliente.id} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {/* Tarjeta: Ubicaciones (Fase 6 parte 1) */}
-      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-ubicaciones">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-                <MapPin className="w-6 h-6 text-indigo-500" />
-              </div>
-              <div>
-                <p className="font-semibold text-slate-900">Ubicaciones</p>
-                <p className="text-sm text-slate-500">
-                  {loadingUbicaciones
-                    ? "Cargando..."
-                    : `${ubicacionesCount} ${ubicacionesCount === 1 ? "ubicación" : "ubicaciones"}`}
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => navigate(`/clients/${slug}/locations`)}
-              className="border-slate-200"
-              size="sm"
-              data-testid="btn-ver-ubicaciones"
-            >
-              <ChevronRight className="w-4 h-4 mr-1" />
-              {ubicacionesCount > 0 ? "Ver ubicaciones" : "Añadir ubicaciones"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        {/* ============== CENTROS ============== */}
+        <TabsContent value="centros" className="mt-0">
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <CentrosDeCliente clientSlug={slug} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      {/* Tarjeta especial: Partes de trabajo (Fase 5A.2 parte 1) */}
-      <Card className="border-slate-100 shadow-sm mb-6" data-testid="section-partes">
-        <CardContent className="p-6">
-          <div className="flex items-start justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-                <ClipboardList className="w-6 h-6 text-indigo-500" />
-              </div>
-              <div>
-                <p className="font-semibold text-slate-900">Partes de trabajo</p>
-                <p className="text-sm text-slate-500">
-                  {loadingPartes
-                    ? "Cargando..."
-                    : `${partesSummary.total} ${partesSummary.total === 1 ? "parte" : "partes"} · ${partesSummary.total_horas} h totales`}
-                </p>
-              </div>
-            </div>
-            <Button
-              onClick={abrirNuevoParte}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-              size="sm"
-              data-testid="btn-nuevo-parte"
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              Nuevo parte
-            </Button>
-          </div>
+        {/* ============== CONTACTOS ============== */}
+        <TabsContent value="contactos" className="mt-0">
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <ContactosCliente clientId={cliente.id} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          {!loadingPartes && partesSummary.total > 0 && (
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
-                <p className="text-xs uppercase tracking-wider text-emerald-700 font-medium">
-                  Abiertos
-                </p>
-                <p className="text-2xl font-bold text-emerald-900 font-['JetBrains_Mono'] mt-1">
-                  {partesSummary.abiertos}
-                </p>
-              </div>
-              <div className="rounded-lg bg-slate-100 border border-slate-200 p-3 text-center">
-                <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">
-                  Cerrados
-                </p>
-                <p className="text-2xl font-bold text-slate-800 font-['JetBrains_Mono'] mt-1">
-                  {partesSummary.cerrados}
-                </p>
-              </div>
-              <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-center">
-                <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">
-                  Archivados
-                </p>
-                <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
-                  {partesSummary.archivados}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {loadingPartes ? (
-            <p className="text-sm text-slate-400 text-center py-4">Cargando partes...</p>
-          ) : partes.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-4" data-testid="no-partes">
-              Este cliente aun no tiene partes de trabajo
-            </p>
-          ) : (
-            <div className="divide-y divide-slate-100 border-t border-slate-100">
-              {partes.slice(0, 5).map((wo) => (
-                <button
-                  key={wo.id}
-                  type="button"
-                  onClick={() => navigate(`/work-orders/${wo.id}`)}
-                  className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
-                  data-testid={`parte-row-${wo.id}`}
+        {/* ============== UBICACIONES ============== */}
+        <TabsContent value="ubicaciones" className="mt-0">
+          <Card className="border-slate-100 shadow-sm" data-testid="section-ubicaciones">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
+                    <MapPin className="w-6 h-6 text-indigo-500" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">Ubicaciones</p>
+                    <p className="text-sm text-slate-500">
+                      {loadingUbicaciones
+                        ? "Cargando..."
+                        : `${ubicacionesCount} ${ubicacionesCount === 1 ? "ubicación" : "ubicaciones"}`}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/clients/${slug}/locations`)}
+                  className="border-slate-200"
+                  size="sm"
+                  data-testid="btn-ver-ubicaciones"
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-slate-900 text-sm truncate max-w-xs">
-                        {wo.titulo}
-                      </span>
-                      {estadoBadge(wo.estado)}
-                      {wo.budget_number && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-mono">
-                          {wo.budget_number}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Creado {new Date(wo.creado_en).toLocaleDateString("es-ES")}
+                  <ChevronRight className="w-4 h-4 mr-1" />
+                  {ubicacionesCount > 0 ? "Ver ubicaciones" : "Añadir ubicaciones"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ============== PRESUPUESTOS ============== */}
+        <TabsContent value="presupuestos" className="mt-0">
+          <Card className="border-slate-100 shadow-sm" data-testid="section-presupuestos">
+            <CardContent className="p-6">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
+                    <FileText className="w-6 h-6 text-red-500" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900">Presupuestos asociados</p>
+                    <p className="text-sm text-slate-500">
+                      {loadingBudgets
+                        ? "Cargando..."
+                        : `${summary.count} ${summary.count === 1 ? "presupuesto" : "presupuestos"} en total`}
                     </p>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-                </button>
-              ))}
-              {partes.length > 5 && (
-                <p className="text-xs text-slate-400 text-center pt-3">
-                  Mostrando 5 de {partes.length}
-                </p>
+                </div>
+                {!loadingBudgets && summary.count > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/budgets?cliente=${encodeURIComponent(slug)}`)}
+                    className="text-sm text-indigo-600 hover:text-indigo-700 font-medium inline-flex items-center gap-1"
+                    data-testid="ver-todos-presupuestos"
+                  >
+                    Ver todos <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {!loadingBudgets && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <div className="rounded-lg bg-green-50 border border-green-100 p-4">
+                    <p className="text-xs uppercase tracking-wider text-green-700 font-medium">Facturado</p>
+                    <p className="text-2xl font-bold text-green-900 font-['JetBrains_Mono'] mt-1">
+                      {fmtEur(summary.total_facturado)}
+                    </p>
+                    <p className="text-xs text-green-700 mt-1">base imponible</p>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 border border-amber-100 p-4">
+                    <p className="text-xs uppercase tracking-wider text-amber-700 font-medium">
+                      Pendiente por facturar
+                    </p>
+                    <p className="text-2xl font-bold text-amber-900 font-['JetBrains_Mono'] mt-1">
+                      {fmtEur(summary.total_pendiente)}
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">base imponible</p>
+                  </div>
+                </div>
               )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+              {loadingBudgets ? (
+                <p className="text-sm text-slate-400 text-center py-4">Cargando presupuestos...</p>
+              ) : presupuestos.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-4" data-testid="no-presupuestos">
+                  Este cliente aun no tiene presupuestos vinculados
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 border-t border-slate-100">
+                  {presupuestos.slice(0, 5).map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => navigate(`/budgets/${b.id}`)}
+                      className="w-full flex items-center gap-3 py-3 text-left hover:bg-slate-50 transition-colors px-2 -mx-2 rounded"
+                      data-testid={`presupuesto-row-${b.id}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-medium text-indigo-600 text-sm">
+                            {b.budget_number}
+                          </span>
+                          <span className="text-xs text-slate-400">{b.budget_date}</span>
+                          {b.facturado && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                              Facturado
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-700 truncate mt-0.5">
+                          {b.titulo || b.servicios_descripcion || "Sin titulo"}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-mono font-medium text-slate-900 text-sm">
+                          {fmtEur(b.total_base)}
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                    </button>
+                  ))}
+                  {presupuestos.length > 5 && (
+                    <p className="text-xs text-slate-400 text-center pt-3">
+                      Mostrando 5 de {presupuestos.length}. Pulsa "Ver todos" para el listado completo.
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Modal: Nuevo parte de trabajo */}
       <Dialog open={dialogNuevoParte} onOpenChange={setDialogNuevoParte}>
@@ -637,9 +693,7 @@ const ClientDetailPage = () => {
               <Input
                 id="parte-titulo"
                 value={nuevoParteForm.titulo}
-                onChange={(e) =>
-                  setNuevoParteForm((f) => ({ ...f, titulo: e.target.value }))
-                }
+                onChange={(e) => setNuevoParteForm((f) => ({ ...f, titulo: e.target.value }))}
                 placeholder="Ej. Mantenimiento marzo 2026"
                 data-testid="parte-titulo-input"
               />
@@ -649,10 +703,7 @@ const ClientDetailPage = () => {
               <Select
                 value={nuevoParteForm.budget_template_id || "none"}
                 onValueChange={(v) =>
-                  setNuevoParteForm((f) => ({
-                    ...f,
-                    budget_template_id: v === "none" ? "" : v,
-                  }))
+                  setNuevoParteForm((f) => ({ ...f, budget_template_id: v === "none" ? "" : v }))
                 }
               >
                 <SelectTrigger data-testid="parte-budget-select">
@@ -695,9 +746,7 @@ const ClientDetailPage = () => {
                   id="parte-mes-rejilla"
                   type="month"
                   value={nuevoParteForm.mes_rejilla}
-                  onChange={(e) =>
-                    setNuevoParteForm((f) => ({ ...f, mes_rejilla: e.target.value }))
-                  }
+                  onChange={(e) => setNuevoParteForm((f) => ({ ...f, mes_rejilla: e.target.value }))}
                   data-testid="parte-mes-rejilla-input"
                 />
                 <p className="text-xs text-slate-400">
@@ -708,11 +757,7 @@ const ClientDetailPage = () => {
             )}
           </div>
           <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setDialogNuevoParte(false)}
-              disabled={creandoParte}
-            >
+            <Button variant="ghost" onClick={() => setDialogNuevoParte(false)} disabled={creandoParte}>
               Cancelar
             </Button>
             <Button
@@ -726,53 +771,6 @@ const ClientDetailPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Grid con las 5 secciones restantes (todas siguen en modo Proximamente) */}
-      <motion.div
-        variants={container}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
-      >
-        {SECCIONES.map((s) => {
-          const styles = COLOR_CLASSES[s.color];
-          const Icon = s.icon;
-          return (
-            <motion.div key={s.key} variants={item}>
-              <Card
-                className="border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group h-full"
-                onClick={() => abrirSeccion(s)}
-                data-testid={`section-${s.key}`}
-              >
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl ${styles.bg} flex items-center justify-center`}
-                    >
-                      <Icon className={`w-6 h-6 ${styles.text}`} />
-                    </div>
-                    <span className="text-2xl font-bold text-slate-300 font-['JetBrains_Mono']">
-                      0
-                    </span>
-                  </div>
-                  <p className="font-semibold text-slate-900 group-hover:text-slate-700 transition-colors">
-                    {s.titulo}
-                  </p>
-                  <p className="text-sm text-slate-500 mt-1">{s.descripcion}</p>
-                  <p className="text-xs text-slate-300 mt-3 uppercase tracking-wider">
-                    Próximamente
-                  </p>
-                </CardContent>
-              </Card>
-            </motion.div>
-          );
-        })}
-      </motion.div>
-
-      {/* Nota placeholder — se eliminará cuando las secciones sean reales */}
-      <div className="mt-8 text-xs text-slate-400 text-center">
-        Los datos de cada sección se conectarán al backend en la siguiente entrega.
-      </div>
     </div>
   );
 };
