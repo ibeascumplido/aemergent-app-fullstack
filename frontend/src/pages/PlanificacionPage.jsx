@@ -168,7 +168,9 @@ const PlanificacionPage = () => {
   const asignacionesPorCelda = useMemo(() => {
     const map = {};
     asignaciones.forEach((a) => {
-      const columnaId = a.destino_cliente_id
+      const columnaId = a.destino_centro_id
+        ? columnas.find((c) => c.tipo === "centro" && c.centro_id === a.destino_centro_id)?.id
+        : a.destino_cliente_id
         ? columnas.find((c) => c.tipo === "cliente" && c.cliente_id === a.destino_cliente_id)?.id
         : columnas.find((c) => c.tipo === "libre" && c.etiqueta === a.destino_libre)?.id;
       if (!columnaId) return;
@@ -240,6 +242,7 @@ const PlanificacionPage = () => {
         operario_id: operarioId,
         fecha,
         destino_cliente_id: columna.tipo === "cliente" ? columna.cliente_id : null,
+        destino_centro_id: columna.tipo === "centro" ? columna.centro_id : null,
         destino_libre: columna.tipo === "libre" ? columna.etiqueta : null,
       };
       const res = await axios.post(`${API}/planificacion/celda/toggle`, payload);
@@ -256,6 +259,7 @@ const PlanificacionPage = () => {
                 a.operario_id === operarioId &&
                 a.fecha === fecha &&
                 a.destino_cliente_id === payload.destino_cliente_id &&
+                a.destino_centro_id === payload.destino_centro_id &&
                 a.destino_libre === payload.destino_libre
               )
           )
