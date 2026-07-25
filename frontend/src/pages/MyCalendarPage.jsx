@@ -65,16 +65,22 @@ const MyCalendarPage = () => {
       res.data.asignaciones
         .filter((a) => a.operario_id === user.user_id)
         .forEach((a) => {
-          const columna = res.data.columnas.find((c) =>
-            a.destino_cliente_id
-              ? c.tipo === "cliente" && c.cliente_id === a.destino_cliente_id
-              : c.tipo === "libre" && c.etiqueta === a.destino_libre
-          );
+          const columna = res.data.columnas.find((c) => {
+            if (a.destino_centro_id) return c.tipo === "centro" && c.centro_id === a.destino_centro_id;
+            if (a.destino_cliente_id) return c.tipo === "cliente" && c.cliente_id === a.destino_cliente_id;
+            return c.tipo === "libre" && c.etiqueta === a.destino_libre;
+          });
           const nombre = columna?.etiqueta || a.destino_libre || "Sitio";
           if (!mapa[a.fecha]) mapa[a.fecha] = [];
           mapa[a.fecha].push(nombre);
         });
-      setMisDestinos(mapa);
+      const prefijoMes = `${year}-${String(month + 1).padStart(2, "0")}-`;
+      setMisDestinos((prev) => {
+        const limpio = Object.fromEntries(
+          Object.entries(prev).filter(([fecha]) => !fecha.startsWith(prefijoMes))
+        );
+        return { ...limpio, ...mapa };
+      });
     } catch (error) {
       console.error("Error fetching mis destinos:", error);
     }
