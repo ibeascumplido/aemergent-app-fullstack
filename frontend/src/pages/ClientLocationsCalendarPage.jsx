@@ -147,7 +147,7 @@ const ClientLocationsCalendarPage = () => {
       setOperarios(opsRes.data);
     } catch (err) {
       console.error("Error cargando datos base:", err);
-      toast.error("Error al cargar ubicaciones");
+      toast.error("Error al cargar los centros");
     }
   };
 
@@ -278,7 +278,7 @@ const ClientLocationsCalendarPage = () => {
 
   const guardar = async () => {
     if (!form.location_id) {
-      toast.error("Selecciona una ubicación");
+      toast.error("Selecciona un centro");
       return;
     }
     if (!form.fecha) {
@@ -341,7 +341,7 @@ const ClientLocationsCalendarPage = () => {
         size="sm"
       >
         <ArrowLeft className="w-4 h-4 mr-2" />
-        Volver a ubicaciones
+        Volver a centros
       </Button>
 
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
@@ -573,7 +573,7 @@ const ClientLocationsCalendarPage = () => {
 
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Ubicación</Label>
+              <Label>Centro</Label>
               {!editando ? (
                 <Button
                   type="button"
@@ -589,13 +589,13 @@ const ClientLocationsCalendarPage = () => {
                           ? ` · ${ubicacionSeleccionada.referencia_cliente}`
                           : ""
                       }`
-                    : "Buscar ubicación..."}
+                    : "Buscar centro..."}
                 </Button>
               ) : (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-700">
                   <MapPin className="w-4 h-4 text-slate-400" />
                   {ubicaciones.find((u) => u.id === form.location_id)?.nombre ||
-                    "Ubicación"}
+                    "Centro"}
                 </div>
               )}
             </div>
@@ -617,7 +617,7 @@ const ClientLocationsCalendarPage = () => {
                 <div
                   className="flex items-center h-9 px-3 rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-500"
                   data-testid="visita-horas-estimadas"
-                  title="Configurada en la ficha de esta estación (Ubicaciones)"
+                  title="Configurada en la ficha de este centro (Centros)"
                 >
                   {ubicacionSeleccionada?.horas_por_visita ?? "—"} h
                 </div>
@@ -785,7 +785,7 @@ const ClientLocationsCalendarPage = () => {
       <Dialog open={dialogUbicacionOpen} onOpenChange={setDialogUbicacionOpen}>
         <DialogContent className="max-w-md max-h-[80dvh] flex flex-col p-0">
           <DialogHeader className="p-4 pb-2">
-            <DialogTitle>Elegir ubicación</DialogTitle>
+            <DialogTitle>Elegir centro</DialogTitle>
           </DialogHeader>
           <div className="px-4 pb-2">
             <Input

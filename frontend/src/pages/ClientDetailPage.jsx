@@ -20,7 +20,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import GaleriaFotos from "@/components/GaleriaFotos";
-import CentrosDeCliente from "@/components/CentrosDeCliente";
 import TareasCliente from "@/components/TareasCliente";
 import IncidenciasCliente from "@/components/IncidenciasCliente";
 import ContactosCliente from "@/components/ContactosCliente";
@@ -343,6 +342,9 @@ const ClientDetailPage = () => {
             <TabsTrigger value="resumen" className="gap-1.5" data-testid="tab-resumen">
               <LayoutGrid className="w-3.5 h-3.5" /> Resumen
             </TabsTrigger>
+            <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-presupuestos">
+              <FileText className="w-3.5 h-3.5" /> Presupuestos
+            </TabsTrigger>
             <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-partes">
               <ClipboardList className="w-3.5 h-3.5" /> Partes de trabajo
             </TabsTrigger>
@@ -352,17 +354,11 @@ const ClientDetailPage = () => {
             <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-incidencias">
               <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
             </TabsTrigger>
-            <TabsTrigger value="centros" className="gap-1.5" data-testid="tab-centros">
-              <Building2 className="w-3.5 h-3.5" /> Centros
-            </TabsTrigger>
             <TabsTrigger value="contactos" className="gap-1.5" data-testid="tab-contactos">
               <Users className="w-3.5 h-3.5" /> Contactos
             </TabsTrigger>
-            <TabsTrigger value="ubicaciones" className="gap-1.5" data-testid="tab-ubicaciones">
-              <MapPin className="w-3.5 h-3.5" /> Ubicaciones
-            </TabsTrigger>
-            <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-presupuestos">
-              <FileText className="w-3.5 h-3.5" /> Presupuestos
+            <TabsTrigger value="centros" className="gap-1.5" data-testid="tab-centros">
+              <Building2 className="w-3.5 h-3.5" /> Centros
             </TabsTrigger>
           </TabsList>
         </div>
@@ -527,15 +523,6 @@ const ClientDetailPage = () => {
           </Card>
         </TabsContent>
 
-        {/* ============== CENTROS ============== */}
-        <TabsContent value="centros" className="mt-0">
-          <Card className="border-slate-100 shadow-sm">
-            <CardContent className="p-6">
-              <CentrosDeCliente clientSlug={slug} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* ============== CONTACTOS ============== */}
         <TabsContent value="contactos" className="mt-0">
           <Card className="border-slate-100 shadow-sm">
@@ -545,21 +532,22 @@ const ClientDetailPage = () => {
           </Card>
         </TabsContent>
 
-        {/* ============== UBICACIONES ============== */}
-        <TabsContent value="ubicaciones" className="mt-0">
-          <Card className="border-slate-100 shadow-sm" data-testid="section-ubicaciones">
+        {/* ============== CENTROS (antes "Ubicaciones"; unifica el antiguo
+             subgrupo ligero de Centros usado en Planificacion) ============== */}
+        <TabsContent value="centros" className="mt-0">
+          <Card className="border-slate-100 shadow-sm" data-testid="section-centros">
             <CardContent className="p-6">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-                    <MapPin className="w-6 h-6 text-indigo-500" />
+                    <Building2 className="w-6 h-6 text-indigo-500" />
                   </div>
                   <div>
-                    <p className="font-semibold text-slate-900">Ubicaciones</p>
+                    <p className="font-semibold text-slate-900">Centros</p>
                     <p className="text-sm text-slate-500">
                       {loadingUbicaciones
                         ? "Cargando..."
-                        : `${ubicacionesCount} ${ubicacionesCount === 1 ? "ubicación" : "ubicaciones"}`}
+                        : `${ubicacionesCount} ${ubicacionesCount === 1 ? "centro" : "centros"}`}
                     </p>
                   </div>
                 </div>
@@ -568,10 +556,10 @@ const ClientDetailPage = () => {
                   onClick={() => navigate(`/clients/${slug}/locations`)}
                   className="border-slate-200"
                   size="sm"
-                  data-testid="btn-ver-ubicaciones"
+                  data-testid="btn-ver-centros"
                 >
                   <ChevronRight className="w-4 h-4 mr-1" />
-                  {ubicacionesCount > 0 ? "Ver ubicaciones" : "Añadir ubicaciones"}
+                  {ubicacionesCount > 0 ? "Ver centros" : "Añadir centros"}
                 </Button>
               </div>
             </CardContent>

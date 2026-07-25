@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   MapPin,
+  Building2,
   Plus,
   Pencil,
   Trash2,
@@ -111,7 +112,7 @@ const ClientLocationsPage = () => {
       setOperarios(opsRes.data);
     } catch (err) {
       console.error("Error cargando ubicaciones:", err);
-      toast.error("Error al cargar las ubicaciones");
+      toast.error("Error al cargar los centros");
     } finally {
       setLoading(false);
     }
@@ -173,12 +174,16 @@ const ClientLocationsPage = () => {
       toast.error("El nombre es obligatorio");
       return;
     }
-    if (!form.frecuencia) {
-      toast.error("Selecciona una frecuencia");
+    // Frecuencia y horas por visita son opcionales: un centro simple (por
+    // ejemplo, para usar como destino en Planificacion) no necesita datos
+    // de seguimiento de visitas tipo GALP. Si se rellena una, pedimos las
+    // dos para que el seguimiento tenga sentido.
+    if (form.frecuencia && (form.horas_por_visita === "" || Number(form.horas_por_visita) < 0)) {
+      toast.error("Indica las horas por visita");
       return;
     }
-    if (form.horas_por_visita === "" || Number(form.horas_por_visita) < 0) {
-      toast.error("Indica las horas por visita");
+    if (!form.frecuencia && form.horas_por_visita !== "" && Number(form.horas_por_visita) >= 0) {
+      toast.error("Selecciona una frecuencia para el seguimiento de visitas");
       return;
     }
     setGuardando(true);
@@ -189,9 +194,9 @@ const ClientLocationsPage = () => {
         direccion: form.direccion.trim(),
         email_contacto: form.email_contacto.trim() || null,
         enlace_maps: form.enlace_maps.trim() || null,
-        horas_por_visita: Number(form.horas_por_visita),
-        frecuencia: form.frecuencia,
-        visitas_objetivo_ano: Number(form.visitas_objetivo_ano) || 0,
+        horas_por_visita: form.horas_por_visita === "" ? null : Number(form.horas_por_visita),
+        frecuencia: form.frecuencia || null,
+        visitas_objetivo_ano: form.frecuencia ? Number(form.visitas_objetivo_ano) || 0 : null,
         responsable_id: form.responsable_id === "none" ? null : form.responsable_id,
         responsable_texto_libre: form.responsable_texto_libre.trim(),
         dificultad: form.dificultad === "none" ? null : form.dificultad,
@@ -199,10 +204,10 @@ const ClientLocationsPage = () => {
       };
       if (editando) {
         await axios.put(`${API}/locations/${editando.id}`, payload);
-        toast.success("Ubicación actualizada");
+        toast.success("Centro actualizado");
       } else {
         await axios.post(`${API}/clients/${slug}/locations`, payload);
-        toast.success("Ubicación creada");
+        toast.success("Centro creado");
       }
       setDialogOpen(false);
       await cargar();
@@ -219,7 +224,7 @@ const ClientLocationsPage = () => {
     setBorrando(true);
     try {
       await axios.delete(`${API}/locations/${aBorrar.id}`);
-      toast.success("Ubicación eliminada");
+      toast.success("Centro eliminado");
       setABorrar(null);
       await cargar();
     } catch (err) {
@@ -231,7 +236,7 @@ const ClientLocationsPage = () => {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-slate-400">Cargando ubicaciones...</div>;
+    return <div className="p-8 text-center text-slate-400">Cargando centros...</div>;
   }
 
   return (
@@ -249,15 +254,15 @@ const ClientLocationsPage = () => {
       <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-            <MapPin className="w-6 h-6 text-indigo-500" />
+            <Building2 className="w-6 h-6 text-indigo-500" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight font-['Manrope']">
-              Ubicaciones
+              Centros
             </h1>
             <p className="text-sm text-slate-500">
               {cliente?.nombre} · {ubicaciones.length}{" "}
-              {ubicaciones.length === 1 ? "ubicación" : "ubicaciones"}
+              {ubicaciones.length === 1 ? "centro" : "centros"}
             </p>
           </div>
         </div>
@@ -278,7 +283,7 @@ const ClientLocationsPage = () => {
               data-testid="nueva-ubicacion-btn"
             >
               <Plus className="w-4 h-4 mr-2" />
-              Nueva ubicación
+              Nuevo centro
             </Button>
           )}
         </div>
@@ -299,7 +304,7 @@ const ClientLocationsPage = () => {
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400">
             {ubicaciones.length === 0
-              ? "Este cliente todavía no tiene ubicaciones."
+              ? "Este cliente todavía no tiene centros."
               : "Sin resultados para esa búsqueda."}
           </CardContent>
         </Card>
@@ -338,10 +343,18 @@ const ClientLocationsPage = () => {
                         )}
                       </div>
                       <div className="flex items-center gap-3 flex-wrap mt-1.5 text-xs text-slate-500">
+                        {!u.frecuencia && (
+                          <span className="bg-slate-100 px-2 py-0.5 rounded-full text-slate-400">
+                            Sin seguimiento de visitas
+                          </span>
+                        )}
+                        {u.frecuencia && (
                         <span className="bg-slate-100 px-2 py-0.5 rounded-full">
                           {u.frecuencia} · {u.visitas_objetivo_ano}{" "}
                           {u.visitas_objetivo_ano === 1 ? "visita" : "visitas"}/año
                         </span>
+                        )}
+                        {u.frecuencia && (
                         <span
                           className={`px-2 py-0.5 rounded-full font-medium ${
                             u.visitas_pendientes_ano === 0
@@ -352,8 +365,11 @@ const ClientLocationsPage = () => {
                         >
                           {u.visitas_realizadas_ano}/{u.visitas_objetivo_ano} este año
                         </span>
-                        <span>{u.horas_por_visita} h/visita (estimado)</span>
-                        {u.visitas_realizadas_ano > 0 && (
+                        )}
+                        {u.frecuencia && u.horas_por_visita != null && (
+                          <span>{u.horas_por_visita} h/visita (estimado)</span>
+                        )}
+                        {u.frecuencia && u.visitas_realizadas_ano > 0 && (
                           <span
                             className={`px-2 py-0.5 rounded-full font-medium ${
                               u.horas_realizadas_ano > u.horas_estimadas_ano
@@ -427,7 +443,7 @@ const ClientLocationsPage = () => {
       <Dialog open={dialogOpen} onOpenChange={(v) => !guardando && setDialogOpen(v)}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editando ? "Editar ubicación" : "Nueva ubicación"}</DialogTitle>
+            <DialogTitle>{editando ? "Editar centro" : "Nuevo centro"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -482,12 +498,17 @@ const ClientLocationsPage = () => {
               />
             </div>
 
+            <p className="text-xs text-slate-400 -mb-1">
+              Seguimiento de visitas (opcional): rellénalo solo si quieres controlar
+              frecuencia y horas, como en los centros de GALP. Un centro puede quedarse
+              solo con nombre y dirección.
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Frecuencia</Label>
                 <Select value={form.frecuencia} onValueChange={cambiarFrecuencia}>
                   <SelectTrigger data-testid="loc-frecuencia-select">
-                    <SelectValue placeholder="Selecciona..." />
+                    <SelectValue placeholder="Sin seguimiento" />
                   </SelectTrigger>
                   <SelectContent>
                     {FRECUENCIAS.map((f) => (
@@ -504,6 +525,7 @@ const ClientLocationsPage = () => {
                   id="loc-objetivo"
                   type="number"
                   min="0"
+                  disabled={!form.frecuencia}
                   value={form.visitas_objetivo_ano}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, visitas_objetivo_ano: e.target.value }))
@@ -519,6 +541,8 @@ const ClientLocationsPage = () => {
                 type="number"
                 min="0"
                 step="0.5"
+                disabled={!form.frecuencia}
+                placeholder={form.frecuencia ? "" : "Sin seguimiento"}
                 value={form.horas_por_visita}
                 onChange={(e) => setForm((f) => ({ ...f, horas_por_visita: e.target.value }))}
               />
