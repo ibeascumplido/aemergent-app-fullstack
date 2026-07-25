@@ -3613,6 +3613,259 @@ async def eliminar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin))
 
 
 # =====================================================================
+# INCIDENCIAS POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Problemas/avisos abiertos de un cliente. Pensado para en el futuro
+# conectarse con el correo (que cualquier email referenciado a ese
+# cliente se archive aqui automaticamente) - por ahora es un registro
+# manual: crear, cerrar/reabrir, borrar.
+# =====================================================================
+
+
+class IncidenciaCreate(BaseModel):
+    client_id: str
+    titulo: str = Field(..., min_length=1, max_length=200)
+    descripcion: Optional[str] = Field("", max_length=2000)
+
+
+class Incidencia(BaseModel):
+    id: str
+    client_id: str
+    titulo: str
+    descripcion: Optional[str] = ""
+    estado: str = "abierta"  # abierta | cerrada
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+    cerrado_por_nombre: Optional[str] = None
+    cerrado_en: Optional[datetime] = None
+
+
+@api_router.get("/incidencias", response_model=List[Incidencia])
+async def list_incidencias(
+    client_id: str, solo_abiertas: bool = False, _: dict = Depends(require_approved)
+):
+    query = {"client_id": client_id}
+    if solo_abiertas:
+        query["estado"] = "abierta"
+    cursor = db.incidencias.find(query).sort("creado_en", -1)
+    return [Incidencia(**i) async for i in cursor]
+
+
+@api_router.post("/incidencias", response_model=Incidencia)
+async def crear_incidencia(
+    payload: IncidenciaCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "titulo": payload.titulo.strip(),
+        "descripcion": (payload.descripcion or "").strip(),
+        "estado": "abierta",
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "cerrado_por_nombre": None,
+        "cerrado_en": None,
+    }
+    await db.incidencias.insert_one(doc)
+    return Incidencia(**doc)
+
+
+@api_router.put("/incidencias/{incidencia_id}/cerrar", response_model=Incidencia)
+async def cerrar_incidencia(incidencia_id: str, current_user: dict = Depends(require_approved)):
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    await db.incidencias.update_one(
+        {"id": incidencia_id},
+        {
+            "$set": {
+                "estado": "cerrada",
+                "cerrado_por_nombre": usuario["name"] if usuario else "?",
+                "cerrado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    return Incidencia(**doc)
+
+
+@api_router.put("/incidencias/{incidencia_id}/reabrir", response_model=Incidencia)
+async def reabrir_incidencia(incidencia_id: str, _: dict = Depends(require_approved)):
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    await db.incidencias.update_one(
+        {"id": incidencia_id},
+        {"$set": {"estado": "abierta", "cerrado_por_nombre": None, "cerrado_en": None}},
+    )
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    return Incidencia(**doc)
+
+
+@api_router.delete("/incidencias/{incidencia_id}")
+async def eliminar_incidencia(incidencia_id: str, _: dict = Depends(require_admin)):
+    result = await db.incidencias.delete_one({"id": incidencia_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    return {"ok": True}
+
+
+# =====================================================================
+# CONTACTOS DE RESPONSABLES POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Personas de contacto de cada cliente (puede haber varias). Solo admin
+# gestiona (crear/editar/borrar); cualquier aprobado puede consultarlas.
+# =====================================================================
+
+
+class ContactoCreate(BaseModel):
+    client_id: str
+    nombre: str = Field(..., min_length=1, max_length=200)
+    cargo: Optional[str] = Field(None, max_length=150)
+    telefono: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=200)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class ContactoUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    cargo: Optional[str] = Field(None, max_length=150)
+    telefono: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=200)
+    notas: Optional[str] = Field(None, max_length=1000)
+
+
+class Contacto(BaseModel):
+    id: str
+    client_id: str
+    nombre: str
+    cargo: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = ""
+    creado_en: datetime
+
+
+@api_router.get("/contactos", response_model=List[Contacto])
+async def list_contactos(client_id: str, _: dict = Depends(require_approved)):
+    cursor = db.contactos.find({"client_id": client_id}).sort("nombre", 1)
+    return [Contacto(**c) async for c in cursor]
+
+
+@api_router.post("/contactos", response_model=Contacto)
+async def crear_contacto(payload: ContactoCreate, _: dict = Depends(require_admin)):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "nombre": payload.nombre.strip(),
+        "cargo": (payload.cargo or "").strip() or None,
+        "telefono": (payload.telefono or "").strip() or None,
+        "email": (payload.email or "").strip() or None,
+        "notas": payload.notas or "",
+        "creado_en": now,
+    }
+    await db.contactos.insert_one(doc)
+    return Contacto(**doc)
+
+
+@api_router.put("/contactos/{contacto_id}", response_model=Contacto)
+async def actualizar_contacto(
+    contacto_id: str, payload: ContactoUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.contactos.find_one({"id": contacto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        await db.contactos.update_one({"id": contacto_id}, {"$set": updates})
+    doc = await db.contactos.find_one({"id": contacto_id})
+    return Contacto(**doc)
+
+
+@api_router.delete("/contactos/{contacto_id}")
+async def eliminar_contacto(contacto_id: str, _: dict = Depends(require_admin)):
+    result = await db.contactos.delete_one({"id": contacto_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    return {"ok": True}
+
+
+# =====================================================================
+# COMENTARIOS DEL OPERARIO POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Notas rapidas con fecha, pensadas para vivir junto a Fotos y Tareas
+# pendientes en el bloque de "Actividad" de la ficha del cliente.
+# Cualquier aprobado escribe; borrar solo admin o quien lo escribio.
+# =====================================================================
+
+
+class ComentarioClienteCreate(BaseModel):
+    client_id: str
+    texto: str = Field(..., min_length=1, max_length=1000)
+
+
+class ComentarioCliente(BaseModel):
+    id: str
+    client_id: str
+    texto: str
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+@api_router.get("/comentarios-cliente", response_model=List[ComentarioCliente])
+async def list_comentarios_cliente(client_id: str, _: dict = Depends(require_approved)):
+    cursor = db.comentarios_cliente.find({"client_id": client_id}).sort("creado_en", -1)
+    return [ComentarioCliente(**c) async for c in cursor]
+
+
+@api_router.post("/comentarios-cliente", response_model=ComentarioCliente)
+async def crear_comentario_cliente(
+    payload: ComentarioClienteCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "texto": payload.texto.strip(),
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.comentarios_cliente.insert_one(doc)
+    return ComentarioCliente(**doc)
+
+
+@api_router.delete("/comentarios-cliente/{comentario_id}")
+async def eliminar_comentario_cliente(
+    comentario_id: str, current_user: dict = Depends(require_approved)
+):
+    doc = await db.comentarios_cliente.find_one({"id": comentario_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Comentario no encontrado")
+    if current_user.get("role") != "admin" and doc["creado_por"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Solo puedes borrar tus propios comentarios")
+    await db.comentarios_cliente.delete_one({"id": comentario_id})
+    return {"ok": True}
+
+
+# =====================================================================
 # PLANIFICACION DE EQUIPO (Fase 7)
 # ---------------------------------------------------------------------
 # Rejilla independiente (no el calendario de vacaciones): dias en filas,
