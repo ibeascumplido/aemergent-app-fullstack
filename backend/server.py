@@ -105,6 +105,10 @@ class NotificationType(str, Enum):
     FOTO_COMENTARIO = "foto_comentario"
     SOLICITUD_ROPA = "solicitud_ropa"
     SOLICITUD_ROPA_RESUELTA = "solicitud_ropa_resuelta"
+    AVISO_CLIMATOLOGICO = "aviso_climatologico"
+    SOLICITUD_EPI = "solicitud_epi"
+    SOLICITUD_EPI_RESUELTA = "solicitud_epi_resuelta"
+    JUSTIFICANTE_MEDICO = "justificante_medico"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -214,6 +218,21 @@ async def notify_admins(notification_type: str, title: str, message: str, data: 
             data=data or {}
         )
 
+async def notify_all_approved(notification_type: str, title: str, message: str, data: dict = None):
+    """Envia una notificacion a todos los usuarios aprobados (ej. un aviso
+    climatologico que debe llegarle a toda la plantilla, no solo a admins)."""
+    usuarios = await db.users.find(
+        {"status": UserStatus.APPROVED}, {"_id": 0, "user_id": 1}
+    ).to_list(1000)
+    for u in usuarios:
+        await create_notification(
+            user_id=u["user_id"],
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            data=data or {}
+        )
+
 # ============ AUTH MODELS ============
 class UserBase(BaseModel):
     email: str
@@ -247,6 +266,8 @@ class UserResponse(BaseModel):
     )
     fecha_ultima_revision_medica: Optional[str] = None
     fecha_proxima_revision_medica: Optional[str] = None
+    hora_proxima_revision_medica: Optional[str] = None
+    lugar_proxima_revision_medica: Optional[str] = None
     telefono: Optional[str] = None
     dni: Optional[str] = None
     direccion: Optional[str] = None
@@ -265,6 +286,8 @@ class UserUpdate(BaseModel):
     puesto: Optional[str] = None
     fecha_ultima_revision_medica: Optional[str] = None
     fecha_proxima_revision_medica: Optional[str] = None
+    hora_proxima_revision_medica: Optional[str] = None
+    lugar_proxima_revision_medica: Optional[str] = None
     telefono: Optional[str] = None
     dni: Optional[str] = None
     direccion: Optional[str] = None
@@ -1781,11 +1804,15 @@ def _es_pdf_base64(valor: Optional[str]) -> bool:
 class DocumentoFirmaCreate(BaseModel):
     nombre: str = Field(..., min_length=1, max_length=200)
     pdf: str = Field(..., description="Data-URI base64 del PDF original")
+    categoria: Optional[str] = Field(
+        None, max_length=50, description="Ej. 'prevencion' para agrupar en ese apartado"
+    )
 
 
 class DocumentoFirma(BaseModel):
     id: str
     nombre: str
+    categoria: Optional[str] = None
     pdf_url: str
     pdf_public_id: str
     num_paginas: int
@@ -1815,7 +1842,7 @@ class FirmarDocumentoPayload(BaseModel):
 
 @api_router.post("/documentos-firma", response_model=DocumentoFirma)
 async def crear_documento_firma(
-    payload: DocumentoFirmaCreate, current_user: dict = Depends(require_approved)
+    payload: DocumentoFirmaCreate, current_user: dict = Depends(require_admin)
 ):
     if not _es_pdf_base64(payload.pdf):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
@@ -1834,6 +1861,7 @@ async def crear_documento_firma(
     doc = {
         "id": str(uuid.uuid4()),
         "nombre": payload.nombre.strip(),
+        "categoria": payload.categoria,
         "pdf_url": url,
         "pdf_public_id": public_id,
         "num_paginas": num_paginas,
@@ -1854,11 +1882,15 @@ async def crear_documento_firma(
 
 @api_router.get("/documentos-firma", response_model=List[DocumentoFirma])
 async def list_documentos_firma(
-    solo_pendientes: bool = False, _: dict = Depends(require_approved)
+    solo_pendientes: bool = False,
+    categoria: Optional[str] = None,
+    _: dict = Depends(require_approved),
 ):
     query = {}
     if solo_pendientes:
         query["firmado"] = False
+    if categoria:
+        query["categoria"] = categoria
     cursor = db.documentos_firma.find(query).sort("creado_en", -1)
     return [DocumentoFirma(**d) async for d in cursor]
 
@@ -6355,6 +6387,376 @@ async def rechazar_solicitud_ropa(
     )
     doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
     return SolicitudRopa(**doc)
+
+
+# =====================================================================
+# PREVENCION (Fase 18)
+# ---------------------------------------------------------------------
+# Apartado propio en el menu del operario con todo lo relacionado con
+# prevencion de riesgos laborales: avisos de parada por clima adverso,
+# solicitud de material EPI, fecha del ultimo reconocimiento medico
+# (ya vive en el propio usuario, ver fecha_ultima_revision_medica),
+# protocolo de actuacion en caso de baja (mutua) y subida de
+# justificantes medicos. Los documentos de prevencion ya firmados se
+# consultan filtrando /documentos-firma?categoria=prevencion.
+# =====================================================================
+
+_MOTIVO_AVISO_CLIMA_PATTERN = r"^(altas_temperaturas|bajas_temperaturas|lluvia|viento|nieve|otro)$"
+
+
+class AvisoClimatologicoCreate(BaseModel):
+    motivo: str = Field(..., pattern=_MOTIVO_AVISO_CLIMA_PATTERN)
+    descripcion: Optional[str] = Field("", max_length=1000)
+    fecha_inicio: str = Field(..., description="YYYY-MM-DD")
+    fecha_fin: Optional[str] = Field(None, description="YYYY-MM-DD, vacio si es solo el dia de inicio")
+
+
+class AvisoClimatologico(BaseModel):
+    id: str
+    motivo: str
+    descripcion: Optional[str] = ""
+    fecha_inicio: str
+    fecha_fin: Optional[str] = None
+    activo: bool = True
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+@api_router.get("/avisos-clima", response_model=List[AvisoClimatologico])
+async def list_avisos_clima(solo_activos: bool = False, _: dict = Depends(require_approved)):
+    query = {"activo": True} if solo_activos else {}
+    cursor = db.avisos_clima.find(query).sort("creado_en", -1)
+    return [AvisoClimatologico(**a) async for a in cursor]
+
+
+@api_router.post("/avisos-clima", response_model=AvisoClimatologico)
+async def crear_aviso_clima(
+    payload: AvisoClimatologicoCreate, current_user: dict = Depends(require_admin)
+):
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "motivo": payload.motivo,
+        "descripcion": payload.descripcion,
+        "fecha_inicio": payload.fecha_inicio,
+        "fecha_fin": payload.fecha_fin,
+        "activo": True,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.avisos_clima.insert_one(doc)
+
+    _MOTIVO_TEXTOS = {
+        "altas_temperaturas": "altas temperaturas",
+        "bajas_temperaturas": "bajas temperaturas",
+        "lluvia": "lluvia",
+        "viento": "viento",
+        "nieve": "nieve",
+        "otro": "inclemencias climatológicas",
+    }
+    motivo_texto = _MOTIVO_TEXTOS.get(payload.motivo, "inclemencias climatológicas")
+    mensaje = f"Se suspende el trabajo por {motivo_texto} desde el {payload.fecha_inicio}"
+    if payload.fecha_fin:
+        mensaje += f" hasta el {payload.fecha_fin}"
+    mensaje += "."
+    await notify_all_approved(
+        notification_type=NotificationType.AVISO_CLIMATOLOGICO,
+        title="Aviso: parada por clima adverso ⛈️",
+        message=mensaje,
+        data={"aviso_id": doc["id"]},
+    )
+    return AvisoClimatologico(**doc)
+
+
+@api_router.put("/avisos-clima/{aviso_id}/desactivar", response_model=AvisoClimatologico)
+async def desactivar_aviso_clima(aviso_id: str, _: dict = Depends(require_admin)):
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Aviso no encontrado")
+    await db.avisos_clima.update_one({"id": aviso_id}, {"$set": {"activo": False}})
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    return AvisoClimatologico(**doc)
+
+
+@api_router.delete("/avisos-clima/{aviso_id}")
+async def eliminar_aviso_clima(aviso_id: str, _: dict = Depends(require_admin)):
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Aviso no encontrado")
+    await db.avisos_clima.delete_one({"id": aviso_id})
+    return {"ok": True}
+
+
+# --- Solicitudes de material EPI --------------------------------------
+
+_ESTADO_SOLICITUD_EPI_PATTERN = r"^(pendiente|aprobada|rechazada)$"
+
+# Catalogo orientativo (el frontend lo usa para el desplegable); se guarda
+# como texto libre por si hace falta un tipo que no esta en la lista.
+EPI_TIPOS_SUGERIDOS = [
+    "casco", "gafas_proteccion", "mascarilla", "guantes",
+    "chaleco_alta_visibilidad", "botas_seguridad", "protector_auditivo",
+    "arnes", "otro",
+]
+
+
+class SolicitudEPICreate(BaseModel):
+    tipo: str = Field(..., min_length=1, max_length=100)
+    cantidad: int = Field(1, ge=1, le=20)
+    notas: Optional[str] = Field("", max_length=500)
+
+
+class SolicitudEPI(BaseModel):
+    id: str
+    operario_id: str
+    tipo: str
+    cantidad: int
+    notas: Optional[str] = ""
+    estado: str = Field("pendiente", pattern=_ESTADO_SOLICITUD_EPI_PATTERN)
+    resuelta_por: Optional[str] = None
+    resuelta_en: Optional[datetime] = None
+    creado_en: datetime
+
+
+class SolicitudEPIConNombre(SolicitudEPI):
+    operario_nombre: str
+
+
+@api_router.get("/solicitudes-epi", response_model=List[SolicitudEPIConNombre])
+async def list_solicitudes_epi(
+    estado: Optional[str] = None,
+    mias: bool = False,
+    current_user: dict = Depends(require_approved),
+):
+    query = {}
+    if mias:
+        query["operario_id"] = current_user["user_id"]
+    if estado:
+        if not re.match(_ESTADO_SOLICITUD_EPI_PATTERN, estado):
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.solicitudes_epi.find(query).sort("creado_en", -1)
+    solicitudes = [s async for s in cursor]
+
+    operario_ids = {s["operario_id"] for s in solicitudes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        SolicitudEPIConNombre(**s, operario_nombre=operarios_map.get(s["operario_id"], "Operario"))
+        for s in solicitudes
+    ]
+
+
+@api_router.post("/solicitudes-epi", response_model=SolicitudEPI)
+async def crear_solicitud_epi(
+    payload: SolicitudEPICreate, current_user: dict = Depends(require_approved)
+):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "tipo": payload.tipo,
+        "cantidad": payload.cantidad,
+        "notas": payload.notas,
+        "estado": "pendiente",
+        "resuelta_por": None,
+        "resuelta_en": None,
+        "creado_en": now,
+    }
+    await db.solicitudes_epi.insert_one(doc)
+
+    await notify_admins(
+        notification_type=NotificationType.SOLICITUD_EPI,
+        title=f"{current_user.get('name', 'Un operario')} pidió material EPI",
+        message=f"{payload.tipo} x{payload.cantidad}",
+        data={"solicitud_id": doc["id"]},
+    )
+    return SolicitudEPI(**doc)
+
+
+@api_router.put("/solicitudes-epi/{solicitud_id}/aprobar", response_model=SolicitudEPI)
+async def aprobar_solicitud_epi(solicitud_id: str, current_user: dict = Depends(require_admin)):
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_epi.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "aprobada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_EPI_RESUELTA,
+        title="Tu solicitud de material EPI fue aprobada",
+        message=f"{doc['tipo']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    return SolicitudEPI(**doc)
+
+
+@api_router.put("/solicitudes-epi/{solicitud_id}/rechazar", response_model=SolicitudEPI)
+async def rechazar_solicitud_epi(solicitud_id: str, current_user: dict = Depends(require_admin)):
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_epi.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "rechazada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_EPI_RESUELTA,
+        title="Tu solicitud de material EPI fue rechazada",
+        message=f"{doc['tipo']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    return SolicitudEPI(**doc)
+
+
+# --- Configuracion de Prevencion (protocolo de baja / mutua) ----------
+# Documento unico (id fijo "prevencion") editable por el admin, de solo
+# lectura para el resto: protocolo a seguir en caso de baja y enlace a
+# los centros de la mutua para ser atendido.
+
+class ConfiguracionPrevencionUpdate(BaseModel):
+    protocolo_baja: Optional[str] = Field(None, max_length=5000)
+    mutua_nombre: Optional[str] = Field(None, max_length=200)
+    mutua_url: Optional[str] = Field(None, max_length=500)
+
+
+@api_router.get("/configuracion/prevencion")
+async def obtener_configuracion_prevencion(_: dict = Depends(require_approved)):
+    doc = await db.configuracion.find_one({"id": "prevencion"}, {"_id": 0})
+    if not doc:
+        return {
+            "id": "prevencion",
+            "protocolo_baja": "",
+            "mutua_nombre": "",
+            "mutua_url": "",
+        }
+    return doc
+
+
+@api_router.put("/configuracion/prevencion")
+async def actualizar_configuracion_prevencion(
+    payload: ConfiguracionPrevencionUpdate, current_user: dict = Depends(require_admin)
+):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    updates["actualizado_por"] = current_user["user_id"]
+    await db.configuracion.update_one(
+        {"id": "prevencion"}, {"$set": updates, "$setOnInsert": {"id": "prevencion"}}, upsert=True
+    )
+    doc = await db.configuracion.find_one({"id": "prevencion"}, {"_id": 0})
+    return doc
+
+
+# --- Justificantes medicos ---------------------------------------------
+# Fotos de justificantes de baja medica o de asistencia sanitaria a un
+# familiar, subidas por el propio operario. Reutiliza el mismo helper
+# generico de subida a Cloudinary que usan logos/fotos de perfil.
+
+class JustificanteMedicoCreate(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto del justificante")
+    descripcion: Optional[str] = Field("", max_length=300)
+
+
+class JustificanteMedico(BaseModel):
+    id: str
+    operario_id: str
+    url: str
+    public_id: Optional[str] = None
+    descripcion: Optional[str] = ""
+    creado_en: datetime
+
+
+class JustificanteMedicoConNombre(JustificanteMedico):
+    operario_nombre: str
+
+
+@api_router.get("/justificantes-medicos", response_model=List[JustificanteMedicoConNombre])
+async def list_justificantes_medicos(mias: bool = False, current_user: dict = Depends(require_approved)):
+    query = {}
+    if mias or current_user.get("role") not in (UserRole.ADMIN,):
+        # Un operario normal solo ve los suyos, sea cual sea el valor de
+        # 'mias'; solo un admin puede pedir el listado completo.
+        query["operario_id"] = current_user["user_id"]
+    cursor = db.justificantes_medicos.find(query).sort("creado_en", -1)
+    justificantes = [j async for j in cursor]
+
+    operario_ids = {j["operario_id"] for j in justificantes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        JustificanteMedicoConNombre(
+            **j, operario_nombre=operarios_map.get(j["operario_id"], "Operario")
+        )
+        for j in justificantes
+    ]
+
+
+@api_router.post("/justificantes-medicos", response_model=JustificanteMedico)
+async def subir_justificante_medico(
+    payload: JustificanteMedicoCreate, current_user: dict = Depends(require_approved)
+):
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no válido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "url": url,
+        "public_id": public_id,
+        "descripcion": payload.descripcion,
+        "creado_en": now,
+    }
+    await db.justificantes_medicos.insert_one(doc)
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    await notify_admins(
+        notification_type=NotificationType.JUSTIFICANTE_MEDICO,
+        title=f"{usuario['name'] if usuario else 'Un operario'} subió un justificante médico",
+        message=payload.descripcion or "Sin descripción",
+        data={"justificante_id": doc["id"]},
+    )
+    return JustificanteMedico(**doc)
+
+
+@api_router.delete("/justificantes-medicos/{justificante_id}")
+async def eliminar_justificante_medico(justificante_id: str, current_user: dict = Depends(require_approved)):
+    doc = await db.justificantes_medicos.find_one({"id": justificante_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Justificante no encontrado")
+    es_propio = doc["operario_id"] == current_user["user_id"]
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    if not es_propio and not es_admin:
+        raise HTTPException(status_code=403, detail="No puedes borrar este justificante")
+    await _borrar_logo_cloudinary(doc.get("public_id"))
+    await db.justificantes_medicos.delete_one({"id": justificante_id})
+    return {"ok": True}
 
 
 # Include the router in the main app
