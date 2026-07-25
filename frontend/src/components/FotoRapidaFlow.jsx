@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import DashboardTileVisual from "@/components/DashboardTileVisual";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -202,7 +203,7 @@ const FotoRapidaFlow = () => {
   if (paso === "boton") {
     return (
       <label
-        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-900 border border-emerald-900/40 hover:border-emerald-700/60 transition-colors cursor-pointer overflow-hidden"
+        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer p-4"
         data-testid="foto-rapida-btn"
       >
         <input
@@ -215,17 +216,12 @@ const FotoRapidaFlow = () => {
           }}
           className="hidden"
         />
-        <div
-          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
-          style={{ backgroundColor: "#34d399", top: "calc(50% + 6px)" }}
+        <DashboardTileVisual
+          icon={Camera}
+          title="Foto rápida"
+          subtitle="Captura y envía fotos al instante"
+          color="azul"
         />
-        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
-          <Camera
-            className="w-6 h-6 text-emerald-400"
-            style={{ filter: "drop-shadow(0 0 6px rgba(52,211,153,0.7))" }}
-          />
-        </div>
-        <span className="text-sm font-medium text-slate-100">Foto rápida</span>
       </label>
     );
   }

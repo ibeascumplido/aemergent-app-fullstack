@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import DashboardTileVisual from "@/components/DashboardTileVisual";
 import {
   Select,
   SelectContent,
@@ -41,6 +42,7 @@ const TareasHoyWidget = () => {
   const [tareas, setTareas] = useState([]);
   const [destinos, setDestinos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandido, setExpandido] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [descripcion, setDescripcion] = useState("");
@@ -140,7 +142,33 @@ const TareasHoyWidget = () => {
     }
   };
 
-  if (loading || destinos.length === 0) return null;
+  if (loading) return null;
+
+  const numPendientes = tareas.length;
+  const subtitulo =
+    destinos.length === 0
+      ? "Sin destino asignado hoy"
+      : numPendientes === 0
+      ? "Sin tareas pendientes"
+      : `${numPendientes} pendiente${numPendientes === 1 ? "" : "s"}`;
+
+  if (!expandido) {
+    return (
+      <button
+        type="button"
+        onClick={() => setExpandido(true)}
+        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all p-4"
+        data-testid="tarea-hoy-tile"
+      >
+        <DashboardTileVisual
+          icon={ListChecks}
+          title="Tarea de hoy"
+          subtitle={subtitulo}
+          color="ambar"
+        />
+      </button>
+    );
+  }
 
   return (
     <Card className="border-slate-100 shadow-sm mb-6" data-testid="tareas-hoy-widget">
@@ -150,13 +178,28 @@ const TareasHoyWidget = () => {
             <ListChecks className="w-4 h-4 text-slate-400" />
             Tareas de hoy
           </h2>
-          <Button size="sm" variant="outline" onClick={abrirNueva} data-testid="anadir-tarea-hoy-btn">
-            <Plus className="w-3.5 h-3.5 mr-1" />
-            Añadir
-          </Button>
+          <div className="flex items-center gap-2">
+            {destinos.length > 0 && (
+              <Button size="sm" variant="outline" onClick={abrirNueva} data-testid="anadir-tarea-hoy-btn">
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Añadir
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={() => setExpandido(false)}
+              className="text-slate-400 hover:text-slate-600 p-1.5"
+              title="Cerrar"
+              data-testid="cerrar-tarea-hoy-btn"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {tareas.length === 0 ? (
+        {destinos.length === 0 ? (
+          <p className="text-sm text-slate-400">No tienes ningún sitio asignado hoy en Planificación.</p>
+        ) : tareas.length === 0 ? (
           <p className="text-sm text-slate-400">Sin tareas pendientes en tu sitio de hoy.</p>
         ) : (
           <div className="space-y-1.5">

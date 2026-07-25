@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { PenLine, CheckCircle2 } from "lucide-react";
+import DashboardTileVisual from "@/components/DashboardTileVisual";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -95,20 +96,15 @@ const FirmaDocumentosFlow = () => {
       <button
         type="button"
         onClick={abrir}
-        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-900 border border-slate-700/50 hover:border-slate-500/60 transition-colors overflow-hidden"
+        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all p-4"
         data-testid="firma-documentos-btn"
       >
-        <div
-          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
-          style={{ backgroundColor: "#94a3b8", top: "calc(50% + 6px)" }}
+        <DashboardTileVisual
+          icon={PenLine}
+          title="Firma de documentos"
+          subtitle="Firma documentos de forma digital"
+          color="morado"
         />
-        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
-          <PenLine
-            className="w-6 h-6 text-slate-300"
-            style={{ filter: "drop-shadow(0 0 6px rgba(148,163,184,0.7))" }}
-          />
-        </div>
-        <span className="text-sm font-medium text-slate-100">Firma de documentos</span>
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !continuando && setDialogOpen(v)}>

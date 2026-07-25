@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Shirt } from "lucide-react";
+import DashboardTileVisual from "@/components/DashboardTileVisual";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,20 +89,15 @@ const SolicitudRopaFlow = () => {
       <button
         type="button"
         onClick={abrir}
-        className="group relative flex flex-col items-center justify-center gap-3 py-7 px-3 rounded-2xl bg-gradient-to-br from-purple-950 via-slate-900 to-slate-900 border border-purple-900/40 hover:border-purple-700/60 transition-colors overflow-hidden"
+        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all p-4"
         data-testid="solicitud-ropa-btn"
       >
-        <div
-          className="absolute w-12 h-3 rounded-full blur-md opacity-70"
-          style={{ backgroundColor: "#c084fc", top: "calc(50% + 6px)" }}
+        <DashboardTileVisual
+          icon={Shirt}
+          title="Solicitud de ropa"
+          subtitle="Solicita tu ropa o equipo de trabajo"
+          color="naranja"
         />
-        <div className="relative w-14 h-14 rounded-full bg-black/40 flex items-center justify-center shadow-inner">
-          <Shirt
-            className="w-6 h-6 text-purple-400"
-            style={{ filter: "drop-shadow(0 0 6px rgba(192,132,252,0.7))" }}
-          />
-        </div>
-        <span className="text-sm font-medium text-slate-100">Solicitud de ropa</span>
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !enviando && setDialogOpen(v)}>
