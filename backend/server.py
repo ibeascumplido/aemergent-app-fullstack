@@ -2247,9 +2247,13 @@ class ClientLocationBase(BaseModel):
     direccion: Optional[str] = Field("", max_length=300)
     email_contacto: Optional[str] = Field(None, max_length=200)
     enlace_maps: Optional[str] = Field(None, max_length=500)
-    horas_por_visita: float = Field(..., ge=0)
-    frecuencia: str = Field(..., pattern=_FRECUENCIA_PATTERN)
-    visitas_objetivo_ano: int = Field(..., ge=0)
+    # Opcionales (Fase 17 - unificacion Centros/Ubicaciones): un "centro"
+    # sencillo (ej. columna de Planificacion) no siempre tiene datos de
+    # seguimiento de visitas tipo GALP; solo son obligatorios cuando se
+    # rellenan desde la ficha completa.
+    horas_por_visita: Optional[float] = Field(None, ge=0)
+    frecuencia: Optional[str] = Field(None, pattern=_FRECUENCIA_PATTERN)
+    visitas_objetivo_ano: Optional[int] = Field(None, ge=0)
     responsable_id: Optional[str] = None
     responsable_texto_libre: Optional[str] = Field(
         None, max_length=200, description="Nombre libre si el responsable no es un usuario registrado"
@@ -2371,14 +2375,14 @@ async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
     ).sort("nombre", 1)
     async for doc in cursor:
         s = stats.get(doc["id"], {"visitas": 0, "horas": 0, "detalle": []})
-        objetivo = doc.get("visitas_objetivo_ano", 0)
+        objetivo = doc.get("visitas_objetivo_ano") or 0
         resultado.append(
             ClientLocationConVisitas(
                 **doc,
                 visitas_realizadas_ano=s["visitas"],
                 visitas_pendientes_ano=max(0, objetivo - s["visitas"]),
                 horas_realizadas_ano=s["horas"],
-                horas_estimadas_ano=doc.get("horas_por_visita", 0) * s["visitas"],
+                horas_estimadas_ano=(doc.get("horas_por_visita") or 0) * s["visitas"],
                 visitas_detalle=[VisitaResumen(**d) for d in s["detalle"]],
             )
         )
@@ -3234,7 +3238,7 @@ async def list_centros(slug: str, _: dict = Depends(require_approved)):
     cliente = await db.clients.find_one({"slug": slug, "activo": True})
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    cursor = db.centros.find({"client_id": cliente["id"], "activo": True}).sort("nombre", 1)
+    cursor = db.client_locations.find({"client_id": cliente["id"], "activo": True}).sort("nombre", 1)
     return [Centro(**c) async for c in cursor]
 
 
@@ -3254,13 +3258,13 @@ async def crear_centro(slug: str, payload: CentroCreate, _: dict = Depends(requi
         "creado_en": now,
         "actualizado_en": now,
     }
-    await db.centros.insert_one(doc)
+    await db.client_locations.insert_one(doc)
     return Centro(**doc)
 
 
 @api_router.get("/centros/{centro_id}", response_model=Centro)
 async def obtener_centro(centro_id: str, _: dict = Depends(require_approved)):
-    doc = await db.centros.find_one({"id": centro_id})
+    doc = await db.client_locations.find_one({"id": centro_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Centro no encontrado")
     return Centro(**doc)
@@ -3268,23 +3272,23 @@ async def obtener_centro(centro_id: str, _: dict = Depends(require_approved)):
 
 @api_router.put("/centros/{centro_id}", response_model=Centro)
 async def actualizar_centro(centro_id: str, payload: CentroUpdate, _: dict = Depends(require_admin)):
-    doc = await db.centros.find_one({"id": centro_id})
+    doc = await db.client_locations.find_one({"id": centro_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Centro no encontrado")
     updates = payload.model_dump(exclude_unset=True)
     if updates:
         updates["actualizado_en"] = datetime.now(timezone.utc)
-        await db.centros.update_one({"id": centro_id}, {"$set": updates})
-    doc = await db.centros.find_one({"id": centro_id})
+        await db.client_locations.update_one({"id": centro_id}, {"$set": updates})
+    doc = await db.client_locations.find_one({"id": centro_id})
     return Centro(**doc)
 
 
 @api_router.delete("/centros/{centro_id}")
 async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
-    doc = await db.centros.find_one({"id": centro_id})
+    doc = await db.client_locations.find_one({"id": centro_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Centro no encontrado")
-    await db.centros.update_one(
+    await db.client_locations.update_one(
         {"id": centro_id},
         {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
     )
@@ -3355,7 +3359,7 @@ async def _resolver_nombres_tareas(tareas: list) -> List[TareaCentroConNombres]:
             clientes_map[c["id"]] = c["nombre"]
     centros_map = {}
     if centro_ids:
-        async for ce in db.centros.find({"id": {"$in": list(centro_ids)}}):
+        async for ce in db.client_locations.find({"id": {"$in": list(centro_ids)}}):
             centros_map[ce["id"]] = ce["nombre"]
     return [
         TareaCentroConNombres(
@@ -3417,7 +3421,7 @@ async def mis_tareas_hoy(current_user: dict = Depends(require_approved)):
     # Si el destino es un centro, tambien hay que resolver su cliente
     # (para incluir las tareas generales "de todo el cliente")
     if centro_ids_hoy:
-        async for ce in db.centros.find({"id": {"$in": list(centro_ids_hoy)}}):
+        async for ce in db.client_locations.find({"id": {"$in": list(centro_ids_hoy)}}):
             if ce.get("client_id"):
                 client_ids_hoy.add(ce["client_id"])
 
@@ -3461,7 +3465,7 @@ async def mis_destinos_hoy(current_user: dict = Depends(require_approved)):
         client_id = a.get("destino_cliente_id")
         centro_id = a.get("destino_centro_id")
         if centro_id and not client_id:
-            centro = await db.centros.find_one({"id": centro_id})
+            centro = await db.client_locations.find_one({"id": centro_id})
             if centro:
                 client_id = centro.get("client_id")
         if not client_id:
@@ -3473,7 +3477,7 @@ async def mis_destinos_hoy(current_user: dict = Depends(require_approved)):
         cliente = await db.clients.find_one({"id": client_id})
         centro_nombre = None
         if centro_id:
-            centro = await db.centros.find_one({"id": centro_id})
+            centro = await db.client_locations.find_one({"id": centro_id})
             centro_nombre = centro["nombre"] if centro else None
         resultado.append(
             DestinoHoy(
@@ -3494,7 +3498,7 @@ async def crear_tarea_centro(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     if payload.centro_id:
-        centro = await db.centros.find_one({"id": payload.centro_id, "activo": True})
+        centro = await db.client_locations.find_one({"id": payload.centro_id, "activo": True})
         if not centro:
             raise HTTPException(status_code=404, detail="Centro no encontrado")
         if centro.get("client_id") != payload.client_id:
@@ -3949,7 +3953,7 @@ async def list_columnas_planificacion(_: dict = Depends(require_approved)):
 
     centros_info = {}
     if centro_ids:
-        async for ce in db.centros.find({"id": {"$in": centro_ids}}):
+        async for ce in db.client_locations.find({"id": {"$in": centro_ids}}):
             centros_info[ce["id"]] = {"nombre": ce["nombre"], "client_id": ce.get("client_id")}
             if ce.get("client_id"):
                 cliente_ids.append(ce["client_id"])
@@ -4020,7 +4024,7 @@ async def crear_columna_planificacion(
         cl = await db.clients.find_one({"id": payload.cliente_id})
         etiqueta = cl["nombre"] if cl else "(cliente eliminado)"
     elif payload.tipo == "centro":
-        ce = await db.centros.find_one({"id": payload.centro_id})
+        ce = await db.client_locations.find_one({"id": payload.centro_id})
         etiqueta = ce["nombre"] if ce else "(centro eliminado)"
         if ce and ce.get("client_id"):
             cl = await db.clients.find_one({"id": ce["client_id"]})
@@ -4430,7 +4434,7 @@ async def create_work_order(
 
     centro = None
     if payload.centro_id:
-        centro = await db.centros.find_one({"id": payload.centro_id, "activo": True})
+        centro = await db.client_locations.find_one({"id": payload.centro_id, "activo": True})
         if not centro:
             raise HTTPException(status_code=404, detail="Centro no encontrado")
         if cliente and centro.get("client_id") != cliente["id"]:
@@ -4527,7 +4531,7 @@ async def update_work_order(
     if "centro_id" in updates and updates["centro_id"]:
         if current_user.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Solo admin puede vincular el centro")
-        centro = await db.centros.find_one({"id": updates["centro_id"], "activo": True})
+        centro = await db.client_locations.find_one({"id": updates["centro_id"], "activo": True})
         if not centro:
             raise HTTPException(status_code=404, detail="Centro no encontrado")
         cliente_del_parte = doc.get("client_id") or updates.get("client_id")
