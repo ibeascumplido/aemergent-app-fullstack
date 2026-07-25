@@ -1,15 +1,19 @@
 import { Component } from "react";
 
 /**
- * Fase 12: hasta ahora, cualquier error de JavaScript durante el
+ * Fase 12/15: hasta ahora, cualquier error de JavaScript durante el
  * renderizado (por ejemplo, un desajuste puntual entre una version
- * antigua del frontend en cache y el backend ya actualizado - algo mas
- * probable en moviles con la app instalada en pantalla de inicio, donde
- * "abrir" la app a veces solo reanuda un proceso en segundo plano sin
- * descargar nada nuevo) dejaba la pantalla completamente en blanco, sin
- * ningun mensaje. Este componente captura ese tipo de error y ofrece un
- * mensaje claro con un boton para recargar, en vez de dejar al usuario
- * mirando una pantalla vacia sin saber que ha pasado.
+ * antigua del frontend en cache y el backend ya actualizado, o el
+ * backend estando temporalmente caido) dejaba la pantalla completamente
+ * en blanco, sin ningun mensaje. Este componente captura ese tipo de
+ * error y ofrece dos salidas:
+ *   - "Reintentar": reinicia el arbol de React SIN recargar la pagina
+ *     (no hay ninguna navegacion de por medio, asi que no puede verse
+ *     afectado por comportamientos raros de apps instaladas en el
+ *     movil). Suele bastar si el problema era pasajero (ej. el backend
+ *     tardando en responder).
+ *   - "Recargar página": recarga la pagina entera, para los casos en
+ *     los que hace falta descargar una version mas reciente del codigo.
  */
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -24,6 +28,10 @@ class ErrorBoundary extends Component {
   componentDidCatch(error, info) {
     console.error("Error capturado por ErrorBoundary:", error, info);
   }
+
+  reintentar = () => {
+    this.setState({ hasError: false });
+  };
 
   render() {
     if (this.state.hasError) {
@@ -52,27 +60,48 @@ class ErrorBoundary extends Component {
           >
             Algo ha ido mal
           </h1>
-          <p style={{ color: "#64748b", marginBottom: 20, maxWidth: 320, lineHeight: 1.5 }}>
-            Puede que tengas guardada una versión antigua de la app. Prueba a
-            recargar; si sigue igual, cierra la app del todo (no solo
-            minimizarla) y vuelve a abrirla.
+          <p style={{ color: "#64748b", marginBottom: 24, maxWidth: 320, lineHeight: 1.5 }}>
+            Puede haber sido un problema pasajero de conexión, o que tengas
+            guardada una versión antigua de la app.
           </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            style={{
-              padding: "10px 28px",
-              borderRadius: 8,
-              backgroundColor: "#EF4444",
-              color: "white",
-              border: "none",
-              fontWeight: 600,
-              fontSize: 15,
-              cursor: "pointer",
-            }}
-          >
-            Recargar
-          </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+            <button
+              type="button"
+              onClick={this.reintentar}
+              style={{
+                padding: "10px 24px",
+                borderRadius: 8,
+                backgroundColor: "#EF4444",
+                color: "white",
+                border: "none",
+                fontWeight: 600,
+                fontSize: 15,
+                cursor: "pointer",
+              }}
+            >
+              Reintentar
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{
+                padding: "10px 24px",
+                borderRadius: 8,
+                backgroundColor: "white",
+                color: "#334155",
+                border: "1px solid #cbd5e1",
+                fontWeight: 600,
+                fontSize: 15,
+                cursor: "pointer",
+              }}
+            >
+              Recargar página
+            </button>
+          </div>
+          <p style={{ color: "#94a3b8", marginTop: 20, maxWidth: 320, fontSize: 13, lineHeight: 1.5 }}>
+            Si "Recargar página" tampoco funciona, cierra la app del todo
+            (no solo minimizarla) y vuelve a abrirla.
+          </p>
         </div>
       );
     }
