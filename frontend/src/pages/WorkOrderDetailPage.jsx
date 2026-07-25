@@ -840,7 +840,7 @@ const WorkOrderDetailPage = () => {
           data-testid="firma-presencial-btn"
         >
           <PenLine className="w-4 h-4 mr-2" />
-          Firma presencial
+          Mostrar al cliente y firmar
         </Button>
         <Button
           variant="outline"
@@ -1413,54 +1413,183 @@ const WorkOrderDetailPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Firma presencial (Fase 11): el operario le pasa el movil al
-          cliente para que firme aqui mismo, sin depender del enlace. */}
-      <Dialog
-        open={dialogFirmaPresencialOpen}
-        onOpenChange={(v) => !enviandoFirmaPresencial && setDialogFirmaPresencialOpen(v)}
-      >
-        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
-          <DialogHeader className="p-6 pb-2 shrink-0">
-            <DialogTitle>Firma presencial del cliente</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 overflow-y-auto min-h-0 flex-1 px-6 py-2">
-            <p className="text-xs text-slate-400">
-              Pásale el móvil al cliente para que firme aquí directamente.
+      {/* Firma presencial (Fase 11, rediseñada): en vez de un dialogo
+          pequeño que solo pedia nombre+firma, ahora se abre una vista a
+          pantalla completa con el resumen del parte (fechas, horas,
+          operarios, tareas, notas) tal como lo veria el cliente, y la
+          firma justo debajo. El operario le pasa el movil al cliente y
+          este no ve nada de la edicion interna del parte. */}
+      {dialogFirmaPresencialOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-50 overflow-y-auto" data-testid="vista-previa-firma-presencial">
+          <div className="max-w-lg mx-auto py-6 px-4 space-y-4">
+            <button
+              type="button"
+              onClick={() => !enviandoFirmaPresencial && setDialogFirmaPresencialOpen(false)}
+              disabled={enviandoFirmaPresencial}
+              className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1 -ml-1"
+              data-testid="cerrar-vista-previa-firma-btn"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Volver
+            </button>
+
+            {/* Cabecera corporativa: logo de la empresa + numero de parte */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+              <img src="/logo-inicia.png" alt="Inicia Facility Management" className="h-9 object-contain" />
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">
+                  Parte de trabajo
+                </p>
+                <p className="text-lg font-bold" style={{ color: "#AF1A1C" }}>
+                  {parte.numero || "—"}
+                </p>
+              </div>
+            </div>
+
+            {/* Badges: Cliente/Centro (con logo), Estado, Fecha */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border p-3" style={{ backgroundColor: "#FDF2F2", borderColor: "#f3d4d4" }}>
+                <p className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Cliente / Centro</p>
+                {cliente?.logo_url && (
+                  <img src={cliente.logo_url} alt={cliente.nombre} className="h-6 object-contain mb-1" />
+                )}
+                <p className="text-sm font-bold text-slate-900 truncate">
+                  {cliente?.nombre || centro?.nombre || parte.client_libre || "—"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-200 p-3">
+                <p className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Estado</p>
+                <p className="text-sm font-bold text-slate-900 uppercase">{parte.estado}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 p-3">
+                <p className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Fecha del parte</p>
+                <p className="text-sm font-bold text-slate-900">
+                  {new Date(parte.creado_en).toLocaleDateString("es-ES", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#AF1A1C" }}>
+              Detalle del trabajo
             </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="nombre-firma-presencial">Nombre de quien firma</Label>
-              <Input
-                id="nombre-firma-presencial"
-                value={nombreFirmaPresencial}
-                onChange={(e) => setNombreFirmaPresencial(e.target.value)}
-                placeholder="Nombre y apellidos"
-                data-testid="nombre-firma-presencial-input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Firma</Label>
-              <SignaturePad value={null} onChange={setFirmaPresencialDataUrl} />
-            </div>
+
+            {sessionsOrdenadas.length === 0 ? (
+              <Card className="border-slate-100">
+                <CardContent className="p-6 text-center text-slate-400 text-sm">
+                  Todavía no hay sesiones registradas en este parte.
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {sessionsOrdenadas.map((s) => {
+                  const nombres = nombresDeSesion(s);
+                  const firmante = nombreFirmante(s);
+                  const tareas = (s.tareas_ids || [])
+                    .map((tid) => (tareasPorId[tid] ? { id: tid, nombre: tareasPorId[tid] } : null))
+                    .filter(Boolean);
+                  return (
+                    <Card key={s.id} className="border-slate-100">
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 text-sm flex-wrap">
+                          <Calendar className="w-4 h-4 text-slate-400" />
+                          <span className="font-medium text-slate-900">
+                            {new Date(s.fecha).toLocaleDateString("es-ES", {
+                              weekday: "short",
+                              day: "numeric",
+                              month: "long",
+                            })}
+                          </span>
+                          <Clock className="w-4 h-4 text-slate-400 ml-2" />
+                          <span className="text-slate-700">
+                            {s.hora_inicio} – {s.hora_fin}
+                          </span>
+                          <span className="text-xs text-slate-400 font-['JetBrains_Mono']">
+                            ({horasDeSesion(s.hora_inicio, s.hora_fin).toFixed(1)} h)
+                          </span>
+                        </div>
+
+                        {nombres.length > 0 && (
+                          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                            <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            {nombres.map((n) => (
+                              <span key={n} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {tareas.length > 0 && (
+                          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                            <ClipboardList className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            {tareas.map((t) => (
+                              <span key={t.id} className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+                                {t.nombre}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {firmante && (
+                          <div className="flex items-center gap-1.5 mt-2 text-xs">
+                            <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="text-slate-500">Responsable: {firmante}</span>
+                          </div>
+                        )}
+
+                        {s.notas && (
+                          <p className="text-sm text-slate-600 mt-2 whitespace-pre-wrap">{s.notas}</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "#AF1A1C" }}>
+              Firma del cliente
+            </p>
+            <Card className="border-slate-100">
+              <CardContent className="p-5 space-y-4">
+                <p className="text-xs text-slate-400 text-center">
+                  Firma aquí para confirmar el trabajo realizado
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="nombre-firma-presencial">Nombre de quien firma</Label>
+                  <Input
+                    id="nombre-firma-presencial"
+                    value={nombreFirmaPresencial}
+                    onChange={(e) => setNombreFirmaPresencial(e.target.value)}
+                    placeholder="Nombre y apellidos"
+                    data-testid="nombre-firma-presencial-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Firma</Label>
+                  <SignaturePad value={null} onChange={setFirmaPresencialDataUrl} />
+                </div>
+                <Button
+                  onClick={enviarFirmaPresencial}
+                  disabled={enviandoFirmaPresencial}
+                  className="w-full text-white"
+                  style={{ backgroundColor: "#AF1A1C" }}
+                  data-testid="confirmar-firma-presencial-btn"
+                >
+                  {enviandoFirmaPresencial ? "Guardando..." : "Confirmar firma"}
+                </Button>
+                <p className="text-[11px] text-slate-400 text-center">
+                  ✓ Este documento tiene validez legal y confirma la realización de los trabajos descritos.
+                </p>
+              </CardContent>
+            </Card>
           </div>
-          <DialogFooter className="p-6 pt-3 border-t border-slate-100 shrink-0">
-            <Button
-              variant="ghost"
-              onClick={() => setDialogFirmaPresencialOpen(false)}
-              disabled={enviandoFirmaPresencial}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={enviarFirmaPresencial}
-              disabled={enviandoFirmaPresencial}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              data-testid="confirmar-firma-presencial-btn"
-            >
-              {enviandoFirmaPresencial ? "Guardando..." : "Confirmar firma"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
     </div>
   );
 };
