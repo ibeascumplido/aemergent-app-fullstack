@@ -13,6 +13,7 @@ import FotoRapidaFlow from "@/components/FotoRapidaFlow";
 import ParteRapidoFlow from "@/components/ParteRapidoFlow";
 import SolicitudRopaFlow from "@/components/SolicitudRopaFlow";
 import FirmaDocumentosFlow from "@/components/FirmaDocumentosFlow";
+import DashboardTileVisual from "@/components/DashboardTileVisual";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -181,9 +182,39 @@ const HomePage = () => {
           </div>
 )}
 
-      {/* Foto rapida: sesion de captura multiple + mini clasificacion opcional */}
+      {isAdmin && <FotosPendientesAviso />}
+
+      {/* Accesos rápidos: Mi Calendario, Tarea de hoy, Foto rápida, Parte
+          de trabajo, Solicitud de ropa y Firma de documentos, en ese orden */}
       {!isPending && (
         <div className="grid grid-cols-2 gap-3 mb-8">
+          {myResumen && (
+            <Link
+              to="/my-calendar"
+              className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all p-4"
+              data-testid="mi-calendario-tile"
+            >
+              <DashboardTileVisual
+                icon={Calendar}
+                title="Mi Calendario"
+                subtitle="Vacaciones y días libres"
+                color="rojo"
+                extra={
+                  <div className="flex items-center gap-2 mt-0.5 text-[11px] font-mono font-semibold">
+                    <span className="flex items-center gap-0.5 text-orange-600" title="Vacaciones: total/restantes">
+                      <Palmtree className="w-3 h-3" />
+                      {myResumen.dias_disponibles}/{myResumen.dias_restantes}
+                    </span>
+                    <span className="flex items-center gap-0.5 text-blue-600" title="Días libres: total/restantes">
+                      <Sun className="w-3 h-3" />
+                      {myResumen.dias_libres_disponibles}/{myResumen.dias_libres_restantes}
+                    </span>
+                  </div>
+                }
+              />
+            </Link>
+          )}
+          <TareasHoyWidget />
           <FotoRapidaFlow />
           <ParteRapidoFlow />
           <SolicitudRopaFlow />
@@ -191,9 +222,6 @@ const HomePage = () => {
         </div>
       )}
 
-      {isAdmin && <FotosPendientesAviso />}
-
-      {!isPending && <TareasHoyWidget />}
       {isAdmin && <TareasAdminWidget />}
 
       {/* Pending Approval Notice */}
@@ -211,76 +239,6 @@ const HomePage = () => {
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Acceso rapido a Mi Calendario: ahora va primero, antes de los dias disponibles */}
-      {!isPending && myResumen && (
-        <div className="mb-6">
-          <Link to="/my-calendar">
-            <Card className="border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-red-200">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-slate-500">Acceso rápido</p>
-                    <p className="text-xl font-bold text-slate-900">Mi Calendario</p>
-                    <p className="text-sm text-slate-500 mt-1">Gestiona tus vacaciones y días libres</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center">
-                    <Calendar className="w-6 h-6 text-red-500" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
-      )}
-
-      {/* Dias disponibles de vacaciones y libres */}
-      {!isPending && myResumen && (
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"
-        >
-          <motion.div variants={item}>
-            <Card className="border-orange-200 bg-orange-50 shadow-sm hover:shadow-md transition-all">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-orange-700">Vacaciones</p>
-                    <p className="text-2xl font-bold text-orange-900 font-['JetBrains_Mono']">
-                      {myResumen.dias_disfrutados}/{myResumen.dias_disponibles}
-                    </p>
-                    <p className="text-xs text-orange-600">{myResumen.dias_restantes} restantes</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center">
-                    <Palmtree className="w-6 h-6 text-orange-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div variants={item}>
-            <Card className="border-blue-200 bg-blue-50 shadow-sm hover:shadow-md transition-all">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-blue-700">Días Libres</p>
-                    <p className="text-2xl font-bold text-blue-900 font-['JetBrains_Mono']">
-                      {myResumen.dias_libres_disfrutados}/{myResumen.dias_libres_disponibles}
-                    </p>
-                    <p className="text-xs text-blue-600">{myResumen.dias_libres_restantes} restantes</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
-                    <Sun className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </motion.div>
       )}
 
       {/* Admin Section */}
