@@ -252,23 +252,25 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
                   <p className="text-sm font-semibold text-slate-700 mb-2 capitalize">
                     {formatearFechaLarga(fecha)}
                   </p>
-                  <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2 items-start">
                     {gruposDia.map((grupo) => {
                       const primera = grupo[0];
                       return (
                         <div
                           key={grupo.map((f) => f.id).join("-")}
-                          className="border border-slate-100 rounded-lg p-2.5"
+                          className="inline-flex flex-col border border-slate-100 rounded-lg p-2 max-w-full"
                         >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <p className="text-xs text-slate-400">{primera.operario_nombre}</p>
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <p className="text-[10px] text-slate-400 whitespace-nowrap">
+                              {primera.operario_nombre}
+                            </p>
                             {primera.work_order_titulo && (
-                              <p className="text-xs text-slate-400">
+                              <p className="text-[10px] text-slate-400 truncate max-w-[140px]">
                                 {primera.work_order_titulo}
                               </p>
                             )}
                           </div>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-1.5">
                             {grupo.map((f) => renderMiniatura(f))}
                           </div>
                         </div>
