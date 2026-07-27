@@ -7028,6 +7028,133 @@ async def eliminar_justificante_medico(justificante_id: str, current_user: dict 
     return {"ok": True}
 
 
+# =====================================================================
+# FICHAJE (Fase 19)
+# ---------------------------------------------------------------------
+# Sistema de fichaje muy simple: el operario marca entrada/salida, se
+# guarda su geolocalizacion en ese momento, y el sitio desde donde ficha
+# (un cliente/centro registrado, o el estandar "Inicia Madrid" para
+# cuando trabaja desde la oficina). Sin turnos ni calculo de horas: solo
+# el registro de eventos, para que el admin pueda revisarlos.
+# =====================================================================
+
+_TIPO_FICHAJE_PATTERN = r"^(entrada|salida)$"
+_DESTINO_FICHAJE_PATTERN = r"^(cliente|estandar)$"
+
+
+class FichajeCreate(BaseModel):
+    tipo: str = Field(..., pattern=_TIPO_FICHAJE_PATTERN)
+    latitud: Optional[float] = Field(None, ge=-90, le=90)
+    longitud: Optional[float] = Field(None, ge=-180, le=180)
+    precision_metros: Optional[float] = Field(None, ge=0)
+    destino_tipo: str = Field(..., pattern=_DESTINO_FICHAJE_PATTERN)
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+
+
+class Fichaje(BaseModel):
+    id: str
+    operario_id: str
+    tipo: str
+    fecha_hora: datetime
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    precision_metros: Optional[float] = None
+    destino_tipo: str
+    destino_nombre: str
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+
+
+class FichajeConOperario(Fichaje):
+    operario_nombre: str
+
+
+@api_router.post("/fichajes", response_model=Fichaje)
+async def crear_fichaje(payload: FichajeCreate, current_user: dict = Depends(require_approved)):
+    if payload.destino_tipo == "estandar":
+        destino_nombre = "Inicia Madrid"
+    else:
+        if not payload.destino_cliente_id:
+            raise HTTPException(status_code=400, detail="Selecciona un cliente")
+        cliente = await db.clients.find_one({"id": payload.destino_cliente_id}, {"_id": 0})
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        destino_nombre = cliente["nombre"]
+        if payload.destino_centro_id:
+            centro = await db.client_locations.find_one(
+                {"id": payload.destino_centro_id}, {"_id": 0}
+            )
+            if centro:
+                destino_nombre = f"{destino_nombre} · {centro['nombre']}"
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "tipo": payload.tipo,
+        "fecha_hora": datetime.now(timezone.utc),
+        "latitud": payload.latitud,
+        "longitud": payload.longitud,
+        "precision_metros": payload.precision_metros,
+        "destino_tipo": payload.destino_tipo,
+        "destino_nombre": destino_nombre,
+        "destino_cliente_id": payload.destino_cliente_id if payload.destino_tipo == "cliente" else None,
+        "destino_centro_id": payload.destino_centro_id if payload.destino_tipo == "cliente" else None,
+    }
+    await db.fichajes.insert_one(doc)
+    return Fichaje(**doc)
+
+
+@api_router.get("/fichajes/hoy")
+async def fichajes_de_hoy(current_user: dict = Depends(require_approved)):
+    hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    inicio = datetime.fromisoformat(f"{hoy}T00:00:00+00:00")
+    fin = inicio + timedelta(days=1)
+    cursor = db.fichajes.find(
+        {
+            "operario_id": current_user["user_id"],
+            "fecha_hora": {"$gte": inicio, "$lt": fin},
+        }
+    ).sort("fecha_hora", 1)
+    fichajes = [Fichaje(**f) async for f in cursor]
+    estado = "dentro" if fichajes and fichajes[-1].tipo == "entrada" else "fuera"
+    return {"fichajes": fichajes, "estado": estado}
+
+
+@api_router.get("/admin/fichajes", response_model=List[FichajeConOperario])
+async def list_fichajes_admin(
+    fecha: Optional[str] = None,
+    operario_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    query = {}
+    if fecha:
+        try:
+            inicio = datetime.fromisoformat(f"{fecha}T00:00:00+00:00")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Fecha invalida")
+        fin = inicio + timedelta(days=1)
+        query["fecha_hora"] = {"$gte": inicio, "$lt": fin}
+    if operario_id:
+        query["operario_id"] = operario_id
+
+    cursor = db.fichajes.find(query).sort("fecha_hora", -1)
+    fichajes = [f async for f in cursor]
+
+    operario_ids = {f["operario_id"] for f in fichajes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        FichajeConOperario(**f, operario_nombre=operarios_map.get(f["operario_id"], "Operario"))
+        for f in fichajes
+    ]
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
