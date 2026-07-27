@@ -299,6 +299,19 @@ class UserUpdate(BaseModel):
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+async def _buscar_usuario_por_email(email: str) -> Optional[dict]:
+    """Busca un usuario por email sin distinguir mayusculas/minusculas ni
+    espacios sobrantes. En moviles (sobre todo iPad) el teclado pone la
+    primera letra en mayuscula automaticamente, y si el registro guardo
+    el email como lo escribio el usuario, una busqueda exacta y sensible
+    a mayusculas puede no encontrar la cuenta -> 'contraseña incorrecta'
+    cuando en realidad el problema es el email, no la contraseña."""
+    email_limpio = email.strip()
+    return await db.users.find_one(
+        {"email": {"$regex": f"^{re.escape(email_limpio)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+
 # Helper to get current user from session
 async def get_current_user(request: Request) -> dict:
     # La cabecera Authorization (Bearer) es el mecanismo fiable: el
@@ -607,7 +620,7 @@ async def exchange_session(request: Request, response: Response):
     google_session_token = user_data.get("session_token")
     
     # Check if user exists
-    existing_user = await db.users.find_one({"email": email}, {"_id": 0})
+    existing_user = await _buscar_usuario_por_email(email)
     
     if existing_user:
         user_id = existing_user["user_id"]
@@ -623,7 +636,7 @@ async def exchange_session(request: Request, response: Response):
         abreviatura = name[:3].upper() if name else email[:3].upper()
         user = {
             "user_id": user_id,
-            "email": email,
+            "email": email.strip().lower() if email else email,
             "name": name,
             "picture": picture,
             "role": UserRole.USER,
@@ -678,17 +691,18 @@ async def exchange_session(request: Request, response: Response):
 async def register(user_data: UserCreate, response: Response):
     """Register new user with email/password"""
     # Check if email exists
-    existing = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    existing = await _buscar_usuario_por_email(user_data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     # Create user
     user_id = f"user_{uuid.uuid4().hex[:12]}"
+    email_normalizado = user_data.email.strip().lower()
     abreviatura = user_data.name[:3].upper() if user_data.name else user_data.email[:3].upper()
     
     user = {
         "user_id": user_id,
-        "email": user_data.email,
+        "email": email_normalizado,
         "name": user_data.name,
         "password_hash": hash_password(user_data.password),
         "picture": "",
@@ -743,7 +757,7 @@ async def register(user_data: UserCreate, response: Response):
 @api_router.post("/auth/login")
 async def login(user_data: UserLogin, response: Response):
     """Login with email/password"""
-    user = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    user = await _buscar_usuario_por_email(user_data.email)
     
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
