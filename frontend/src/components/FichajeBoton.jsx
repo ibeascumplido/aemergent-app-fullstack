@@ -29,7 +29,8 @@ const useContadorJornada = (entradaISO, activo) => {
   const [ahora, setAhora] = useState(Date.now());
   useEffect(() => {
     if (!activo) return;
-    const interval = setInterval(() => setAhora(Date.now()), 30000);
+    setAhora(Date.now()); // actualizar ya mismo, sin esperar al primer intervalo
+    const interval = setInterval(() => setAhora(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [activo]);
 
@@ -40,9 +41,10 @@ const useContadorJornada = (entradaISO, activo) => {
   const msMostrado = Math.min(transcurridoMs, topeMs);
   const horas = Math.floor(msMostrado / 3600000);
   const minutos = Math.floor((msMostrado % 3600000) / 60000);
+  const segundos = Math.floor((msMostrado % 60000) / 1000);
   const jornadaCumplida = transcurridoMs >= JORNADA_ESTANDAR_HORAS * 60 * 60 * 1000;
   return {
-    texto: `${horas}h ${String(minutos).padStart(2, "0")}min${enTope ? "+" : ""}`,
+    texto: `${String(horas).padStart(2, "0")}:${String(minutos).padStart(2, "0")}:${String(segundos).padStart(2, "0")}${enTope ? "+" : ""}`,
     jornadaCumplida,
   };
 };
@@ -146,9 +148,10 @@ const FichajeBoton = () => {
     setEnviando(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        // Ubicación aproximada a propósito (no exacta): baja precisión
-        // en el propio navegador (más rápido y gasta menos batería) y
-        // redondeo de las coordenadas a ~1 km.
+        // La aproximacion se consigue redondeando las coordenadas (~1 km),
+        // no pidiendo baja precision al navegador: eso ultimo hacia que
+        // en interiores tardara mas o fallara directamente en algunos
+        // moviles.
         const redondear = (n) => Math.round(n * 100) / 100;
         enviarFichaje(
           redondear(pos.coords.latitude),
@@ -161,7 +164,7 @@ const FichajeBoton = () => {
         toast.error("No se pudo obtener tu ubicación. Se ficha sin ubicación.");
         enviarFichaje(null, null, null);
       },
-      { enableHighAccuracy: false, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
     );
   };
 
