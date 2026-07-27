@@ -301,14 +301,24 @@ def hash_password(password: str) -> str:
 
 # Helper to get current user from session
 async def get_current_user(request: Request) -> dict:
-    # Check cookie first
-    session_token = request.cookies.get("session_token")
-    
-    # Then check Authorization header as fallback
+    # La cabecera Authorization (Bearer) es el mecanismo fiable: el
+    # interceptor de axios la manda en TODAS las peticiones mientras haya
+    # token en localStorage, sin depender de politicas del navegador. Se
+    # comprueba primero por eso. La cookie queda como alternativa (por si
+    # algun dia hay una peticion sin JS de por medio), pero nunca debe
+    # poder invalidar una cabecera valida: las cookies entre dominios
+    # distintos (frontend en Vercel, API en Railway) son justo el tipo de
+    # cookie que Safari/iOS purga de forma agresiva e impredecible,
+    # sobre todo en apps instaladas como PWA, y si quedaba una cookie
+    # caducada o invalida se comprobaba ANTES que la cabecera, rechazando
+    # peticiones perfectamente validas.
+    session_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        session_token = auth_header.split(" ")[1]
+
     if not session_token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            session_token = auth_header.split(" ")[1]
+        session_token = request.cookies.get("session_token")
     
     if not session_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -788,7 +798,17 @@ async def get_me(request: Request):
 @api_router.post("/auth/logout")
 async def logout(request: Request, response: Response):
     """Logout and clear session"""
-    session_token = request.cookies.get("session_token")
+    # Igual que en get_current_user: la cabecera Authorization es el
+    # mecanismo fiable. Si solo mirasemos la cookie y esta ya se hubiera
+    # perdido (Safari/iOS la purga con facilidad entre dominios
+    # distintos), la sesion nunca se borraria de verdad en el servidor
+    # aunque la app la diera por cerrada.
+    session_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        session_token = auth_header.split(" ")[1]
+    if not session_token:
+        session_token = request.cookies.get("session_token")
     
     if session_token:
         await db.user_sessions.delete_one({"session_token": session_token})
