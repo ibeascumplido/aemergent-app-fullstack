@@ -5384,10 +5384,14 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     columna_izquierda = [tabla_grid, Spacer(1, 8), tabla_obs]
 
     # --- Columna derecha: mapa de zonas ---
+    # Altura maxima ajustada para que quepa en una sola pagina apaisada:
+    # la pagina util mide ~18.6cm de alto: cabecera (logo+banner+datos del
+    # cliente) ya ocupa ~5cm, así que el mapa no puede pasar de ~11cm o se
+    # desborda a una segunda pagina.
     mapa_img = await _descargar_imagen_pdf(
         cliente.get("mapa_zonas_url") if cliente else None,
         max_width_cm=ANCHO_DERECHA / cm - 0.4,
-        max_height_cm=16.0,
+        max_height_cm=11.0,
     )
     columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style)]
     if mapa_img:
