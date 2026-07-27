@@ -146,14 +146,22 @@ const FichajeBoton = () => {
     setEnviando(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        enviarFichaje(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+        // Ubicación aproximada a propósito (no exacta): baja precisión
+        // en el propio navegador (más rápido y gasta menos batería) y
+        // redondeo de las coordenadas a ~1 km.
+        const redondear = (n) => Math.round(n * 100) / 100;
+        enviarFichaje(
+          redondear(pos.coords.latitude),
+          redondear(pos.coords.longitude),
+          pos.coords.accuracy
+        );
       },
       (err) => {
         console.error("Error de geolocalización:", err);
         toast.error("No se pudo obtener tu ubicación. Se ficha sin ubicación.");
         enviarFichaje(null, null, null);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: false, timeout: 10000 }
     );
   };
 
@@ -274,7 +282,7 @@ const FichajeBoton = () => {
 
             <p className="text-xs text-slate-400 flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5 shrink-0" />
-              Se guardará tu ubicación en este momento.
+              Se guardará tu ubicación aproximada en este momento.
             </p>
           </div>
 
