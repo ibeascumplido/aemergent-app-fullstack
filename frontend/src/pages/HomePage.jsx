@@ -14,6 +14,7 @@ import ParteRapidoFlow from "@/components/ParteRapidoFlow";
 import SolicitudRopaFlow from "@/components/SolicitudRopaFlow";
 import FirmaDocumentosFlow from "@/components/FirmaDocumentosFlow";
 import DashboardTileVisual from "@/components/DashboardTileVisual";
+import FichajeBoton from "@/components/FichajeBoton";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -84,13 +85,16 @@ const HomePage = () => {
 
   return (
     <div data-testid="home-page">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight font-['Manrope']">
-          Hola, {user?.name?.split(' ')[0] || 'Usuario'}
-        </h1>
-        <p className="text-slate-500 mt-1">
-          {isPending ? 'Tu cuenta está pendiente de aprobación' : 'Resumen de tu actividad'}
-        </p>
+      <div className="mb-8 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight font-['Manrope']">
+            Hola, {user?.name?.split(' ')[0] || 'Usuario'}
+          </h1>
+          <p className="text-slate-500 mt-1">
+            {isPending ? 'Tu cuenta está pendiente de aprobación' : 'Resumen de tu actividad'}
+          </p>
+        </div>
+        {!isPending && <FichajeBoton />}
       </div>
 
       {/* Presupuestos Recientes + Acciones Rapidas: prioritario para el admin */}
