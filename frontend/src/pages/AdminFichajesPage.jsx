@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, MapPin, ExternalLink, Users } from "lucide-react";
+import { Clock, LogIn, LogOut, MapPin, ExternalLink, Users, Download } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -16,6 +17,7 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
+const mesActualISO = () => new Date().toISOString().slice(0, 7);
 
 const AdminFichajesPage = () => {
   const [fecha, setFecha] = useState(hoyISO());
@@ -24,12 +26,47 @@ const AdminFichajesPage = () => {
   const [fichajes, setFichajes] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [operarioInforme, setOperarioInforme] = useState("");
+  const [mesInforme, setMesInforme] = useState(mesActualISO());
+  const [descargandoInforme, setDescargandoInforme] = useState(false);
+
   useEffect(() => {
     axios
       .get(`${API}/users/operarios`)
-      .then((res) => setOperarios(res.data))
+      .then((res) => {
+        setOperarios(res.data);
+        if (res.data.length > 0) setOperarioInforme(res.data[0].user_id);
+      })
       .catch(() => setOperarios([]));
   }, []);
+
+  const descargarInforme = async () => {
+    if (!operarioInforme) {
+      toast.error("Selecciona un operario");
+      return;
+    }
+    setDescargandoInforme(true);
+    try {
+      const res = await axios.get(`${API}/admin/fichajes/pdf`, {
+        params: { operario_id: operarioInforme, mes: mesInforme },
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const nombreOperario = operarios.find((o) => o.user_id === operarioInforme)?.name || "operario";
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fichajes-${nombreOperario.replace(/\s+/g, "_")}-${mesInforme}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error descargando informe:", err);
+      toast.error("No se pudo generar el informe");
+    } finally {
+      setDescargandoInforme(false);
+    }
+  };
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -63,6 +100,49 @@ const AdminFichajesPage = () => {
           <p className="text-sm text-slate-500">Entradas y salidas del equipo, con ubicación</p>
         </div>
       </div>
+
+      <Card className="border-slate-100 shadow-sm mb-4">
+        <CardContent className="p-4 space-y-3">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">
+            Informe mensual (PDF)
+          </p>
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="space-y-1.5 min-w-[180px]">
+              <Label>Operario</Label>
+              <Select value={operarioInforme} onValueChange={setOperarioInforme}>
+                <SelectTrigger data-testid="informe-operario-select">
+                  <SelectValue placeholder="Selecciona..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {operarios.map((o) => (
+                    <SelectItem key={o.user_id} value={o.user_id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Mes</Label>
+              <Input
+                type="month"
+                value={mesInforme}
+                onChange={(e) => setMesInforme(e.target.value)}
+                data-testid="informe-mes-input"
+              />
+            </div>
+            <Button
+              onClick={descargarInforme}
+              disabled={descargandoInforme}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="descargar-informe-fichajes-btn"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              {descargandoInforme ? "Generando..." : "Descargar PDF"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="flex items-end gap-3 mb-4 flex-wrap">
         <div className="space-y-1.5">
