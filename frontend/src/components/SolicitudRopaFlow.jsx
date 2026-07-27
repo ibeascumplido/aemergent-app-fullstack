@@ -137,14 +137,14 @@ const SolicitudRopaFlow = () => {
                     <SelectValue placeholder="Selecciona..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {prendaActiva.tallas.map((t) => (
+                    {(prendaActiva.tallas || []).map((t) => (
                       <SelectItem key={t.talla} value={t.talla}>
                         {t.talla}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {prendaActiva.tallas.length === 0 && (
+                {(prendaActiva.tallas || []).length === 0 && (
                   <p className="text-xs text-slate-400">
                     Esta prenda todavía no tiene tallas configuradas.
                   </p>
