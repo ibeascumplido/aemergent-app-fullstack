@@ -36,7 +36,12 @@ const LoginPage = () => {
       }
       navigate('/');
     } catch (error) {
-      const message = error.response?.data?.detail || 'Error de autenticación';
+      let message = error.response?.data?.detail || 'Error de autenticación';
+      if (message === 'Please use Google login for this account') {
+        message = 'Esta cuenta se registró con Google. Inicia sesión con el botón de Google, no con contraseña.';
+      } else if (message === 'Invalid credentials') {
+        message = 'Email o contraseña incorrectos.';
+      }
       toast.error(message);
     } finally {
       setLoading(false);
