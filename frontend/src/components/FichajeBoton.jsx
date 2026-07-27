@@ -148,6 +148,33 @@ const FichajeBoton = () => {
 
   const redondear = (n) => Math.round(n * 100) / 100;
 
+  const obtenerUbicacionFresca = () => {
+    // watchPosition entrega la PRIMERA lectura disponible en cuanto la
+    // tiene, en vez de esperar a la "mejor" posible como getCurrentPosition
+    // (que en algunos moviles se queda esperando de mas). Le damos un
+    // margen real de 20s antes de rendirnos.
+    let resuelto = false;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (resuelto) return;
+        resuelto = true;
+        navigator.geolocation.clearWatch(watchId);
+        enviarFichaje(
+          redondear(pos.coords.latitude),
+          redondear(pos.coords.longitude),
+          pos.coords.accuracy
+        );
+      },
+      (err) => {
+        if (resuelto) return;
+        resuelto = true;
+        navigator.geolocation.clearWatch(watchId);
+        manejarErrorUbicacion(err);
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  };
+
   const confirmarFichaje = () => {
     if (modo === "cliente" && !clienteId) {
       toast.error("Selecciona un cliente");
@@ -159,12 +186,11 @@ const FichajeBoton = () => {
     }
     setEnviando(true);
 
-    // Primer intento: alta precision (GPS), pero con poco tiempo de
-    // espera. En interiores el GPS puede tardar mucho o no engancharse
-    // nunca, asi que si no responde a tiempo NO nos quedamos esperando:
-    // caemos automaticamente a un segundo intento por red/wifi, mas
-    // lento en exterior pero mucho mas rapido en interiores (que es
-    // ademas justo lo que necesitamos, una ubicacion aproximada).
+    // Paso 1: pedir cualquier posicion que el propio movil YA tenga
+    // guardada (aunque tenga hasta 1 hora), sin obligar a calcular una
+    // nueva. Para una ubicacion aproximada nos vale de sobra, y responde
+    // casi al instante si existe. Solo si no hay ninguna guardada (poco
+    // habitual) se intenta obtener una nueva de verdad, con margen real.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         enviarFichaje(
@@ -173,24 +199,14 @@ const FichajeBoton = () => {
           pos.coords.accuracy
         );
       },
-      (primerError) => {
-        if (primerError.code !== primerError.TIMEOUT) {
-          manejarErrorUbicacion(primerError);
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          manejarErrorUbicacion(err);
           return;
         }
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            enviarFichaje(
-              redondear(pos.coords.latitude),
-              redondear(pos.coords.longitude),
-              pos.coords.accuracy
-            );
-          },
-          manejarErrorUbicacion,
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 }
-        );
+        obtenerUbicacionFresca();
       },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+      { enableHighAccuracy: false, timeout: 3000, maximumAge: 3600000 }
     );
   };
 
