@@ -423,10 +423,24 @@ const WorkOrderDetailPage = () => {
 
   // Firma presencial (Fase 11): el operario le pasa el movil al cliente
   // para que firme ahi mismo, sin depender del enlace remoto.
-  const abrirFirmaPresencial = () => {
+  const [rejillaZonas, setRejillaZonas] = useState(null);
+  const [cargandoRejillaVista, setCargandoRejillaVista] = useState(false);
+
+  const abrirFirmaPresencial = async () => {
     setNombreFirmaPresencial("");
     setFirmaPresencialDataUrl(null);
     setDialogFirmaPresencialOpen(true);
+    if (parte.usa_zonas) {
+      setCargandoRejillaVista(true);
+      try {
+        const res = await axios.get(`${API}/work-orders/${id}/rejilla-zonas`);
+        setRejillaZonas(res.data);
+      } catch (err) {
+        console.error("Error cargando rejilla para la vista previa:", err);
+      } finally {
+        setCargandoRejillaVista(false);
+      }
+    }
   };
 
   const enviarFirmaPresencial = async () => {
@@ -1477,7 +1491,85 @@ const WorkOrderDetailPage = () => {
               Detalle del trabajo
             </p>
 
-            {sessionsOrdenadas.length === 0 ? (
+            {parte.usa_zonas ? (
+              cargandoRejillaVista ? (
+                <Card className="border-slate-100">
+                  <CardContent className="p-6 text-center text-slate-400 text-sm">
+                    Cargando rejilla...
+                  </CardContent>
+                </Card>
+              ) : !rejillaZonas || rejillaZonas.tareas.length === 0 ? (
+                <Card className="border-slate-100">
+                  <CardContent className="p-6 text-center text-slate-400 text-sm">
+                    Esta rejilla todavía no tiene tareas.
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  <Card className="border-slate-100">
+                    <CardContent className="p-3 overflow-x-auto">
+                      {(() => {
+                        const mapaCeldas = {};
+                        rejillaZonas.celdas.forEach((c) => {
+                          mapaCeldas[`${c.tarea_id}|${c.fecha}`] = (c.zonas || []).join(",");
+                        });
+                        return (
+                          <table className="text-[11px] border-collapse" data-testid="rejilla-vista-previa-tabla">
+                            <thead>
+                              <tr>
+                                <th className="sticky left-0 bg-white text-left font-semibold text-slate-600 pr-2 pb-1 border-b border-slate-200">
+                                  Tarea
+                                </th>
+                                {rejillaZonas.dias.map((d) => (
+                                  <th
+                                    key={d}
+                                    className="px-1 pb-1 text-slate-500 font-medium border-b border-slate-200 text-center"
+                                  >
+                                    {d.split("-")[2]}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rejillaZonas.tareas.map((t) => (
+                                <tr key={t.tarea_id}>
+                                  <td className="sticky left-0 bg-white pr-2 py-1 font-medium text-slate-700 whitespace-nowrap border-b border-slate-100">
+                                    {t.tarea_nombre}
+                                  </td>
+                                  {rejillaZonas.dias.map((d) => (
+                                    <td
+                                      key={d}
+                                      className="px-1 py-1 text-center border-b border-slate-100 font-semibold"
+                                      style={{ color: "#AF1A1C" }}
+                                    >
+                                      {mapaCeldas[`${t.tarea_id}|${d}`] || ""}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
+                    </CardContent>
+                  </Card>
+                  {cliente?.mapa_zonas_url && (
+                    <Card className="border-slate-100">
+                      <CardContent className="p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-2">
+                          Mapa de zonas
+                        </p>
+                        <img
+                          src={cliente.mapa_zonas_url}
+                          alt="Mapa de zonas"
+                          className="w-full rounded-lg border border-slate-100"
+                        />
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )
+            ) : sessionsOrdenadas.length === 0 ? (
               <Card className="border-slate-100">
                 <CardContent className="p-6 text-center text-slate-400 text-sm">
                   Todavía no hay sesiones registradas en este parte.
