@@ -219,7 +219,7 @@ const AdminFichajesPage = () => {
                           className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-0.5 justify-end"
                         >
                           <MapPin className="w-3 h-3" />
-                          Ver mapa
+                          Ver zona aprox.
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       ) : (
