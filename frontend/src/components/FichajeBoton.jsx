@@ -21,6 +21,32 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const JORNADA_ESTANDAR_HORAS = 7.5;
+const TOPE_CONTADOR_HORAS = 12;
+
+/** Cuenta hacia delante desde la hora de entrada, con tope en 12h. */
+const useContadorJornada = (entradaISO, activo) => {
+  const [ahora, setAhora] = useState(Date.now());
+  useEffect(() => {
+    if (!activo) return;
+    const interval = setInterval(() => setAhora(Date.now()), 30000);
+    return () => clearInterval(interval);
+  }, [activo]);
+
+  if (!activo || !entradaISO) return null;
+  const transcurridoMs = Math.max(0, ahora - new Date(entradaISO).getTime());
+  const topeMs = TOPE_CONTADOR_HORAS * 60 * 60 * 1000;
+  const enTope = transcurridoMs >= topeMs;
+  const msMostrado = Math.min(transcurridoMs, topeMs);
+  const horas = Math.floor(msMostrado / 3600000);
+  const minutos = Math.floor((msMostrado % 3600000) / 60000);
+  const jornadaCumplida = transcurridoMs >= JORNADA_ESTANDAR_HORAS * 60 * 60 * 1000;
+  return {
+    texto: `${horas}h ${String(minutos).padStart(2, "0")}min${enTope ? "+" : ""}`,
+    jornadaCumplida,
+  };
+};
+
 /**
  * Boton de fichaje (Fase 19), junto al saludo del dashboard. Muy simple a
  * proposito: solo entrada/salida, con geolocalizacion y el sitio desde
@@ -131,9 +157,10 @@ const FichajeBoton = () => {
     );
   };
 
-  if (loading) return null;
-
   const dentro = estado === "dentro";
+  const contador = useContadorJornada(ultimoFichaje?.fecha_hora, dentro);
+
+  if (loading) return null;
 
   return (
     <>
@@ -142,16 +169,25 @@ const FichajeBoton = () => {
         onClick={abrirDialogo}
         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border shadow-sm transition-all shrink-0 ${
           dentro
-            ? "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+            ? contador?.jornadaCumplida
+              ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+              : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
             : "bg-white border-slate-200 text-slate-700 hover:border-red-200"
         }`}
         data-testid="fichaje-btn"
       >
-        <span className={`w-2 h-2 rounded-full ${dentro ? "bg-green-500 animate-pulse" : "bg-slate-300"}`} />
+        <span
+          className={`w-2 h-2 rounded-full ${
+            dentro ? (contador?.jornadaCumplida ? "bg-amber-500" : "bg-green-500 animate-pulse") : "bg-slate-300"
+          }`}
+        />
         <Clock className="w-4 h-4" />
         <span className="text-sm font-semibold">
           {dentro ? "Fichar salida" : "Fichar entrada"}
         </span>
+        {dentro && contador && (
+          <span className="text-xs font-mono opacity-80">· {contador.texto}</span>
+        )}
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !enviando && setDialogOpen(v)}>
