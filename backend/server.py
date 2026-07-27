@@ -7155,6 +7155,126 @@ async def list_fichajes_admin(
     ]
 
 
+@api_router.get("/admin/fichajes/pdf")
+async def descargar_pdf_fichajes(
+    operario_id: str, mes: str, _: dict = Depends(require_admin)
+):
+    """Informe mensual de fichajes de un operario: dia, hora, tipo, destino
+    y ubicacion (enlace a Google Maps). mes en formato YYYY-MM."""
+    if not re.match(r"^\d{4}-\d{2}$", mes):
+        raise HTTPException(status_code=400, detail="Formato de mes invalido (usa YYYY-MM)")
+    anio, mes_num = int(mes[:4]), int(mes[5:7])
+    inicio = datetime(anio, mes_num, 1, tzinfo=timezone.utc)
+    fin = (
+        datetime(anio + 1, 1, 1, tzinfo=timezone.utc)
+        if mes_num == 12
+        else datetime(anio, mes_num + 1, 1, tzinfo=timezone.utc)
+    )
+
+    usuario = await db.users.find_one({"user_id": operario_id}, {"_id": 0})
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Operario no encontrado")
+
+    cursor = db.fichajes.find(
+        {"operario_id": operario_id, "fecha_hora": {"$gte": inicio, "$lt": fin}}
+    ).sort("fecha_hora", 1)
+    fichajes = [f async for f in cursor]
+
+    pdf_bytes = _generar_pdf_fichajes(usuario, mes, fichajes)
+    filename = f"fichajes-{usuario.get('name', 'operario').replace(' ', '_')}-{mes}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _generar_pdf_fichajes(usuario: dict, mes: str, fichajes: List[dict]) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm, title=f"Fichajes {mes}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=14,
+    )
+    celda_style = ParagraphStyle("Celda", parent=styles["Normal"], fontSize=8.5, leading=11)
+    celda_header_style = ParagraphStyle(
+        "CeldaHeader", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.white, fontName="Helvetica-Bold",
+    )
+    link_style = ParagraphStyle(
+        "Link", parent=styles["Normal"], fontSize=8.5, textColor=colors.HexColor("#4f46e5")
+    )
+
+    logo_img = _logo_inicia_image(max_width_cm=3.5, max_height_cm=1.1)
+    story = []
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph(f"Informe de fichajes · {_p(usuario.get('name'))}", titulo_style))
+    story.append(Paragraph(f"Mes: {mes} · {len(fichajes)} registro(s)", subtitulo_style))
+
+    if not fichajes:
+        story.append(Paragraph("No hay fichajes registrados este mes.", celda_style))
+    else:
+        filas = [[
+            Paragraph("Día", celda_header_style),
+            Paragraph("Hora", celda_header_style),
+            Paragraph("Tipo", celda_header_style),
+            Paragraph("Destino", celda_header_style),
+            Paragraph("Ubicación", celda_header_style),
+        ]]
+        for f in fichajes:
+            fh = f["fecha_hora"]
+            dia_txt = fh.strftime("%d/%m/%Y")
+            hora_txt = fh.strftime("%H:%M")
+            tipo_txt = "Entrada" if f["tipo"] == "entrada" else "Salida"
+            destino_txt = _p(f.get("destino_nombre", ""))
+            if f.get("latitud") is not None and f.get("longitud") is not None:
+                maps_url = f"https://www.google.com/maps?q={f['latitud']},{f['longitud']}"
+                ubicacion_cell = Paragraph(f'<a href="{maps_url}">Ver mapa</a>', link_style)
+            else:
+                ubicacion_cell = Paragraph("Sin ubicación", celda_style)
+            filas.append([
+                Paragraph(dia_txt, celda_style),
+                Paragraph(hora_txt, celda_style),
+                Paragraph(tipo_txt, celda_style),
+                Paragraph(destino_txt, celda_style),
+                ubicacion_cell,
+            ])
+
+        tabla = Table(
+            filas,
+            colWidths=[2.6 * cm, 1.8 * cm, 2.2 * cm, 6.5 * cm, 3.4 * cm],
+            repeatRows=1,
+        )
+        tabla.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ]
+            )
+        )
+        story.append(tabla)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
