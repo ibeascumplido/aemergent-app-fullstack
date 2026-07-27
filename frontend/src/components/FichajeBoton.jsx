@@ -157,12 +157,12 @@ const FichajeBoton = () => {
     }
     setEnviando(true);
 
-    // Vuelta a una unica peticion simple (como la version original, que
-    // funcionaba bien): en Android, encadenar varios intentos con
-    // configuraciones distintas parece confundir al proveedor de
-    // ubicacion del propio telefono y dejarlo colgado. La aproximacion
-    // se consigue solo redondeando el resultado (~1 km), no cambiando
-    // como se pide la ubicacion.
+    // Peticion identica a la version original que funcionaba en Android
+    // y iPhone: sin maximumAge (= 0, siempre posicion ACTUAL, nunca una
+    // guardada — lo del iPhone fichando en la ultima ubicacion venia de
+    // haber añadido maximumAge) y timeout de 10s. El unico añadido sobre
+    // el original es el redondeo del resultado (~1 km) para que quede
+    // aproximada.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const redondear = (n) => Math.round(n * 100) / 100;
@@ -186,7 +186,7 @@ const FichajeBoton = () => {
         toast.error(mensaje, { duration: 6000 });
         enviarFichaje(null, null, null);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
