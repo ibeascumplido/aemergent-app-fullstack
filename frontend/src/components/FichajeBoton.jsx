@@ -146,35 +146,6 @@ const FichajeBoton = () => {
     }
   };
 
-  const redondear = (n) => Math.round(n * 100) / 100;
-
-  const obtenerUbicacionFresca = () => {
-    // watchPosition entrega la PRIMERA lectura disponible en cuanto la
-    // tiene, en vez de esperar a la "mejor" posible como getCurrentPosition
-    // (que en algunos moviles se queda esperando de mas). Le damos un
-    // margen real de 20s antes de rendirnos.
-    let resuelto = false;
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        if (resuelto) return;
-        resuelto = true;
-        navigator.geolocation.clearWatch(watchId);
-        enviarFichaje(
-          redondear(pos.coords.latitude),
-          redondear(pos.coords.longitude),
-          pos.coords.accuracy
-        );
-      },
-      (err) => {
-        if (resuelto) return;
-        resuelto = true;
-        navigator.geolocation.clearWatch(watchId);
-        manejarErrorUbicacion(err);
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-    );
-  };
-
   const confirmarFichaje = () => {
     if (modo === "cliente" && !clienteId) {
       toast.error("Selecciona un cliente");
@@ -186,13 +157,15 @@ const FichajeBoton = () => {
     }
     setEnviando(true);
 
-    // Paso 1: pedir cualquier posicion que el propio movil YA tenga
-    // guardada (aunque tenga hasta 1 hora), sin obligar a calcular una
-    // nueva. Para una ubicacion aproximada nos vale de sobra, y responde
-    // casi al instante si existe. Solo si no hay ninguna guardada (poco
-    // habitual) se intenta obtener una nueva de verdad, con margen real.
+    // Vuelta a una unica peticion simple (como la version original, que
+    // funcionaba bien): en Android, encadenar varios intentos con
+    // configuraciones distintas parece confundir al proveedor de
+    // ubicacion del propio telefono y dejarlo colgado. La aproximacion
+    // se consigue solo redondeando el resultado (~1 km), no cambiando
+    // como se pide la ubicacion.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        const redondear = (n) => Math.round(n * 100) / 100;
         enviarFichaje(
           redondear(pos.coords.latitude),
           redondear(pos.coords.longitude),
@@ -200,33 +173,21 @@ const FichajeBoton = () => {
         );
       },
       (err) => {
+        console.error("Error de geolocalización:", err);
+        let mensaje = "No se pudo obtener tu ubicación. Se ficha sin ubicación.";
         if (err.code === err.PERMISSION_DENIED) {
-          manejarErrorUbicacion(err);
-          return;
+          mensaje =
+            "Ubicación bloqueada para esta app. Revisa el permiso de ubicación de la app en los ajustes del sistema.";
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          mensaje = "No se pudo determinar tu ubicación. Comprueba que el GPS esté activado.";
+        } else if (err.code === err.TIMEOUT) {
+          mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
         }
-        obtenerUbicacionFresca();
+        toast.error(mensaje, { duration: 6000 });
+        enviarFichaje(null, null, null);
       },
-      { enableHighAccuracy: false, timeout: 3000, maximumAge: 3600000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 300000 }
     );
-  };
-
-  const manejarErrorUbicacion = (err) => {
-    console.error("Error de geolocalización:", err);
-    let mensaje = "No se pudo obtener tu ubicación. Se ficha sin ubicación.";
-    if (err.code === err.PERMISSION_DENIED) {
-      mensaje =
-        "Ubicación bloqueada para esta app. Actívala en los ajustes del navegador (icono del candado, junto a la URL) y vuelve a intentarlo.";
-    } else if (err.code === err.POSITION_UNAVAILABLE) {
-      mensaje = "No se pudo determinar tu ubicación. Comprueba que el GPS esté activado.";
-    } else if (err.code === err.TIMEOUT) {
-      mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
-    }
-    // Detalle tecnico sin traducir, para poder diagnosticar el fallo real
-    // en vez de seguir adivinando: codigo numerico + mensaje que da el
-    // propio navegador.
-    mensaje += ` (código ${err.code}: ${err.message || "sin detalle"}; permiso: ${permisoUbicacion || "desconocido"})`;
-    toast.error(mensaje, { duration: 10000 });
-    enviarFichaje(null, null, null);
   };
 
   const dentro = estado === "dentro";
