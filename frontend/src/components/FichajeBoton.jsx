@@ -221,7 +221,11 @@ const FichajeBoton = () => {
     } else if (err.code === err.TIMEOUT) {
       mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
     }
-    toast.error(mensaje, { duration: 6000 });
+    // Detalle tecnico sin traducir, para poder diagnosticar el fallo real
+    // en vez de seguir adivinando: codigo numerico + mensaje que da el
+    // propio navegador.
+    mensaje += ` (código ${err.code}: ${err.message || "sin detalle"}; permiso: ${permisoUbicacion || "desconocido"})`;
+    toast.error(mensaje, { duration: 10000 });
     enviarFichaje(null, null, null);
   };
 
