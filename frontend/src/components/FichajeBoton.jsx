@@ -1,0 +1,264 @@
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { Clock, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+/**
+ * Boton de fichaje (Fase 19), junto al saludo del dashboard. Muy simple a
+ * proposito: solo entrada/salida, con geolocalizacion y el sitio desde
+ * donde se ficha (cliente/centro registrado, o el estandar "Inicia
+ * Madrid" para cuando se trabaja desde la oficina). Sin turnos ni
+ * calculo de horas, solo el registro de eventos.
+ */
+const FichajeBoton = () => {
+  const [estado, setEstado] = useState("fuera"); // dentro | fuera
+  const [ultimoFichaje, setUltimoFichaje] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [modo, setModo] = useState("estandar"); // estandar | cliente
+  const [clientes, setClientes] = useState([]);
+  const [clienteId, setClienteId] = useState("");
+  const [centrosDelCliente, setCentrosDelCliente] = useState([]);
+  const [centroId, setCentroId] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  const cargarEstado = async () => {
+    try {
+      const res = await axios.get(`${API}/fichajes/hoy`);
+      setEstado(res.data.estado);
+      const lista = res.data.fichajes || [];
+      setUltimoFichaje(lista.length > 0 ? lista[lista.length - 1] : null);
+    } catch (err) {
+      console.error("Error cargando estado de fichaje:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarEstado();
+  }, []);
+
+  const abrirDialogo = () => {
+    setModo("estandar");
+    setClienteId("");
+    setCentroId("");
+    setCentrosDelCliente([]);
+    setDialogOpen(true);
+    if (clientes.length === 0) {
+      axios
+        .get(`${API}/clients`)
+        .then((res) => setClientes(res.data))
+        .catch(() => setClientes([]));
+    }
+  };
+
+  const onCambiarCliente = (id) => {
+    setClienteId(id);
+    setCentroId("");
+    setCentrosDelCliente([]);
+    const cliente = clientes.find((c) => c.id === id);
+    if (cliente) {
+      axios
+        .get(`${API}/clients/${cliente.slug}/centros`)
+        .then((res) => setCentrosDelCliente(res.data))
+        .catch(() => setCentrosDelCliente([]));
+    }
+  };
+
+  const enviarFichaje = async (lat, lng, precision) => {
+    setEnviando(true);
+    try {
+      await axios.post(`${API}/fichajes`, {
+        tipo: estado === "dentro" ? "salida" : "entrada",
+        latitud: lat,
+        longitud: lng,
+        precision_metros: precision,
+        destino_tipo: modo,
+        destino_cliente_id: modo === "cliente" ? clienteId || null : null,
+        destino_centro_id: modo === "cliente" ? centroId || null : null,
+      });
+      toast.success(estado === "dentro" ? "Salida fichada" : "Entrada fichada");
+      setDialogOpen(false);
+      await cargarEstado();
+    } catch (err) {
+      console.error("Error fichando:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo fichar");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const confirmarFichaje = () => {
+    if (modo === "cliente" && !clienteId) {
+      toast.error("Selecciona un cliente");
+      return;
+    }
+    if (!navigator.geolocation) {
+      enviarFichaje(null, null, null);
+      return;
+    }
+    setEnviando(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        enviarFichaje(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+      },
+      (err) => {
+        console.error("Error de geolocalización:", err);
+        toast.error("No se pudo obtener tu ubicación. Se ficha sin ubicación.");
+        enviarFichaje(null, null, null);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  if (loading) return null;
+
+  const dentro = estado === "dentro";
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={abrirDialogo}
+        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border shadow-sm transition-all shrink-0 ${
+          dentro
+            ? "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+            : "bg-white border-slate-200 text-slate-700 hover:border-red-200"
+        }`}
+        data-testid="fichaje-btn"
+      >
+        <span className={`w-2 h-2 rounded-full ${dentro ? "bg-green-500 animate-pulse" : "bg-slate-300"}`} />
+        <Clock className="w-4 h-4" />
+        <span className="text-sm font-semibold">
+          {dentro ? "Fichar salida" : "Fichar entrada"}
+        </span>
+      </button>
+
+      <Dialog open={dialogOpen} onOpenChange={(v) => !enviando && setDialogOpen(v)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{dentro ? "Fichar salida" : "Fichar entrada"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {ultimoFichaje && (
+              <p className="text-xs text-slate-400">
+                {dentro ? "Entrada fichada" : "Última salida"} a las{" "}
+                {new Date(ultimoFichaje.fecha_hora).toLocaleTimeString("es-ES", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}{" "}
+                en {ultimoFichaje.destino_nombre}.
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setModo("estandar")}
+                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                  modo === "estandar"
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                    : "bg-white border-slate-200 text-slate-500"
+                }`}
+                data-testid="fichaje-modo-estandar-btn"
+              >
+                Inicia Madrid
+              </button>
+              <button
+                type="button"
+                onClick={() => setModo("cliente")}
+                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                  modo === "cliente"
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                    : "bg-white border-slate-200 text-slate-500"
+                }`}
+                data-testid="fichaje-modo-cliente-btn"
+              >
+                Cliente / Centro
+              </button>
+            </div>
+
+            {modo === "cliente" && (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Cliente</Label>
+                  <Select value={clienteId} onValueChange={onCambiarCliente}>
+                    <SelectTrigger data-testid="fichaje-cliente-select">
+                      <SelectValue placeholder="Selecciona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clientes.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {clienteId && centrosDelCliente.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label>Centro (opcional)</Label>
+                    <Select value={centroId} onValueChange={setCentroId}>
+                      <SelectTrigger data-testid="fichaje-centro-select">
+                        <SelectValue placeholder="Selecciona..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {centrosDelCliente.map((ce) => (
+                          <SelectItem key={ce.id} value={ce.id}>
+                            {ce.nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </>
+            )}
+
+            <p className="text-xs text-slate-400 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              Se guardará tu ubicación en este momento.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={enviando}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={confirmarFichaje}
+              disabled={enviando}
+              className={`text-white ${dentro ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}`}
+              data-testid="confirmar-fichaje-btn"
+            >
+              {enviando ? "Fichando..." : dentro ? "Confirmar salida" : "Confirmar entrada"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
+
+export default FichajeBoton;
