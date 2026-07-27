@@ -68,6 +68,7 @@ const FichajeBoton = () => {
   const [centrosDelCliente, setCentrosDelCliente] = useState([]);
   const [centroId, setCentroId] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [permisoUbicacion, setPermisoUbicacion] = useState(null); // null | "granted" | "denied" | "prompt"
 
   const cargarEstado = async () => {
     try {
@@ -97,6 +98,15 @@ const FichajeBoton = () => {
         .get(`${API}/clients`)
         .then((res) => setClientes(res.data))
         .catch(() => setClientes([]));
+    }
+    if (navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: "geolocation" })
+        .then((status) => {
+          setPermisoUbicacion(status.state);
+          status.onchange = () => setPermisoUbicacion(status.state);
+        })
+        .catch(() => setPermisoUbicacion(null));
     }
   };
 
@@ -161,7 +171,16 @@ const FichajeBoton = () => {
       },
       (err) => {
         console.error("Error de geolocalización:", err);
-        toast.error("No se pudo obtener tu ubicación. Se ficha sin ubicación.");
+        let mensaje = "No se pudo obtener tu ubicación. Se ficha sin ubicación.";
+        if (err.code === err.PERMISSION_DENIED) {
+          mensaje =
+            "Ubicación bloqueada para esta app. Actívala en los ajustes del navegador (icono del candado, junto a la URL) y vuelve a intentarlo.";
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          mensaje = "No se pudo determinar tu ubicación. Comprueba que el GPS esté activado.";
+        } else if (err.code === err.TIMEOUT) {
+          mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
+        }
+        toast.error(mensaje, { duration: 6000 });
         enviarFichaje(null, null, null);
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
@@ -287,6 +306,13 @@ const FichajeBoton = () => {
               <MapPin className="w-3.5 h-3.5 shrink-0" />
               Se guardará tu ubicación aproximada en este momento.
             </p>
+            {permisoUbicacion === "denied" && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2.5" data-testid="aviso-ubicacion-bloqueada">
+                Tienes la ubicación bloqueada para esta app. Ábrela en los ajustes del
+                navegador (icono del candado junto a la URL) y actívala, o el fichaje se
+                guardará sin ubicación.
+              </p>
+            )}
           </div>
 
           <DialogFooter>
