@@ -19,6 +19,7 @@ import MaquinariaDetailPage from "@/pages/MaquinariaDetailPage";
 import RopaPage from "@/pages/RopaPage";
 import PrevencionPage from "@/pages/PrevencionPage";
 import AdminPrevencionPage from "@/pages/AdminPrevencionPage";
+import AdminFichajesPage from "@/pages/AdminFichajesPage";
 import DocumentoFirmaPage from "@/pages/DocumentoFirmaPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
@@ -103,6 +104,11 @@ function App() {
               <Route path="admin/prevencion" element={
                 <ProtectedRoute requireAdmin>
                   <AdminPrevencionPage />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/fichajes" element={
+                <ProtectedRoute requireAdmin>
+                  <AdminFichajesPage />
                 </ProtectedRoute>
               } />
               <Route path="clients/:id" element={
