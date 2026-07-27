@@ -9,7 +9,7 @@ import base64
 import logging
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
-from pydantic import BaseModel, Field, ConfigDict, EmailStr
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
 from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta, date
@@ -7065,6 +7065,18 @@ class Fichaje(BaseModel):
     destino_cliente_id: Optional[str] = None
     destino_centro_id: Optional[str] = None
 
+    @field_validator("fecha_hora")
+    @classmethod
+    def _forzar_utc(cls, v: datetime) -> datetime:
+        # Mongo guarda los datetime sin zona horaria (naive) aunque se
+        # guarden en UTC; al leerlos de vuelta pierden el "+00:00" y, si
+        # se serializan asi, el navegador los interpreta como hora LOCAL
+        # en vez de UTC, desplazando cualquier calculo en vivo (como el
+        # contador de jornada) por el huso horario del usuario.
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
 
 class FichajeConOperario(Fichaje):
     operario_nombre: str
@@ -7238,7 +7250,7 @@ def _generar_pdf_fichajes(usuario: dict, mes: str, fichajes: List[dict]) -> byte
             destino_txt = _p(f.get("destino_nombre", ""))
             if f.get("latitud") is not None and f.get("longitud") is not None:
                 maps_url = f"https://www.google.com/maps?q={f['latitud']},{f['longitud']}"
-                ubicacion_cell = Paragraph(f'<a href="{maps_url}">Ver mapa</a>', link_style)
+                ubicacion_cell = Paragraph(f'<a href="{maps_url}">Ver zona aprox.</a>', link_style)
             else:
                 ubicacion_cell = Paragraph("Sin ubicación", celda_style)
             filas.append([
