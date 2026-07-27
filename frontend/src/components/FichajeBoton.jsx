@@ -146,6 +146,8 @@ const FichajeBoton = () => {
     }
   };
 
+  const redondear = (n) => Math.round(n * 100) / 100;
+
   const confirmarFichaje = () => {
     if (modo === "cliente" && !clienteId) {
       toast.error("Selecciona un cliente");
@@ -156,35 +158,55 @@ const FichajeBoton = () => {
       return;
     }
     setEnviando(true);
+
+    // Primer intento: alta precision (GPS), pero con poco tiempo de
+    // espera. En interiores el GPS puede tardar mucho o no engancharse
+    // nunca, asi que si no responde a tiempo NO nos quedamos esperando:
+    // caemos automaticamente a un segundo intento por red/wifi, mas
+    // lento en exterior pero mucho mas rapido en interiores (que es
+    // ademas justo lo que necesitamos, una ubicacion aproximada).
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        // La aproximacion se consigue redondeando las coordenadas (~1 km),
-        // no pidiendo baja precision al navegador: eso ultimo hacia que
-        // en interiores tardara mas o fallara directamente en algunos
-        // moviles.
-        const redondear = (n) => Math.round(n * 100) / 100;
         enviarFichaje(
           redondear(pos.coords.latitude),
           redondear(pos.coords.longitude),
           pos.coords.accuracy
         );
       },
-      (err) => {
-        console.error("Error de geolocalización:", err);
-        let mensaje = "No se pudo obtener tu ubicación. Se ficha sin ubicación.";
-        if (err.code === err.PERMISSION_DENIED) {
-          mensaje =
-            "Ubicación bloqueada para esta app. Actívala en los ajustes del navegador (icono del candado, junto a la URL) y vuelve a intentarlo.";
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          mensaje = "No se pudo determinar tu ubicación. Comprueba que el GPS esté activado.";
-        } else if (err.code === err.TIMEOUT) {
-          mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
+      (primerError) => {
+        if (primerError.code !== primerError.TIMEOUT) {
+          manejarErrorUbicacion(primerError);
+          return;
         }
-        toast.error(mensaje, { duration: 6000 });
-        enviarFichaje(null, null, null);
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            enviarFichaje(
+              redondear(pos.coords.latitude),
+              redondear(pos.coords.longitude),
+              pos.coords.accuracy
+            );
+          },
+          manejarErrorUbicacion,
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
     );
+  };
+
+  const manejarErrorUbicacion = (err) => {
+    console.error("Error de geolocalización:", err);
+    let mensaje = "No se pudo obtener tu ubicación. Se ficha sin ubicación.";
+    if (err.code === err.PERMISSION_DENIED) {
+      mensaje =
+        "Ubicación bloqueada para esta app. Actívala en los ajustes del navegador (icono del candado, junto a la URL) y vuelve a intentarlo.";
+    } else if (err.code === err.POSITION_UNAVAILABLE) {
+      mensaje = "No se pudo determinar tu ubicación. Comprueba que el GPS esté activado.";
+    } else if (err.code === err.TIMEOUT) {
+      mensaje = "Tardó demasiado en obtener tu ubicación. Se ficha sin ubicación.";
+    }
+    toast.error(mensaje, { duration: 6000 });
+    enviarFichaje(null, null, null);
   };
 
   const dentro = estado === "dentro";
