@@ -7553,6 +7553,111 @@ async def resolver_pago_extra_admin(
     return PagoExtra(**pago)
 
 
+# =====================================================================
+# IMPORTACION TEMPORAL DE MAQUINARIA (listado INICIA 2023)
+# ---------------------------------------------------------------------
+# Endpoint de un solo uso para volcar el inventario de 36 maquinas del
+# Excel de 2023. Crea cada ficha con el MISMO formato que la creacion
+# manual, mas su historial de averias. Es idempotente: si ya existen
+# maquinas activas, NO vuelve a insertarlas, para no duplicar si se
+# llama dos veces. Una vez usado, este bloque se puede retirar.
+# =====================================================================
+
+_MAQUINARIA_SEED_2023 = [
+        ('Cortacésped Izy GCVx 145', 'Honda', 'Izy GCVx 145', 'Hospital Torrejon ardoz', 'Nº serie: 1157091', []),
+        ('Cortacésped Izy', 'Honda', 'Izy', 'Hospital La zarzuela', 'Nº serie: 1562886', [('averia', '2023-07-11', 'Se acelera - Puesta a punto')]),
+        ('Cortacésped Briggs & stratton 575IS', 'Sterwins', 'Briggs & stratton 575IS', 'Ruta', 'Nº serie: PLM2-46B140ES.4. Sterwins 46 cm. Arranque con bateria', [('averia', '2022-11-09', 'No arranca - Cambio de bateria')]),
+        ('Cortasetos HS 81 R', 'Stihl', 'HS 81 R', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Jueves. Nº serie: 177108607', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'Sede sanitas', 'Día habitual de revisión: Jueves. Nº serie: 179107369', []),
+        ('Cortasetos HSA 56', 'Stihl', 'HSA 56', 'Ikea alcorcon', 'Día habitual de revisión: Jueves. Nº serie: 444513210. ELECTRICO', []),
+        ('Cortasetos HS 45', 'Stihl', 'HS 45', 'Moraleja/Zarzuela', 'Día habitual de revisión: Viernes. Nº serie: 516553463', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'CC Alegra', 'Día habitual de revisión: Viernes. Nº serie: 189441387', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'Style outlet Rozas', 'Día habitual de revisión: Viernes. Nº serie: 189441384', []),
+        ('Desbrozadora FS 260 C', 'Stihl', 'FS 260 C', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Domingo. Nº serie: 190687210', []),
+        ('Desbrozadora FS 131/R', 'Stihl', 'FS 131/R', 'Aemet barajas', 'Día habitual de revisión: Domingo. Nº serie: 519262582', [('averia', None, 'GRIPADA - Se llevo a arreglar pero el costo era muy alto (fecha desconocida)')]),
+        ('Desbrozadora FSA 60 R', 'Stihl', 'FSA 60 R', 'Ikea alcorcon', 'Día habitual de revisión: Lunes. Nº serie: 447060725. ELECTRICO', []),
+        ('Desbrozadora FS 131', 'Stihl', 'FS 131', 'CC Alegra', 'Día habitual de revisión: Lunes. Nº serie: 525067178', []),
+        ('Desbrozadora FS 131', 'Stihl', 'FS 131', 'Style outlet Rozas', 'Día habitual de revisión: Martes. Nº serie: 525067167', []),
+        ('Sopladora BG 56', 'Stihl', 'BG 56', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Miercoles. Nº serie: 504422778', []),
+        ('Sopladora SH 66 C', 'Stihl', 'SH 66 C', 'Sede sanitas', 'Día habitual de revisión: Miercoles. Nº serie: 299852536', []),
+        ('Sopladora BR 450', 'Stihl', 'BR 450', 'Moraleja/Zarzuela', 'Día habitual de revisión: Jueves. Nº serie: 531116233', []),
+        ('Sopladora BGA 57', 'Stihl', 'BGA 57', 'Ikea alcorcon', 'Día habitual de revisión: Jueves. Nº serie: 445531887. ELECTRICO', []),
+        ('Sopladora GB 322', 'MC Culloch', 'GB 322', 'Style outlet Rozas', 'Día habitual de revisión: Jueves. Nº serie: 967683501', []),
+        ('Sopladora BR 430', 'Stihl', 'BR 430', 'CC Alegra', 'Día habitual de revisión: Jueves. Nº serie: 524110829', []),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Ruta', 'Día habitual de revisión: Sabado. Nº serie: 520612629', [('averia', '2023-02-07', 'Se acelera - Ajustar ralenti')]),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Moraleja/Zarzuela', 'Día habitual de revisión: Sabado. Nº serie: 513736690', [('averia', '2023-05-01', 'Tornillo de la barra partido - Arreglo de tornillo de la barra (mes de mayo, día aproximado)'), ('averia', '2023-06-05', 'Al acelerar se apaga - Ajuste de ralenti y carburador')]),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Sede sanitas', 'Día habitual de revisión: Domingo. Nº serie: 520612234', []),
+        ('Motosierra MS 193 T', 'Stihl', 'MS 193 T', 'CC Alegra', 'Día habitual de revisión: Martes. Nº serie: 516553463', []),
+        ('Motosierra MS 251 C', 'Stihl', 'MS 251 C', 'Hospital torrejon ardoz', 'Día habitual de revisión: Martes. Nº serie: 188487266', []),
+        ('Motosierra MS 251', 'Stihl', 'MS 251', 'Style outlet Rozas', 'Día habitual de revisión: Miercoles. Nº serie: 189404142', []),
+        ('Accesorio KM Desbrozadora', 'Stihl', 'Desbrozadora', 'Moraleja/Zarzuela', 'Día habitual de revisión: Jueves', []),
+        ('Accesorio KM', 'Stihl', None, 'Ruta', 'Día habitual de revisión: Viernes', []),
+        ('Accesorio KM Sopladora', 'Stihl', 'Sopladora', 'Ruta', 'Día habitual de revisión: Viernes', []),
+        ('Accesorio KM Cortasetos', 'Stihl', 'Cortasetos', 'Moraleja/Zarzuela', 'Día habitual de revisión: Sabado', [('averia', '2023-02-07', 'Espadin sin filo - Afilar espadin y engrasado')]),
+        ('Accesorio KM', 'Stihl', None, 'sede sanitas', 'Día habitual de revisión: Sabado', []),
+        ('Accesorio KM', 'Stihl', None, 'Ruta', 'Día habitual de revisión: Sabado', []),
+        ('Accesorio KM Motosierra', 'Stihl', 'Motosierra', 'Sede sanitas', 'Día habitual de revisión: Domingo', []),
+        ('Accesorio KM Alargador', 'Stihl', 'Alargador', 'Sede sanitas', 'Día habitual de revisión: Domingo', []),
+        ('Accesorio KM Alargador', 'Stihl', 'Alargador', 'Ruta', 'Día habitual de revisión: Domingo', []),
+        ('Otros Multi accesorio motor 43 cc', 'Sterwins', 'Multi accesorio motor 43 cc', 'Sede sanitas', 'Día habitual de revisión: Lunes. Nº serie (dañado en el Excel original, revisar): 2078870010121899999232', []),
+]
+
+
+@api_router.post("/admin/importar-maquinaria-2023")
+async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
+    # Idempotencia: si ya hay maquinaria activa, no hacemos nada para
+    # evitar duplicados accidentales al pulsar dos veces.
+    existentes = await db.maquinaria.count_documents({"activo": True})
+    if existentes > 0:
+        return {
+            "importadas": 0,
+            "historial": 0,
+            "mensaje": f"Ya hay {existentes} maquinas en la app. No se ha importado nada para evitar duplicados. Si aun asi quieres importar, borra primero las existentes.",
+        }
+
+    now = datetime.now(timezone.utc)
+    total_maq = 0
+    total_hist = 0
+    for nombre, marca, modelo, ubicacion, notas, historial in _MAQUINARIA_SEED_2023:
+        maq_id = str(uuid.uuid4())
+        doc = {
+            "id": maq_id,
+            "nombre": nombre,
+            "marca": marca,
+            "modelo": modelo,
+            "anio_fabricacion": None,
+            "ubicacion_actual": ubicacion,
+            "estado": "operativo",
+            "notas": notas or "",
+            "activo": True,
+            "fotos": [],
+            "fotos_public_ids": [],
+            "creado_en": now,
+            "actualizado_en": now,
+        }
+        await db.maquinaria.insert_one(doc)
+        total_maq += 1
+
+        for tipo, fecha_iso, descripcion in historial:
+            hist_doc = {
+                "id": str(uuid.uuid4()),
+                "maquinaria_id": maq_id,
+                "tipo": tipo,
+                "fecha": fecha_iso or now.strftime("%Y-%m-%d"),
+                "descripcion": descripcion,
+                "creado_por": "importacion_2023",
+                "creado_en": now,
+            }
+            await db.historial_maquinaria.insert_one(hist_doc)
+            total_hist += 1
+
+    return {
+        "importadas": total_maq,
+        "historial": total_hist,
+        "mensaje": f"Importadas {total_maq} maquinas y {total_hist} registros de historial.",
+    }
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
