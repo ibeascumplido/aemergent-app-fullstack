@@ -128,14 +128,24 @@ const MaquinariaPage = () => {
           </div>
         </div>
         {isAdmin && (
-          <Button
-            onClick={abrirNuevo}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white"
-            data-testid="nueva-maquinaria-btn"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Añadir
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={importarListado2023}
+              disabled={importando}
+              data-testid="importar-listado-2023-btn"
+            >
+              {importando ? "Importando..." : "Importar 2023"}
+            </Button>
+            <Button
+              onClick={abrirNuevo}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="nueva-maquinaria-btn"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Añadir
+            </Button>
+          </div>
         )}
       </div>
 
@@ -143,21 +153,6 @@ const MaquinariaPage = () => {
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400">
             Todavía no hay maquinaria ni herramientas registradas.
-            {isAdmin && (
-              <div className="mt-4">
-                <Button
-                  variant="outline"
-                  onClick={importarListado2023}
-                  disabled={importando}
-                  data-testid="importar-listado-2023-btn"
-                >
-                  {importando ? "Importando..." : "Importar listado INICIA 2023 (36 elementos)"}
-                </Button>
-                <p className="text-xs text-slate-400 mt-2">
-                  Carga de una vez el inventario del Excel de 2023. Las fotos se añaden después a mano.
-                </p>
-              </div>
-            )}
           </CardContent>
         </Card>
       ) : (
