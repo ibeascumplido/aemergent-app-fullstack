@@ -44,6 +44,7 @@ const MaquinariaPage = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [guardando, setGuardando] = useState(false);
+  const [importando, setImportando] = useState(false);
 
   const cargar = async () => {
     try {
@@ -54,6 +55,20 @@ const MaquinariaPage = () => {
       toast.error("Error al cargar maquinaria y herramientas");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const importarListado2023 = async () => {
+    setImportando(true);
+    try {
+      const res = await axios.post(`${API}/admin/importar-maquinaria-2023`);
+      toast.success(res.data.mensaje || "Importación completada");
+      await cargar();
+    } catch (err) {
+      console.error("Error importando listado:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo importar el listado");
+    } finally {
+      setImportando(false);
     }
   };
 
@@ -128,6 +143,21 @@ const MaquinariaPage = () => {
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400">
             Todavía no hay maquinaria ni herramientas registradas.
+            {isAdmin && (
+              <div className="mt-4">
+                <Button
+                  variant="outline"
+                  onClick={importarListado2023}
+                  disabled={importando}
+                  data-testid="importar-listado-2023-btn"
+                >
+                  {importando ? "Importando..." : "Importar listado INICIA 2023 (36 elementos)"}
+                </Button>
+                <p className="text-xs text-slate-400 mt-2">
+                  Carga de una vez el inventario del Excel de 2023. Las fotos se añaden después a mano.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : (
