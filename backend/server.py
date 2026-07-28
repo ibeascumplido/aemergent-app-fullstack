@@ -109,6 +109,10 @@ class NotificationType(str, Enum):
     SOLICITUD_EPI = "solicitud_epi"
     SOLICITUD_EPI_RESUELTA = "solicitud_epi_resuelta"
     JUSTIFICANTE_MEDICO = "justificante_medico"
+    PAGO_EXTRA = "pago_extra"
+    PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
+    PAGO_EXTRA = "pago_extra"
+    PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -7285,6 +7289,270 @@ def _generar_pdf_fichajes(usuario: dict, mes: str, fichajes: List[dict]) -> byte
     return buffer.getvalue()
 
 
+
+
+# =====================================================================
+# PAGOS EXTRA (Fase 20): horas extra y pluses de toxicidad/penosidad
+# ---------------------------------------------------------------------
+# El operario envia una solicitud (horas extra O plus), indicando centro,
+# tipo de trabajo (tarea del catalogo o texto libre), dia, cantidad y el
+# subtipo/tarifa. El importe se calcula con las tarifas fijas, salvo la
+# opcion "variable" en la que lo pone a mano. El admin revisa, puede
+# modificar cualquier campo (incluido el importe) y acepta o rechaza.
+# =====================================================================
+
+# Tarifas fijas (euros)
+TARIFA_HORA_EXTRA_NORMAL = 19.01
+TARIFA_HORA_EXTRA_FESTIVO = 27.70
+TARIFA_PLUS_POR_HORA = 1.92
+TARIFA_PLUS_POR_DIA = 14.42
+
+_CATEGORIA_PAGO_PATTERN = r"^(horas_extra|plus)$"
+# horas extra: normal | festivo | variable
+# plus: hora | dia | variable
+_SUBTIPO_PAGO_PATTERN = r"^(normal|festivo|hora|dia|variable)$"
+_ESTADO_PAGO_PATTERN = r"^(pendiente|aceptado|rechazado)$"
+
+
+def _calcular_importe_pago(categoria: str, subtipo: str, cantidad: float,
+                           importe_manual: Optional[float]) -> float:
+    """Calcula el importe segun la tarifa. Para 'variable' usa el importe
+    introducido a mano (total, no por unidad)."""
+    if subtipo == "variable":
+        return round(importe_manual or 0.0, 2)
+    if categoria == "horas_extra":
+        tarifa = TARIFA_HORA_EXTRA_NORMAL if subtipo == "normal" else TARIFA_HORA_EXTRA_FESTIVO
+        return round(tarifa * cantidad, 2)
+    # plus
+    tarifa = TARIFA_PLUS_POR_HORA if subtipo == "hora" else TARIFA_PLUS_POR_DIA
+    return round(tarifa * cantidad, 2)
+
+
+class PagoExtraCreate(BaseModel):
+    categoria: str = Field(..., pattern=_CATEGORIA_PAGO_PATTERN)
+    subtipo: str = Field(..., pattern=_SUBTIPO_PAGO_PATTERN)
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None  # texto libre si no hay centro registrado
+    tarea_id: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None  # texto libre del tipo de trabajo
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    cantidad: float = Field(..., gt=0)  # nº de horas, o nº de dias
+    importe_manual: Optional[float] = Field(None, ge=0)  # solo para subtipo "variable"
+    nota: Optional[str] = None
+
+
+class PagoExtraUpdate(BaseModel):
+    """Edicion por parte del admin antes/al aceptar."""
+    subtipo: Optional[str] = Field(None, pattern=_SUBTIPO_PAGO_PATTERN)
+    centro_nombre: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    cantidad: Optional[float] = Field(None, gt=0)
+    importe: Optional[float] = Field(None, ge=0)  # el admin puede fijar el importe final directamente
+    nota_admin: Optional[str] = None
+
+
+class PagoExtra(BaseModel):
+    id: str
+    operario_id: str
+    categoria: str
+    subtipo: str
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None
+    tarea_id: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None
+    fecha: str
+    cantidad: float
+    importe: float
+    nota: Optional[str] = None
+    nota_admin: Optional[str] = None
+    estado: str
+    creado_en: datetime
+    resuelto_en: Optional[datetime] = None
+
+    @field_validator("creado_en", "resuelto_en")
+    @classmethod
+    def _forzar_utc_pago(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is not None and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class PagoExtraConOperario(PagoExtra):
+    operario_nombre: str
+
+
+async def _resolver_nombre_trabajo(tarea_id: Optional[str], descripcion: Optional[str]) -> Optional[str]:
+    """Nombre legible del tipo de trabajo: la tarea del catalogo si se
+    eligio una, o el texto libre."""
+    if tarea_id:
+        tarea = await db.work_tasks.find_one({"id": tarea_id}, {"_id": 0, "nombre": 1})
+        if tarea:
+            return tarea["nombre"]
+    return descripcion
+
+
+@api_router.post("/pagos-extra", response_model=PagoExtra)
+async def crear_pago_extra(payload: PagoExtraCreate, current_user: dict = Depends(require_approved)):
+    # Coherencia categoria <-> subtipo
+    subtipos_validos = {
+        "horas_extra": {"normal", "festivo", "variable"},
+        "plus": {"hora", "dia", "variable"},
+    }
+    if payload.subtipo not in subtipos_validos[payload.categoria]:
+        raise HTTPException(status_code=400, detail="El tipo no corresponde con la categoría")
+    if payload.subtipo == "variable" and payload.importe_manual is None:
+        raise HTTPException(status_code=400, detail="Indica el importe para el precio variable")
+
+    # Nombre del centro: registrado o texto libre
+    centro_nombre = payload.centro_nombre
+    if payload.centro_id:
+        centro = await db.client_locations.find_one({"id": payload.centro_id}, {"_id": 0})
+        if centro:
+            centro_nombre = centro["nombre"]
+
+    trabajo_desc = await _resolver_nombre_trabajo(payload.tarea_id, payload.trabajo_descripcion)
+    importe = _calcular_importe_pago(
+        payload.categoria, payload.subtipo, payload.cantidad, payload.importe_manual
+    )
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "categoria": payload.categoria,
+        "subtipo": payload.subtipo,
+        "centro_id": payload.centro_id,
+        "centro_nombre": centro_nombre,
+        "tarea_id": payload.tarea_id,
+        "trabajo_descripcion": trabajo_desc,
+        "fecha": payload.fecha,
+        "cantidad": payload.cantidad,
+        "importe": importe,
+        "nota": payload.nota,
+        "nota_admin": None,
+        "estado": "pendiente",
+        "creado_en": datetime.now(timezone.utc),
+        "resuelto_en": None,
+    }
+    await db.pagos_extra.insert_one(doc)
+
+    # Notificar a los administradores
+    etiqueta = "Horas extra" if payload.categoria == "horas_extra" else "Plus"
+    await notify_admins(
+        notification_type=NotificationType.PAGO_EXTRA,
+        title="Nuevo pago extra",
+        message=f"{current_user['name']} ha enviado una solicitud de {etiqueta.lower()} ({importe:.2f} €).",
+        data={"enlace": "/admin/pagos-extra", "pago_id": doc["id"]},
+    )
+    return PagoExtra(**doc)
+
+
+@api_router.get("/pagos-extra/mios", response_model=List[PagoExtra])
+async def mis_pagos_extra(current_user: dict = Depends(require_approved)):
+    cursor = db.pagos_extra.find({"operario_id": current_user["user_id"]}).sort("creado_en", -1)
+    return [PagoExtra(**p) async for p in cursor]
+
+
+@api_router.delete("/pagos-extra/{pago_id}")
+async def borrar_mi_pago_extra(pago_id: str, current_user: dict = Depends(require_approved)):
+    """El operario puede retirar una solicitud suya que siga pendiente."""
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if pago["operario_id"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="No es tu solicitud")
+    if pago["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Solo se pueden retirar solicitudes pendientes")
+    await db.pagos_extra.delete_one({"id": pago_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/pagos-extra", response_model=List[PagoExtraConOperario])
+async def list_pagos_extra_admin(
+    estado: Optional[str] = None,
+    categoria: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    query = {}
+    if estado:
+        query["estado"] = estado
+    if categoria:
+        query["categoria"] = categoria
+    cursor = db.pagos_extra.find(query).sort("creado_en", -1)
+    pagos = [p async for p in cursor]
+
+    operario_ids = {p["operario_id"] for p in pagos}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        PagoExtraConOperario(**p, operario_nombre=operarios_map.get(p["operario_id"], "Operario"))
+        for p in pagos
+    ]
+
+
+@api_router.patch("/admin/pagos-extra/{pago_id}", response_model=PagoExtra)
+async def editar_pago_extra_admin(
+    pago_id: str, payload: PagoExtraUpdate, _: dict = Depends(require_admin)
+):
+    """El admin modifica campos de la solicitud. Si cambia datos que
+    afectan al importe (subtipo/cantidad) y NO fija un importe a mano, se
+    recalcula automaticamente con las tarifas."""
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    cambios = payload.model_dump(exclude_unset=True)
+    nuevo_subtipo = cambios.get("subtipo", pago["subtipo"])
+    nueva_cantidad = cambios.get("cantidad", pago["cantidad"])
+
+    for campo in ("subtipo", "centro_nombre", "trabajo_descripcion", "fecha", "cantidad", "nota_admin"):
+        if campo in cambios:
+            pago[campo] = cambios[campo]
+
+    if "importe" in cambios and cambios["importe"] is not None:
+        # El admin fija el importe final a mano
+        pago["importe"] = round(cambios["importe"], 2)
+    elif "subtipo" in cambios or "cantidad" in cambios:
+        # Recalcular con tarifas si el subtipo no es variable
+        if nuevo_subtipo != "variable":
+            pago["importe"] = _calcular_importe_pago(
+                pago["categoria"], nuevo_subtipo, nueva_cantidad, None
+            )
+
+    await db.pagos_extra.update_one({"id": pago_id}, {"$set": pago})
+    return PagoExtra(**pago)
+
+
+@api_router.post("/admin/pagos-extra/{pago_id}/resolver", response_model=PagoExtra)
+async def resolver_pago_extra_admin(
+    pago_id: str, aceptar: bool, _: dict = Depends(require_admin)
+):
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    pago["estado"] = "aceptado" if aceptar else "rechazado"
+    pago["resuelto_en"] = datetime.now(timezone.utc)
+    await db.pagos_extra.update_one(
+        {"id": pago_id},
+        {"$set": {"estado": pago["estado"], "resuelto_en": pago["resuelto_en"]}},
+    )
+
+    # Notificar al operario
+    etiqueta = "aceptada" if aceptar else "rechazada"
+    await create_notification(
+        user_id=pago["operario_id"],
+        notification_type=NotificationType.PAGO_EXTRA_RESUELTO,
+        title="Pago extra " + etiqueta,
+        message=f"Tu solicitud de {pago['importe']:.2f} € ha sido {etiqueta}.",
+        data={"enlace": "/pagos-extra", "pago_id": pago_id},
+    )
+    return PagoExtra(**pago)
 
 
 # Include the router in the main app
