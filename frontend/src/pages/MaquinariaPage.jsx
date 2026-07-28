@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -33,6 +33,14 @@ const ESTADOS = [
 
 const estadoInfo = (v) => ESTADOS.find((e) => e.value === v);
 
+// La categoria es la primera palabra del nombre (Cortacésped, Sopladora,
+// Desbrozadora, Cortasetos...), que es justo como viene el inventario.
+const categoriaDe = (nombre) => {
+  const limpio = (nombre || "").trim();
+  if (!limpio) return "Otros";
+  return limpio.split(/\s+/)[0];
+};
+
 const emptyForm = { nombre: "", marca: "", modelo: "", anio_fabricacion: "", ubicacion_actual: "", estado: "operativo" };
 
 const MaquinariaPage = () => {
@@ -60,6 +68,23 @@ const MaquinariaPage = () => {
   useEffect(() => {
     cargar();
   }, []);
+
+  // Agrupar por categoria (primera palabra), con los grupos ordenados
+  // alfabeticamente y cada maquina ordenada dentro de su grupo.
+  const grupos = useMemo(() => {
+    const mapa = {};
+    items.forEach((m) => {
+      const cat = categoriaDe(m.nombre);
+      if (!mapa[cat]) mapa[cat] = [];
+      mapa[cat].push(m);
+    });
+    return Object.keys(mapa)
+      .sort((a, b) => a.localeCompare(b, "es"))
+      .map((cat) => ({
+        categoria: cat,
+        maquinas: mapa[cat].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es")),
+      }));
+  }, [items]);
 
   const abrirNuevo = () => {
     setForm(emptyForm);
@@ -131,59 +156,72 @@ const MaquinariaPage = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          {items.map((m) => {
-            const info = estadoInfo(m.estado);
-            return (
-              <Card
-                key={m.id}
-                className="border-slate-100 cursor-pointer hover:border-indigo-200 transition-colors"
-                onClick={() => navigate(`/maquinaria/${m.id}`)}
-                data-testid={`maquinaria-${m.id}`}
-              >
-                <CardContent className="p-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {m.fotos?.[0] ? (
-                      <img
-                        src={m.fotos[0]}
-                        alt=""
-                        className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center shrink-0">
-                        <Wrench className="w-5 h-5 text-slate-300" />
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="font-medium text-slate-900 truncate">{m.nombre}</p>
-                      <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                        {(m.marca || m.modelo) && (
-                          <span className="text-xs text-slate-500">
-                            {[m.marca, m.modelo].filter(Boolean).join(" ")}
-                          </span>
-                        )}
-                        {m.anio_fabricacion && (
-                          <span className="text-xs text-slate-400">{m.anio_fabricacion}</span>
-                        )}
-                        {m.ubicacion_actual && (
-                          <span className="text-xs text-slate-400">{m.ubicacion_actual}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {info && (
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${info.badge}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${info.dot}`} />
-                        {info.label}
-                      </span>
-                    )}
-                    <ChevronRight className="w-5 h-5 text-slate-300" />
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="space-y-6">
+          {grupos.map((grupo) => (
+            <div key={grupo.categoria}>
+              <div className="flex items-center gap-2 mb-2">
+                <h2 className="text-sm font-semibold text-slate-700">{grupo.categoria}</h2>
+                <span className="text-xs text-slate-400">
+                  {grupo.maquinas.length}
+                </span>
+                <div className="flex-1 h-px bg-slate-100" />
+              </div>
+              <div className="space-y-2">
+                {grupo.maquinas.map((m) => {
+                  const info = estadoInfo(m.estado);
+                  return (
+                    <Card
+                      key={m.id}
+                      className="border-slate-100 cursor-pointer hover:border-indigo-200 transition-colors"
+                      onClick={() => navigate(`/maquinaria/${m.id}`)}
+                      data-testid={`maquinaria-${m.id}`}
+                    >
+                      <CardContent className="p-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {m.fotos?.[0] ? (
+                            <img
+                              src={m.fotos[0]}
+                              alt=""
+                              className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center shrink-0">
+                              <Wrench className="w-5 h-5 text-slate-300" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900 truncate">{m.nombre}</p>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              {(m.marca || m.modelo) && (
+                                <span className="text-xs text-slate-500">
+                                  {[m.marca, m.modelo].filter(Boolean).join(" ")}
+                                </span>
+                              )}
+                              {m.anio_fabricacion && (
+                                <span className="text-xs text-slate-400">{m.anio_fabricacion}</span>
+                              )}
+                              {m.ubicacion_actual && (
+                                <span className="text-xs text-slate-400">{m.ubicacion_actual}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {info && (
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${info.badge}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${info.dot}`} />
+                              {info.label}
+                            </span>
+                          )}
+                          <ChevronRight className="w-5 h-5 text-slate-300" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
