@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Wrench, Plus, ChevronRight } from "lucide-react";
+import { Wrench, Plus, ChevronRight, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,7 @@ const MaquinariaPage = () => {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -69,11 +70,19 @@ const MaquinariaPage = () => {
     cargar();
   }, []);
 
-  // Agrupar por categoria (primera palabra), con los grupos ordenados
-  // alfabeticamente y cada maquina ordenada dentro de su grupo.
+  // Agrupar por categoria (primera palabra), aplicando primero el filtro
+  // de busqueda por nombre, marca, modelo o ubicacion.
   const grupos = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    const filtrados = q
+      ? items.filter((m) =>
+          [m.nombre, m.marca, m.modelo, m.ubicacion_actual]
+            .filter(Boolean)
+            .some((campo) => campo.toLowerCase().includes(q))
+        )
+      : items;
     const mapa = {};
-    items.forEach((m) => {
+    filtrados.forEach((m) => {
       const cat = categoriaDe(m.nombre);
       if (!mapa[cat]) mapa[cat] = [];
       mapa[cat].push(m);
@@ -84,7 +93,7 @@ const MaquinariaPage = () => {
         categoria: cat,
         maquinas: mapa[cat].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es")),
       }));
-  }, [items]);
+  }, [items, busqueda]);
 
   const abrirNuevo = () => {
     setForm(emptyForm);
@@ -149,10 +158,29 @@ const MaquinariaPage = () => {
         )}
       </div>
 
+      {items.length > 0 && (
+        <div className="relative mb-4">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre, marca, modelo o ubicación..."
+            className="pl-9"
+            data-testid="buscar-maquinaria-input"
+          />
+        </div>
+      )}
+
       {items.length === 0 ? (
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400">
             Todavía no hay maquinaria ni herramientas registradas.
+          </CardContent>
+        </Card>
+      ) : grupos.length === 0 ? (
+        <Card className="border-slate-100">
+          <CardContent className="p-8 text-center text-slate-400">
+            No se ha encontrado ninguna maquinaria que coincida con "{busqueda}".
           </CardContent>
         </Card>
       ) : (
