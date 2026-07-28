@@ -409,6 +409,107 @@ const AdminCalendarPage = () => {
         </CardContent>
       </Card>
 
+      {/* Monthly View */}
+      {viewMode === "month" && (
+        <>
+          <Card className="border-slate-100 shadow-sm mb-4">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <Button variant="ghost" size="sm" onClick={handlePrevMonth}>
+                  <ChevronLeft className="w-5 h-5" />
+                </Button>
+                <h2 className="text-xl font-semibold text-slate-900">
+                  {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
+                </h2>
+                <Button variant="ghost" size="sm" onClick={handleNextMonth}>
+                  <ChevronRight className="w-5 h-5" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-0">
+              <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
+                {WEEKDAYS.map((day) => (
+                  <div key={day} className="px-2 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                    {day}
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7">
+                {getDaysInMonth(currentDate.getFullYear(), currentDate.getMonth()).map((day, index) => 
+                  renderDayCell(day, false)
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* User color legend */}
+          {userSlots.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+              <span className="font-medium text-slate-500">Empleados:</span>
+              {userSlots.map((u, idx) => (
+                <div key={u.user_id} className="flex items-center gap-1.5">
+                  <div
+                    className="w-3 h-3 rounded-sm"
+                    style={{ backgroundColor: u.color || "#3B82F6" }}
+                  />
+                  <span>{u.abreviatura || u.name?.slice(0, 3)} - {u.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Yearly View */}
+      {viewMode === "year" && (
+        <>
+          <Card className="border-slate-100 shadow-sm mb-4">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <Button variant="ghost" size="sm" onClick={handlePrevYear}>
+                  <ChevronLeft className="w-5 h-5" />
+                </Button>
+                <h2 className="text-xl font-semibold text-slate-900">
+                  {currentDate.getFullYear()}
+                </h2>
+                <Button variant="ghost" size="sm" onClick={handleNextYear}>
+                  <ChevronRight className="w-5 h-5" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {MONTHS.map((monthName, monthIndex) => (
+              <Card key={monthIndex} className="border-slate-100 shadow-sm">
+                <CardHeader className="pb-2 pt-3 px-3">
+                  <CardTitle className="text-sm font-semibold text-center text-slate-700">
+                    {monthName}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-2">
+                  <div className="grid grid-cols-7 mb-1">
+                    {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
+                      <div key={d} className="text-[8px] text-center text-slate-400 font-medium">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7">
+                    {getDaysInMonth(currentDate.getFullYear(), monthIndex).map((day, index) => 
+                      renderDayCell(day, true)
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Resumen Table */}
       <Card className="border-slate-100 shadow-sm mb-6">
         <CardHeader className="pb-3">
@@ -530,107 +631,6 @@ const AdminCalendarPage = () => {
           </div>
         </CardContent>
       </Card>
-
-      {/* Monthly View */}
-      {viewMode === "month" && (
-        <>
-          <Card className="border-slate-100 shadow-sm mb-4">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <Button variant="ghost" size="sm" onClick={handlePrevMonth}>
-                  <ChevronLeft className="w-5 h-5" />
-                </Button>
-                <h2 className="text-xl font-semibold text-slate-900">
-                  {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
-                </h2>
-                <Button variant="ghost" size="sm" onClick={handleNextMonth}>
-                  <ChevronRight className="w-5 h-5" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-100 shadow-sm">
-            <CardContent className="p-0">
-              <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
-                {WEEKDAYS.map((day) => (
-                  <div key={day} className="px-2 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
-                    {day}
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7">
-                {getDaysInMonth(currentDate.getFullYear(), currentDate.getMonth()).map((day, index) => 
-                  renderDayCell(day, false)
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* User color legend */}
-          {userSlots.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-600">
-              <span className="font-medium text-slate-500">Empleados:</span>
-              {userSlots.map((u, idx) => (
-                <div key={u.user_id} className="flex items-center gap-1.5">
-                  <div
-                    className="w-3 h-3 rounded-sm"
-                    style={{ backgroundColor: u.color || "#3B82F6" }}
-                  />
-                  <span>{u.abreviatura || u.name?.slice(0, 3)} - {u.name}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Yearly View */}
-      {viewMode === "year" && (
-        <>
-          <Card className="border-slate-100 shadow-sm mb-4">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <Button variant="ghost" size="sm" onClick={handlePrevYear}>
-                  <ChevronLeft className="w-5 h-5" />
-                </Button>
-                <h2 className="text-xl font-semibold text-slate-900">
-                  {currentDate.getFullYear()}
-                </h2>
-                <Button variant="ghost" size="sm" onClick={handleNextYear}>
-                  <ChevronRight className="w-5 h-5" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {MONTHS.map((monthName, monthIndex) => (
-              <Card key={monthIndex} className="border-slate-100 shadow-sm">
-                <CardHeader className="pb-2 pt-3 px-3">
-                  <CardTitle className="text-sm font-semibold text-center text-slate-700">
-                    {monthName}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-2">
-                  <div className="grid grid-cols-7 mb-1">
-                    {["L", "M", "X", "J", "V", "S", "D"].map((d) => (
-                      <div key={d} className="text-[8px] text-center text-slate-400 font-medium">
-                        {d}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-7">
-                    {getDaysInMonth(currentDate.getFullYear(), monthIndex).map((day, index) => 
-                      renderDayCell(day, true)
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </>
-      )}
 
       {/* Leyenda */}
       <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
