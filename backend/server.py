@@ -111,8 +111,6 @@ class NotificationType(str, Enum):
     JUSTIFICANTE_MEDICO = "justificante_medico"
     PAGO_EXTRA = "pago_extra"
     PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
-    PAGO_EXTRA = "pago_extra"
-    PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
