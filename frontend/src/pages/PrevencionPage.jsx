@@ -17,6 +17,7 @@ import {
   X,
   PenLine,
   ChevronRight,
+  Phone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -294,6 +295,44 @@ const PrevencionPage = () => {
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
                 data-testid="link-mutua"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Centros de {config.mutua_nombre || "la mutua"}
+              </a>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Protocolo de accidente laboral */}
+        <Card className="border-red-200 bg-red-50/40 shadow-sm">
+          <CardContent className="p-4 space-y-2">
+            <p className="text-xs uppercase tracking-wider text-red-600 font-semibold flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              En caso de accidente laboral
+            </p>
+            {config?.protocolo_accidente ? (
+              <p className="text-sm text-slate-700 whitespace-pre-line">{config.protocolo_accidente}</p>
+            ) : (
+              <p className="text-sm text-slate-400">
+                El administrador todavía no ha configurado el protocolo a seguir.
+              </p>
+            )}
+            {config?.mutua_telefono && (
+              <a
+                href={`tel:${config.mutua_telefono.replace(/\s+/g, "")}`}
+                className="inline-flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-semibold"
+                data-testid="tel-mutua"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                Llamar a la mutua: {config.mutua_telefono}
+              </a>
+            )}
+            {config?.mutua_url && (
+              <a
+                href={config.mutua_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 Centros de {config.mutua_nombre || "la mutua"}

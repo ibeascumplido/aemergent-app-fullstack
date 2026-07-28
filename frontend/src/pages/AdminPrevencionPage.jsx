@@ -79,7 +79,7 @@ const AdminPrevencionPage = () => {
   const [solicitudesEpi, setSolicitudesEpi] = useState([]);
   const [justificantes, setJustificantes] = useState([]);
   const [documentos, setDocumentos] = useState([]);
-  const [config, setConfig] = useState({ protocolo_baja: "", mutua_nombre: "", mutua_url: "" });
+  const [config, setConfig] = useState({ protocolo_baja: "", protocolo_accidente: "", mutua_nombre: "", mutua_url: "", mutua_telefono: "" });
   const [loading, setLoading] = useState(true);
 
   const [dialogAvisoOpen, setDialogAvisoOpen] = useState(false);
@@ -108,8 +108,10 @@ const AdminPrevencionPage = () => {
       setDocumentos(docsRes.data);
       setConfig({
         protocolo_baja: configRes.data.protocolo_baja || "",
+        protocolo_accidente: configRes.data.protocolo_accidente || "",
         mutua_nombre: configRes.data.mutua_nombre || "",
         mutua_url: configRes.data.mutua_url || "",
+        mutua_telefono: configRes.data.mutua_telefono || "",
       });
     } catch (err) {
       console.error("Error cargando prevención (admin):", err);
@@ -178,8 +180,10 @@ const AdminPrevencionPage = () => {
     try {
       await axios.put(`${API}/configuracion/prevencion`, {
         protocolo_baja: config.protocolo_baja.trim(),
+        protocolo_accidente: config.protocolo_accidente.trim(),
         mutua_nombre: config.mutua_nombre.trim(),
         mutua_url: config.mutua_url.trim(),
+        mutua_telefono: config.mutua_telefono.trim(),
       });
       toast.success("Configuración guardada");
     } catch (err) {
@@ -515,6 +519,29 @@ const AdminPrevencionPage = () => {
                   data-testid="mutua-url-input"
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Teléfono de la mutua</Label>
+              <Input
+                value={config.mutua_telefono}
+                onChange={(e) => setConfig((c) => ({ ...c, mutua_telefono: e.target.value }))}
+                placeholder="Ej. 900 000 000"
+                data-testid="mutua-telefono-input"
+              />
+            </div>
+
+            <div className="pt-3 mt-1 border-t border-slate-100 space-y-1.5">
+              <p className="text-xs uppercase tracking-wider text-red-600 font-medium flex items-center gap-1.5">
+                <ShieldAlert className="w-3.5 h-3.5" />
+                Protocolo en caso de accidente laboral
+              </p>
+              <Textarea
+                value={config.protocolo_accidente}
+                onChange={(e) => setConfig((c) => ({ ...c, protocolo_accidente: e.target.value }))}
+                placeholder="Ej. Atender al accidentado y garantizar su seguridad, llamar al 112 si es grave, avisar al responsable, contactar con la mutua, no mover a la persona si hay sospecha de lesión grave..."
+                rows={5}
+                data-testid="protocolo-accidente-textarea"
+              />
             </div>
             <Button
               onClick={guardarConfig}
