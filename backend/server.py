@@ -7603,6 +7603,18 @@ _MAQUINARIA_SEED_2023 = [
 ]
 
 
+@api_router.post("/admin/borrar-todas-maquinas")
+async def borrar_todas_maquinas(_: dict = Depends(require_admin)):
+    """Marca como inactivas TODAS las maquinas activas de golpe (soft
+    delete, igual que el borrado individual). Pensado para limpiar antes
+    de reimportar el listado."""
+    result = await db.maquinaria.update_many(
+        {"activo": True},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"borradas": result.modified_count}
+
+
 @api_router.post("/admin/importar-maquinaria-2023")
 async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
     # Idempotencia: si ya hay maquinaria activa, no hacemos nada para
