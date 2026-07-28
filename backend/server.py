@@ -6908,8 +6908,10 @@ async def rechazar_solicitud_epi(solicitud_id: str, current_user: dict = Depends
 
 class ConfiguracionPrevencionUpdate(BaseModel):
     protocolo_baja: Optional[str] = Field(None, max_length=5000)
+    protocolo_accidente: Optional[str] = Field(None, max_length=5000)
     mutua_nombre: Optional[str] = Field(None, max_length=200)
     mutua_url: Optional[str] = Field(None, max_length=500)
+    mutua_telefono: Optional[str] = Field(None, max_length=50)
 
 
 @api_router.get("/configuracion/prevencion")
@@ -6919,9 +6921,14 @@ async def obtener_configuracion_prevencion(_: dict = Depends(require_approved)):
         return {
             "id": "prevencion",
             "protocolo_baja": "",
+            "protocolo_accidente": "",
             "mutua_nombre": "",
             "mutua_url": "",
+            "mutua_telefono": "",
         }
+    # Rellenar campos que puedan faltar en documentos antiguos
+    doc.setdefault("protocolo_accidente", "")
+    doc.setdefault("mutua_telefono", "")
     return doc
 
 
