@@ -20,6 +20,8 @@ import RopaPage from "@/pages/RopaPage";
 import PrevencionPage from "@/pages/PrevencionPage";
 import AdminPrevencionPage from "@/pages/AdminPrevencionPage";
 import AdminFichajesPage from "@/pages/AdminFichajesPage";
+import PagosExtraPage from "@/pages/PagosExtraPage";
+import AdminPagosExtraPage from "@/pages/AdminPagosExtraPage";
 import DocumentoFirmaPage from "@/pages/DocumentoFirmaPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
@@ -109,6 +111,16 @@ function App() {
               <Route path="admin/fichajes" element={
                 <ProtectedRoute requireAdmin>
                   <AdminFichajesPage />
+                </ProtectedRoute>
+              } />
+              <Route path="pagos-extra" element={
+                <ProtectedRoute>
+                  <PagosExtraPage />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/pagos-extra" element={
+                <ProtectedRoute requireAdmin>
+                  <AdminPagosExtraPage />
                 </ProtectedRoute>
               } />
               <Route path="clients/:id" element={
