@@ -161,11 +161,11 @@ const FichajeBoton = () => {
     // y iPhone: sin maximumAge (= 0, siempre posicion ACTUAL, nunca una
     // guardada — lo del iPhone fichando en la ultima ubicacion venia de
     // haber añadido maximumAge) y timeout de 10s. El unico añadido sobre
-    // el original es el redondeo del resultado (~1 km) para que quede
-    // aproximada.
+    // el original es el redondeo del resultado a 1 decimal (~11 km) para
+    // que quede como zona general, no como punto concreto.
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const redondear = (n) => Math.round(n * 100) / 100;
+        const redondear = (n) => Math.round(n * 10) / 10;
         enviarFichaje(
           redondear(pos.coords.latitude),
           redondear(pos.coords.longitude),
