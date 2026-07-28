@@ -45,6 +45,7 @@ const MaquinariaPage = () => {
   const [form, setForm] = useState(emptyForm);
   const [guardando, setGuardando] = useState(false);
   const [importando, setImportando] = useState(false);
+  const [borrando, setBorrando] = useState(false);
 
   const cargar = async () => {
     try {
@@ -69,6 +70,23 @@ const MaquinariaPage = () => {
       toast.error(err?.response?.data?.detail || "No se pudo importar el listado");
     } finally {
       setImportando(false);
+    }
+  };
+
+  const borrarTodas = async () => {
+    if (!window.confirm("¿Seguro que quieres borrar TODAS las máquinas actuales? Esto las quitará de la lista.")) {
+      return;
+    }
+    setBorrando(true);
+    try {
+      const res = await axios.post(`${API}/admin/borrar-todas-maquinas`);
+      toast.success(`${res.data.borradas} máquina(s) borrada(s)`);
+      await cargar();
+    } catch (err) {
+      console.error("Error borrando máquinas:", err);
+      toast.error(err?.response?.data?.detail || "No se pudieron borrar");
+    } finally {
+      setBorrando(false);
     }
   };
 
@@ -129,6 +147,17 @@ const MaquinariaPage = () => {
         </div>
         {isAdmin && (
           <div className="flex gap-2">
+            {items.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={borrarTodas}
+                disabled={borrando}
+                className="text-red-600 border-red-200 hover:bg-red-50"
+                data-testid="borrar-todas-maquinas-btn"
+              >
+                {borrando ? "Borrando..." : "Borrar todas"}
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={importarListado2023}
