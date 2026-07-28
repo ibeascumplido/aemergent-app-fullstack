@@ -63,6 +63,8 @@ const MaquinariaDetailPage = () => {
   const [anadiendo, setAnadiendo] = useState(false);
   const [aBorrar, setABorrar] = useState(null);
   const [fotoABorrar, setFotoABorrar] = useState(null);
+  const [confirmarBorradoMaquina, setConfirmarBorradoMaquina] = useState(false);
+  const [borrandoMaquina, setBorrandoMaquina] = useState(false);
 
   const cargar = async () => {
     try {
@@ -147,6 +149,20 @@ const MaquinariaDetailPage = () => {
     } catch (err) {
       console.error("Error eliminando foto:", err);
       toast.error("No se pudo eliminar");
+    }
+  };
+
+  const eliminarMaquina = async () => {
+    setBorrandoMaquina(true);
+    try {
+      await axios.delete(`${API}/maquinaria/${maquinariaId}`);
+      toast.success("Maquinaria dada de baja");
+      navigate("/maquinaria");
+    } catch (err) {
+      console.error("Error eliminando maquinaria:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo eliminar");
+      setBorrandoMaquina(false);
+      setConfirmarBorradoMaquina(false);
     }
   };
 
@@ -350,14 +366,25 @@ const MaquinariaDetailPage = () => {
       </Card>
 
       {isAdmin && (
-        <Button
-          onClick={guardar}
-          disabled={guardando}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white mb-8"
-          data-testid="guardar-maquinaria-btn"
-        >
-          {guardando ? "Guardando..." : "Guardar cambios"}
-        </Button>
+        <div className="flex items-center gap-2 mb-8 flex-wrap">
+          <Button
+            onClick={guardar}
+            disabled={guardando}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            data-testid="guardar-maquinaria-btn"
+          >
+            {guardando ? "Guardando..." : "Guardar cambios"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setConfirmarBorradoMaquina(true)}
+            className="text-red-600 border-red-200 hover:bg-red-50"
+            data-testid="dar-de-baja-maquinaria-btn"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Dar de baja
+          </Button>
+        </div>
       )}
 
       <div>
@@ -491,6 +518,28 @@ const MaquinariaDetailPage = () => {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={eliminarFoto} className="bg-red-600 hover:bg-red-700">
               Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmarBorradoMaquina} onOpenChange={setConfirmarBorradoMaquina}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Dar de baja esta maquinaria?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Dejará de aparecer en la lista de maquinaria y herramientas. Úsalo cuando retires
+              definitivamente una máquina del inventario.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={borrandoMaquina}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={eliminarMaquina}
+              disabled={borrandoMaquina}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {borrandoMaquina ? "Dando de baja..." : "Dar de baja"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
