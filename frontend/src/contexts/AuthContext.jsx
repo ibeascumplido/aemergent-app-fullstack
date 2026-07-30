@@ -36,52 +36,38 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    const intentar = () => axios.get(`${API}/auth/me`);
-
-    try {
-      const response = await intentar();
-      setUser(response.data);
-      setIsAuthenticated(true);
-    } catch (error) {
-      const status = error?.response?.status;
-      if (status === 401 || status === 403) {
-        // El propio servidor confirma que el token no es valido: aqui
-        // si toca cerrar sesion de verdad.
-        localStorage.removeItem('session_token');
-        setUser(null);
-        setIsAuthenticated(false);
-      } else {
-        // Sin respuesta del servidor (error de red, timeout...): un
-        // solo reintento tras una breve espera antes de rendirse, util
-        // sobre todo en la carga inicial de la pagina con una conexion
-        // inestable (muy comun en movil). Si el reintento tambien
-        // falla, NO se cierra sesion (ver comentario en checkAuth) -
-        // simplemente se deja el estado como estaba.
-        await new Promise((r) => setTimeout(r, 1200));
-        try {
-          const response = await intentar();
-          setUser(response.data);
-          setIsAuthenticated(true);
-        } catch (error2) {
-          const status2 = error2?.response?.status;
-          if (status2 === 401 || status2 === 403) {
-            localStorage.removeItem('session_token');
-            setUser(null);
-            setIsAuthenticated(false);
-          }
-          // Fase 12: solo cerrar sesion (borrar el token) cuando el
-          // propio servidor confirma que el token no es valido
-          // (401/403). Un fallo de red momentaneo (muy comun en movil:
-          // datos moviles, cambio entre wifi/datos, o Android recargando
-          // la pestana en segundo plano) NO significa que la sesion haya
-          // caducado - antes esto borraba el token ante CUALQUIER error,
-          // causando cierres de sesion intermitentes e injustificados
-          // especialmente en movil.
+    // Hasta 3 intentos con espera progresiva (0.8s, 1.6s) ante fallos de
+    // RED. En movil es muy comun que la primera peticion falle por un
+    // bache de conexion (cambio wifi/datos, cobertura floja, o Android
+    // reactivando la pestana tras congelarla en segundo plano). Solo un
+    // 401/403 del propio servidor cierra la sesion; un fallo de red
+    // nunca borra el token, para no expulsar al usuario sin motivo real.
+    const esperas = [800, 1600];
+    for (let intento = 0; intento < 3; intento++) {
+      try {
+        const response = await axios.get(`${API}/auth/me`);
+        setUser(response.data);
+        setIsAuthenticated(true);
+        setLoading(false);
+        return;
+      } catch (error) {
+        const status = error?.response?.status;
+        if (status === 401 || status === 403) {
+          localStorage.removeItem('session_token');
+          setUser(null);
+          setIsAuthenticated(false);
+          setLoading(false);
+          return;
+        }
+        // Error de red (sin respuesta del servidor): esperar y reintentar.
+        if (intento < esperas.length) {
+          await new Promise((r) => setTimeout(r, esperas[intento]));
         }
       }
-    } finally {
-      setLoading(false);
     }
+    // Agotados los reintentos por red: NO se borra el token ni se cierra
+    // sesion. Se deja el estado como estaba para no expulsar al usuario.
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -93,6 +79,37 @@ export const AuthProvider = ({ children }) => {
     }
     checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    // Cuando el usuario vuelve a la app tras tenerla en segundo plano,
+    // Android puede haber congelado o recargado la pestana. Al volver a
+    // ser visible, revalidamos la sesion en silencio: si el token seguia
+    // bueno, la app se recupera sola en vez de fallar en el primer boton
+    // que se pulse. Solo se hace si hay token y sin bloquear la interfaz
+    // (no toca 'loading'), y checkAuth ya garantiza que un fallo de red
+    // no cierra la sesion.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && localStorage.getItem('session_token')) {
+        axios
+          .get(`${API}/auth/me`)
+          .then((response) => {
+            setUser(response.data);
+            setIsAuthenticated(true);
+          })
+          .catch((error) => {
+            const status = error?.response?.status;
+            if (status === 401 || status === 403) {
+              localStorage.removeItem('session_token');
+              setUser(null);
+              setIsAuthenticated(false);
+            }
+            // Fallo de red: no hacer nada, se deja como estaba.
+          });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   const login = async (email, password) => {
     const response = await axios.post(`${API}/auth/login`, { email, password });
