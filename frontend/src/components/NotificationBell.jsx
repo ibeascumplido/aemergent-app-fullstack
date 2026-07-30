@@ -14,6 +14,7 @@ import {
   UserPlus,
   CloudRain,
   HardHat,
+  Euro,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,6 +111,10 @@ const NotificationBell = () => {
         return "/admin/prevencion";
       case "solicitud_epi_resuelta":
         return "/prevencion";
+      case "pago_extra":
+        return "/admin/pagos-extra";
+      case "pago_extra_resuelto":
+        return "/pagos-extra";
       default:
         return null;
     }
@@ -151,6 +156,9 @@ const NotificationBell = () => {
       case "solicitud_epi_resuelta":
       case "justificante_medico":
         return <HardHat className="w-4 h-4 text-amber-600" />;
+      case "pago_extra":
+      case "pago_extra_resuelto":
+        return <Euro className="w-4 h-4 text-emerald-600" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
