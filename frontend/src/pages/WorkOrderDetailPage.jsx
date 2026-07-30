@@ -1065,7 +1065,10 @@ const WorkOrderDetailPage = () => {
         </Card>
       )}
 
-      {/* Lista de sesiones */}
+      {/* Lista de sesiones: solo en partes puntuales. En mantenimiento
+          (rejilla) no hay sesiones, se usa la rejilla y las notas por dia. */}
+      {!parte.usa_zonas && (
+        <>
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Sesiones registradas</h2>
         {parteAbierto && (
@@ -1219,6 +1222,8 @@ const WorkOrderDetailPage = () => {
             );
           })}
         </div>
+      )}
+        </>
       )}
 
       {/* Dialogo: enlace de firma generado */}

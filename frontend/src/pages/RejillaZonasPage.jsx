@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MapPin, Image as ImageIcon, Check } from "lucide-react";
+import { ArrowLeft, MapPin, Image as ImageIcon, Check, StickyNote, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
@@ -40,6 +48,10 @@ const RejillaZonasPage = () => {
   const [dias, setDias] = useState([]);
   const [tareas, setTareas] = useState([]);
   const [celdas, setCeldas] = useState({}); // { tarea_id: { fecha: [zonas] } }
+  const [notasDia, setNotasDia] = useState({}); // { fecha: texto }
+  const [diaNotaSeleccionado, setDiaNotaSeleccionado] = useState("");
+  const [textoNota, setTextoNota] = useState("");
+  const [guardandoNota, setGuardandoNota] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [guardandoCeldas, setGuardandoCeldas] = useState(new Set());
@@ -63,14 +75,21 @@ const RejillaZonasPage = () => {
         return;
       }
 
-      const [rejillaRes, clienteRes] = await Promise.all([
+      const [rejillaRes, clienteRes, notasRes] = await Promise.all([
         axios.get(`${API}/work-orders/${id}/rejilla-zonas`),
         axios.get(`${API}/clients/${parteRes.data.client_slug}`).catch(() => ({ data: null })),
+        axios.get(`${API}/work-orders/${id}/rejilla-notas`).catch(() => ({ data: [] })),
       ]);
 
       setDias(rejillaRes.data.dias);
       setTareas(rejillaRes.data.tareas);
       setCliente(clienteRes.data);
+
+      const mapaNotas = {};
+      (notasRes.data || []).forEach((n) => {
+        mapaNotas[n.fecha] = n.texto;
+      });
+      setNotasDia(mapaNotas);
 
       const mapa = {};
       rejillaRes.data.celdas.forEach((c) => {
@@ -170,6 +189,38 @@ const RejillaZonasPage = () => {
         return s;
       });
     }
+  };
+
+  const guardarNotaDia = async () => {
+    if (!diaNotaSeleccionado) {
+      toast.error("Elige un día");
+      return;
+    }
+    setGuardandoNota(true);
+    const fecha = diaNotaSeleccionado;
+    const texto = textoNota.trim();
+    try {
+      await axios.put(`${API}/work-orders/${id}/rejilla-notas`, { fecha, texto });
+      setNotasDia((prev) => {
+        const copia = { ...prev };
+        if (texto) copia[fecha] = texto;
+        else delete copia[fecha];
+        return copia;
+      });
+      toast.success(texto ? "Nota guardada" : "Nota eliminada");
+      setTextoNota("");
+      setDiaNotaSeleccionado("");
+    } catch (err) {
+      console.error("Error guardando nota:", err);
+      toast.error("No se pudo guardar la nota");
+    } finally {
+      setGuardandoNota(false);
+    }
+  };
+
+  const seleccionarDiaNota = (fecha) => {
+    setDiaNotaSeleccionado(fecha);
+    setTextoNota(notasDia[fecha] || "");
   };
 
   const toggleZonaPanel = (zona) => {
@@ -361,6 +412,100 @@ const RejillaZonasPage = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Notas por dia */}
+      <Card className="border-slate-100 mt-6">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <StickyNote className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Notas por día</h2>
+          </div>
+
+          {parteAbierto && (
+            <div className="flex flex-col sm:flex-row gap-2 mb-4">
+              <Select value={diaNotaSeleccionado} onValueChange={seleccionarDiaNota}>
+                <SelectTrigger className="sm:w-48" data-testid="nota-dia-select">
+                  <SelectValue placeholder="Elige un día..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {dias.map((fecha) => {
+                    const d = new Date(fecha + "T00:00:00");
+                    const etiqueta = d.toLocaleDateString("es-ES", {
+                      weekday: "short",
+                      day: "numeric",
+                      month: "short",
+                    });
+                    return (
+                      <SelectItem key={fecha} value={fecha}>
+                        {etiqueta}
+                        {notasDia[fecha] ? " ·📝" : ""}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+              <Textarea
+                value={textoNota}
+                onChange={(e) => setTextoNota(e.target.value)}
+                placeholder="Anotación de ese día (ej. desbrozado en zona B)"
+                rows={2}
+                className="flex-1"
+                data-testid="nota-dia-textarea"
+                disabled={!diaNotaSeleccionado}
+              />
+              <Button
+                onClick={guardarNotaDia}
+                disabled={guardandoNota || !diaNotaSeleccionado}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0"
+                data-testid="guardar-nota-dia-btn"
+              >
+                {guardandoNota ? "..." : "Guardar"}
+              </Button>
+            </div>
+          )}
+
+          {Object.keys(notasDia).length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-3">
+              No hay notas todavía. {parteAbierto ? "Elige un día y escribe una." : ""}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {Object.keys(notasDia)
+                .sort()
+                .map((fecha) => {
+                  const d = new Date(fecha + "T00:00:00");
+                  const etiqueta = d.toLocaleDateString("es-ES", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  });
+                  return (
+                    <div
+                      key={fecha}
+                      className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5"
+                      data-testid={`nota-dia-${fecha}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-indigo-600 capitalize">{etiqueta}</p>
+                        <p className="text-sm text-slate-700 whitespace-pre-line">{notasDia[fecha]}</p>
+                      </div>
+                      {parteAbierto && (
+                        <button
+                          type="button"
+                          onClick={() => seleccionarDiaNota(fecha)}
+                          className="text-xs text-slate-400 hover:text-indigo-600 shrink-0"
+                          data-testid={`editar-nota-dia-${fecha}`}
+                        >
+                          Editar
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Panel flotante rapido: se ancla justo bajo la celda pulsada */}
       {panelAbierto && (
