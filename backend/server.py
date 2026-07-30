@@ -5250,14 +5250,19 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
         if c.get("zonas"):
             celdas_texto[(c["tarea_id"], c["fecha"])] = ",".join(c["zonas"])
 
-    # Observaciones: solo de sesiones creadas a mano (la rejilla ya no crea
-    # sesiones automaticas), asi que aqui solo aparece lo que el admin
-    # anoto explicitamente para un dia concreto.
+    # Observaciones por dia: las notas por dia (nuevo sistema del parte de
+    # mantenimiento) y, por compatibilidad, las notas de sesiones antiguas
+    # que pudiera haber (partes viejos migrados).
     observaciones = []  # [(fecha, nota)]
+    notas_cursor = db.rejilla_notas.find({"work_order_id": doc["id"]})
+    async for n in notas_cursor:
+        if n.get("texto"):
+            observaciones.append((n["fecha"], n["texto"]))
     sesiones_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort("fecha", 1)
     async for s in sesiones_cursor:
         if s.get("notas"):
             observaciones.append((s["fecha"], s["notas"]))
+    observaciones.sort(key=lambda x: x[0])
 
     ANCHO_PAGINA = landscape(A4)[0]
     MARGEN = 1.2 * cm
@@ -5729,6 +5734,78 @@ async def actualizar_celda_rejilla(
                 "tarea_id": payload.tarea_id,
                 "fecha": payload.fecha,
                 "zonas": payload.zonas,
+                "actualizado_en": now,
+            }
+        )
+
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": {"actualizado_en": now}})
+    return {"ok": True}
+
+
+# --- Notas por dia (parte de mantenimiento / rejilla) ---------------------
+# Anotaciones libres asociadas a un dia concreto de la rejilla, sin pasar
+# por sesiones. Viven en su propia coleccion rejilla_notas.
+
+class NotaDiaRejilla(BaseModel):
+    fecha: str
+    texto: str
+
+
+class NotaDiaRejillaPayload(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    texto: str = Field("", max_length=2000)
+
+
+@api_router.get(
+    "/work-orders/{work_order_id}/rejilla-notas", response_model=List[NotaDiaRejilla]
+)
+async def obtener_notas_dia_rejilla(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    await _cargar_parte(work_order_id)
+    notas = []
+    cursor = db.rejilla_notas.find({"work_order_id": work_order_id})
+    async for n in cursor:
+        if n.get("texto"):
+            notas.append(NotaDiaRejilla(fecha=n["fecha"], texto=n["texto"]))
+    notas.sort(key=lambda x: x.fecha)
+    return notas
+
+
+@api_router.put("/work-orders/{work_order_id}/rejilla-notas")
+async def guardar_nota_dia_rejilla(
+    work_order_id: str,
+    payload: NotaDiaRejillaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Crea/actualiza/borra la nota de un dia. Texto vacio = borrar."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+
+    now = datetime.now(timezone.utc)
+    texto = payload.texto.strip()
+    existente = await db.rejilla_notas.find_one(
+        {"work_order_id": work_order_id, "fecha": payload.fecha}
+    )
+
+    if not texto:
+        if existente:
+            await db.rejilla_notas.delete_one({"id": existente["id"]})
+        return {"ok": True}
+
+    if existente:
+        await db.rejilla_notas.update_one(
+            {"id": existente["id"]},
+            {"$set": {"texto": texto, "actualizado_en": now}},
+        )
+    else:
+        await db.rejilla_notas.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "work_order_id": work_order_id,
+                "fecha": payload.fecha,
+                "texto": texto,
                 "actualizado_en": now,
             }
         )
