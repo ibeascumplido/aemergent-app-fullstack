@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { X, Plus, Search, UserPlus, Users, Check, Eye, MapPin } from "lucide-react";
+import { X, Plus, Search, UserPlus, Users, Check, Eye, MapPin, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -116,6 +116,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
 
   const [tareasIds, setTareasIds] = useState([]);
   const [tareasZonas, setTareasZonas] = useState({});
+  const [visibilidadAbierta, setVisibilidadAbierta] = useState(false);
   const [buscarTarea, setBuscarTarea] = useState("");
   const [popoverTareasOpen, setPopoverTareasOpen] = useState(false);
   const [creandoTarea, setCreandoTarea] = useState(false);
@@ -834,30 +835,57 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
             );
           })()}
 
-          {/* Visibilidad para el cliente */}
+          {/* Visibilidad para el cliente (plegable, cerrada por defecto:
+              asi el operario no ve todos los toggles de golpe, y si el
+              cliente mira el movil tampoco. Solo se despliega si se quiere
+              cambiar algo). */}
           <div className="space-y-2">
-            <Label className="inline-flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5 text-slate-400" />
-              Visibilidad para el cliente
-            </Label>
-            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-              {CAMPOS_VISIBILIDAD.map((c) => (
-                <div key={c.key} className="flex items-center justify-between px-3 py-2">
-                  <span className="text-sm text-slate-700">{c.label}</span>
-                  <Switch
-                    checked={visibilidad[c.key] !== false}
-                    onCheckedChange={(v) =>
-                      setVisibilidad((prev) => ({ ...prev, [c.key]: v }))
-                    }
-                    data-testid={`visibilidad-${c.key}`}
-                  />
+            <button
+              type="button"
+              onClick={() => setVisibilidadAbierta((v) => !v)}
+              className="w-full flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 hover:bg-slate-50 transition-colors"
+              data-testid="toggle-visibilidad-cliente"
+            >
+              <span className="inline-flex items-center gap-1.5 text-sm text-slate-700">
+                <Eye className="w-3.5 h-3.5 text-slate-400" />
+                Visibilidad para el cliente
+                {(() => {
+                  const ocultos = CAMPOS_VISIBILIDAD.filter((c) => visibilidad[c.key] === false).length;
+                  return ocultos > 0 ? (
+                    <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                      {ocultos} oculto{ocultos > 1 ? "s" : ""}
+                    </span>
+                  ) : null;
+                })()}
+              </span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-400 transition-transform ${
+                  visibilidadAbierta ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+            {visibilidadAbierta && (
+              <>
+                <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  {CAMPOS_VISIBILIDAD.map((c) => (
+                    <div key={c.key} className="flex items-center justify-between px-3 py-2">
+                      <span className="text-sm text-slate-700">{c.label}</span>
+                      <Switch
+                        checked={visibilidad[c.key] !== false}
+                        onCheckedChange={(v) =>
+                          setVisibilidad((prev) => ({ ...prev, [c.key]: v }))
+                        }
+                        data-testid={`visibilidad-${c.key}`}
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <p className="text-xs text-slate-400">
-              Controla que vera el cliente en el PDF/enlace de firma (la fecha del parte
-              siempre es visible)
-            </p>
+                <p className="text-xs text-slate-400">
+                  Controla que vera el cliente en el PDF/enlace de firma (la fecha del parte
+                  siempre es visible)
+                </p>
+              </>
+            )}
           </div>
 
           {/* Notas */}
