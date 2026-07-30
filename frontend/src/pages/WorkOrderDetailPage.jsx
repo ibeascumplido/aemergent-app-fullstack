@@ -1070,8 +1070,8 @@ const WorkOrderDetailPage = () => {
       {!parte.usa_zonas && (
         <>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Sesiones registradas</h2>
-        {parteAbierto && (
+        <h2 className="text-lg font-semibold text-slate-900">Trabajo realizado</h2>
+        {parteAbierto && sessionsOrdenadas.length === 0 && (
           <Button
             onClick={abrirNuevaSesion}
             size="sm"
@@ -1079,7 +1079,7 @@ const WorkOrderDetailPage = () => {
             data-testid="nueva-sesion-btn"
           >
             <Plus className="w-4 h-4 mr-2" />
-            Nueva sesion
+            Registrar trabajo
           </Button>
         )}
       </div>
@@ -1087,7 +1087,7 @@ const WorkOrderDetailPage = () => {
       {sessionsOrdenadas.length === 0 ? (
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400" data-testid="no-sessions">
-            Este parte todavia no tiene sesiones registradas.
+            Todavia no se ha registrado el trabajo de este parte.
             {parteAbierto && (
               <>
                 <br />
@@ -1096,7 +1096,7 @@ const WorkOrderDetailPage = () => {
                   onClick={abrirNuevaSesion}
                   className="text-xs text-indigo-600 hover:text-indigo-800 font-medium mt-1"
                 >
-                  Anadir la primera sesion
+                  Registrar el trabajo
                 </button>
               </>
             )}
@@ -1629,11 +1629,23 @@ const WorkOrderDetailPage = () => {
                         {tareas.length > 0 && (
                           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                             <ClipboardList className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            {tareas.map((t) => (
-                              <span key={t.id} className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
-                                {t.nombre}
-                              </span>
-                            ))}
+                            {tareas.map((t) => {
+                              const zonas = s.tareas_zonas?.[t.id] || [];
+                              const letras = zonas.filter((z) => z !== "X" && !z.startsWith("texto:"));
+                              const textoLibre = zonas.find((z) => z.startsWith("texto:"));
+                              const partesZona = [
+                                ...letras,
+                                ...(textoLibre ? [textoLibre.slice(6)] : []),
+                              ];
+                              return (
+                                <span key={t.id} className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+                                  {t.nombre}
+                                  {partesZona.length > 0 && (
+                                    <span className="font-semibold ml-1">· {partesZona.join(", ")}</span>
+                                  )}
+                                </span>
+                              );
+                            })}
                           </div>
                         )}
 
