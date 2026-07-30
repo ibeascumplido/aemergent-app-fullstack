@@ -1171,16 +1171,21 @@ const WorkOrderDetailPage = () => {
                       <ClipboardList className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       {tareas.map((t) => {
                         const zonas = s.tareas_zonas?.[t.id] || [];
-                        const zonasReales = zonas.filter((z) => z !== "X");
+                        const letras = zonas.filter((z) => z !== "X" && !z.startsWith("texto:"));
+                        const textoLibre = zonas.find((z) => z.startsWith("texto:"));
+                        const partesZona = [
+                          ...letras,
+                          ...(textoLibre ? [textoLibre.slice(6)] : []),
+                        ];
                         return (
                           <span
                             key={t.id}
                             className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full"
                           >
                             {t.nombre}
-                            {parte.usa_zonas && zonasReales.length > 0 && (
+                            {partesZona.length > 0 && (
                               <span className="font-semibold ml-1">
-                                · {zonasReales.join(",")}
+                                · {partesZona.join(", ")}
                               </span>
                             )}
                           </span>
@@ -1261,6 +1266,7 @@ const WorkOrderDetailPage = () => {
         workOrderId={id}
         session={sesionEditando}
         usaZonas={!!parte.usa_zonas}
+        clienteTieneMapaZonas={!!cliente?.mapa_zonas_url}
         onSaved={fetchParte}
       />
 
