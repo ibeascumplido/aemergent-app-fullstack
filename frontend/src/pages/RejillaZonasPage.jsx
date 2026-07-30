@@ -22,7 +22,12 @@ const MESES_ES = [
 
 const formatearDiaCorto = (fechaISO) => {
   const d = new Date(fechaISO + "T00:00:00");
-  return { numero: d.getDate(), semana: DIAS_SEMANA_CORTO[(d.getDay() + 6) % 7] };
+  const diaSemana = d.getDay(); // 0 = domingo, 6 = sábado
+  return {
+    numero: d.getDate(),
+    semana: DIAS_SEMANA_CORTO[(d.getDay() + 6) % 7],
+    finDeSemana: diaSemana === 0 || diaSemana === 6,
+  };
 };
 
 const RejillaZonasPage = () => {
@@ -189,6 +194,14 @@ const RejillaZonasPage = () => {
   };
 
   const diasFormateados = useMemo(() => dias.map(formatearDiaCorto), [dias]);
+  const finDeSemanaSet = useMemo(() => {
+    const s = new Set();
+    dias.forEach((fecha) => {
+      const g = new Date(fecha + "T00:00:00").getDay();
+      if (g === 0 || g === 6) s.add(fecha);
+    });
+    return s;
+  }, [dias]);
   const zonasDelPanel = panelAbierto
     ? celdas[panelAbierto.tareaId]?.[panelAbierto.fecha] || []
     : [];
@@ -291,7 +304,9 @@ const RejillaZonasPage = () => {
               {diasFormateados.map((d, i) => (
                 <th
                   key={dias[i]}
-                  className="bg-slate-50 border-b border-slate-200 px-1 py-1 text-center font-medium text-slate-500 w-12"
+                  className={`border-b border-slate-200 px-1 py-1 text-center font-medium text-slate-500 w-12 ${
+                    d.finDeSemana ? "bg-slate-200" : "bg-slate-50"
+                  }`}
                 >
                   <div>{d.numero}</div>
                   <div className="text-[9px] text-slate-400 font-normal">{d.semana}</div>
@@ -312,8 +327,14 @@ const RejillaZonasPage = () => {
                   const guardando = guardandoCeldas.has(key);
                   const activa =
                     panelAbierto?.tareaId === t.tarea_id && panelAbierto?.fecha === fecha;
+                  const esFinDe = finDeSemanaSet.has(fecha);
                   return (
-                    <td key={fecha} className="border-l border-slate-100 p-0 text-center">
+                    <td
+                      key={fecha}
+                      className={`border-l border-slate-100 p-0 text-center ${
+                        esFinDe ? "bg-slate-100" : ""
+                      }`}
+                    >
                       <button
                         type="button"
                         disabled={!parteAbierto}
