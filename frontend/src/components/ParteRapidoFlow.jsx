@@ -161,8 +161,8 @@ const ParteRapidoFlow = () => {
     const hoy = new Date().toLocaleDateString("es-ES", { day: "numeric", month: "short" });
     if (tipoParte === "rejilla") {
       return rejillaPeriodo === "semanal"
-        ? `Rejilla semana ${formatearRangoSemana(lunesDeLaSemana(fechaSemana))}`
-        : `Rejilla ${mesRejilla}`;
+        ? `Mantenimiento semana ${formatearRangoSemana(lunesDeLaSemana(fechaSemana))}`
+        : `Mantenimiento ${mesRejilla}`;
     }
     return `Parte rápido - ${hoy}`;
   };
@@ -272,7 +272,7 @@ const ParteRapidoFlow = () => {
                   }`}
                   data-testid="tipo-estandar-btn"
                 >
-                  Estándar
+                  Puntual
                 </button>
                 <button
                   type="button"
@@ -284,7 +284,7 @@ const ParteRapidoFlow = () => {
                   }`}
                   data-testid="tipo-rejilla-btn"
                 >
-                  Rejilla
+                  Mantenimiento
                 </button>
               </div>
             </div>
