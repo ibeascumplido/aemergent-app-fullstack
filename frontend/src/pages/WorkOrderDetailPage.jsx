@@ -27,7 +27,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -290,7 +289,6 @@ const WorkOrderDetailPage = () => {
     try {
       await axios.patch(`${API}/work-orders/${id}`, {
         titulo,
-        notas: formCabecera.notas.trim(),
         budget_template_id: formCabecera.budget_template_id || null,
       });
       toast.success("Parte actualizado");
@@ -798,18 +796,6 @@ const WorkOrderDetailPage = () => {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cabecera-notas">Notas</Label>
-                <Textarea
-                  id="cabecera-notas"
-                  value={formCabecera.notas}
-                  onChange={(e) =>
-                    setFormCabecera((f) => ({ ...f, notas: e.target.value }))
-                  }
-                  rows={3}
-                  data-testid="cabecera-notas-input"
-                />
               </div>
               <div className="flex justify-end gap-2">
                 <Button
