@@ -835,6 +835,18 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
             );
           })()}
 
+          {/* Notas */}
+          <div className="space-y-1.5">
+            <Label htmlFor="sesion-notas">Notas (opcional)</Label>
+            <Textarea
+              id="sesion-notas"
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+              placeholder="Observaciones de la jornada..."
+              rows={3}
+              data-testid="sesion-notas-input"
+            />
+          </div>
           {/* Visibilidad para el cliente (plegable, cerrada por defecto:
               asi el operario no ve todos los toggles de golpe, y si el
               cliente mira el movil tampoco. Solo se despliega si se quiere
@@ -888,18 +900,6 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
             )}
           </div>
 
-          {/* Notas */}
-          <div className="space-y-1.5">
-            <Label htmlFor="sesion-notas">Notas (opcional)</Label>
-            <Textarea
-              id="sesion-notas"
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              placeholder="Observaciones de la jornada..."
-              rows={3}
-              data-testid="sesion-notas-input"
-            />
-          </div>
         </div>
 
         <DialogFooter>
