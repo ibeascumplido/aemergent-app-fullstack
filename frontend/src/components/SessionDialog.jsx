@@ -93,7 +93,7 @@ const Chk = ({ checked }) => (
  * - session: si se pasa, el dialogo edita esa sesion; si es null/undefined, crea una nueva.
  * - onSaved: callback tras guardar con exito (para refrescar la lista en el padre).
  */
-const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onSaved }) => {
+const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, clienteTieneMapaZonas = false, onSaved }) => {
   const editing = !!session;
 
   const [operarios, setOperarios] = useState([]);
@@ -292,18 +292,39 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onS
     setTareasZonas((prev) => {
       const actuales = prev[taskId] || [];
       if (zona === "X") {
-        return { ...prev, [taskId]: actuales.includes("X") ? [] : ["X"] };
+        // Al marcar X se quitan las letras, pero se respeta un posible
+        // texto libre (prefijo "texto:").
+        const textoLibre = actuales.filter((z) => z.startsWith("texto:"));
+        const tieneX = actuales.includes("X");
+        return { ...prev, [taskId]: tieneX ? textoLibre : ["X", ...textoLibre] };
       }
       const sinX = actuales.filter((z) => z !== "X");
       if (sinX.includes(zona)) {
         return { ...prev, [taskId]: sinX.filter((z) => z !== zona) };
       }
-      if (sinX.length >= 3) {
+      const soloLetras = sinX.filter((z) => !z.startsWith("texto:"));
+      if (soloLetras.length >= 3) {
         toast.warning("Máximo 3 zonas por tarea");
         return { ...prev, [taskId]: sinX };
       }
       return { ...prev, [taskId]: [...sinX, zona] };
     });
+  };
+
+  // Texto libre de zona por tarea (ej. "junto a los cipreses"). Se guarda
+  // en la misma lista con el prefijo "texto:" para convivir con las
+  // letras A-M sin necesidad de cambiar el modelo del backend.
+  const setTextoZonaTarea = (taskId, texto) => {
+    setTareasZonas((prev) => {
+      const actuales = (prev[taskId] || []).filter((z) => !z.startsWith("texto:"));
+      const limpio = texto.trim();
+      return { ...prev, [taskId]: limpio ? [...actuales, `texto:${limpio}`] : actuales };
+    });
+  };
+
+  const getTextoZonaTarea = (taskId) => {
+    const z = (tareasZonas[taskId] || []).find((x) => x.startsWith("texto:"));
+    return z ? z.slice(6) : "";
   };
 
   const crearTareaAlVuelo = async () => {
@@ -368,7 +389,11 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onS
           ? Object.fromEntries(
               tareasIds.map((id) => [id, tareasZonas[id]?.length ? tareasZonas[id] : ["X"]])
             )
-          : {},
+          : Object.fromEntries(
+              tareasIds
+                .filter((id) => tareasZonas[id]?.length)
+                .map((id) => [id, tareasZonas[id]])
+            ),
         notas: notas.trim(),
         visibilidad,
         firma_responsable: firmaResponsable,
@@ -740,12 +765,15 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onS
             )}
           </div>
 
-          {/* Zona por tarea (Fase 6) - solo si el parte tiene usa_zonas activo */}
-          {usaZonas && tareasIds.length > 0 && (
+          {/* Zona por tarea: en rejilla (usaZonas) o en parte puntual.
+              Letras A-M del mapa del cliente + texto libre por tarea. */}
+          {tareasIds.length > 0 && (() => {
+            const mostrarLetras = usaZonas || clienteTieneMapaZonas;
+            return (
             <div className="space-y-2">
               <Label className="inline-flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                Zona por tarea
+                Zona / anotación por tarea
               </Label>
               <div className="space-y-3 rounded-lg border border-slate-200 p-2.5">
                 {tareasIds.map((id) => {
@@ -755,45 +783,56 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, onS
                   return (
                     <div key={id} className="space-y-1.5 pb-2.5 border-b border-slate-100 last:border-0 last:pb-0">
                       <span className="text-sm text-slate-700 truncate block">{t.nombre}</span>
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          onClick={() => toggleZonaTarea(id, "X")}
-                          className={`px-2 py-1 rounded text-xs font-medium border transition-colors ${
-                            seleccion.includes("X")
-                              ? "bg-slate-200 border-slate-300 text-slate-700"
-                              : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50"
-                          }`}
-                          data-testid={`zona-tarea-${id}-X`}
-                        >
-                          X
-                        </button>
-                        {ZONA_LETRAS.map((letra) => (
+                      {mostrarLetras && (
+                        <div className="flex flex-wrap gap-1">
                           <button
                             type="button"
-                            key={letra}
-                            onClick={() => toggleZonaTarea(id, letra)}
-                            className={`w-7 h-7 rounded text-xs font-medium border transition-colors ${
-                              seleccion.includes(letra)
-                                ? "bg-indigo-600 border-indigo-600 text-white"
-                                : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                            onClick={() => toggleZonaTarea(id, "X")}
+                            className={`px-2 py-1 rounded text-xs font-medium border transition-colors ${
+                              seleccion.includes("X")
+                                ? "bg-slate-200 border-slate-300 text-slate-700"
+                                : "bg-white border-slate-200 text-slate-400 hover:bg-slate-50"
                             }`}
-                            data-testid={`zona-tarea-${id}-${letra}`}
+                            data-testid={`zona-tarea-${id}-X`}
                           >
-                            {letra}
+                            X
                           </button>
-                        ))}
-                      </div>
+                          {ZONA_LETRAS.map((letra) => (
+                            <button
+                              type="button"
+                              key={letra}
+                              onClick={() => toggleZonaTarea(id, letra)}
+                              className={`w-7 h-7 rounded text-xs font-medium border transition-colors ${
+                                seleccion.includes(letra)
+                                  ? "bg-indigo-600 border-indigo-600 text-white"
+                                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                              }`}
+                              data-testid={`zona-tarea-${id}-${letra}`}
+                            >
+                              {letra}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <Input
+                        value={getTextoZonaTarea(id)}
+                        onChange={(e) => setTextoZonaTarea(id, e.target.value)}
+                        placeholder="Anotación de zona (ej. junto a los cipreses)"
+                        className="text-sm"
+                        data-testid={`zona-tarea-texto-${id}`}
+                      />
                     </div>
                   );
                 })}
               </div>
               <p className="text-xs text-slate-400">
-                Hasta 3 zonas por tarea. Las letras se corresponden con el mapa de zonas del
-                cliente. Elige X si no aplica una zona concreta.
+                {mostrarLetras
+                  ? "Hasta 3 zonas (letras del mapa del cliente) y/o una anotación por tarea."
+                  : "Escribe la zona o anotación donde se hizo cada tarea."}
               </p>
             </div>
-          )}
+            );
+          })()}
 
           {/* Visibilidad para el cliente */}
           <div className="space-y-2">
