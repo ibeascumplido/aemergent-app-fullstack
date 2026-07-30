@@ -315,17 +315,34 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
   // Texto libre de zona por tarea (ej. "junto a los cipreses"). Se guarda
   // en la misma lista con el prefijo "texto:" para convivir con las
   // letras A-M sin necesidad de cambiar el modelo del backend.
+  // Importante: NO se hace trim() aqui - si se recorta en cada tecla, el
+  // espacio final se borra al instante y parece que la barra espaciadora
+  // no funciona. El recorte se hace al guardar la sesion.
   const setTextoZonaTarea = (taskId, texto) => {
     setTareasZonas((prev) => {
       const actuales = (prev[taskId] || []).filter((z) => !z.startsWith("texto:"));
-      const limpio = texto.trim();
-      return { ...prev, [taskId]: limpio ? [...actuales, `texto:${limpio}`] : actuales };
+      return { ...prev, [taskId]: texto ? [...actuales, `texto:${texto}`] : actuales };
     });
   };
 
   const getTextoZonaTarea = (taskId) => {
     const z = (tareasZonas[taskId] || []).find((x) => x.startsWith("texto:"));
     return z ? z.slice(6) : "";
+  };
+
+  // Al guardar: recorta el texto libre de las zonas y descarta el que
+  // quede vacio tras recortar. Las letras A-M / X se dejan igual.
+  const limpiarZonas = (zonas) => {
+    if (!zonas) return zonas;
+    return zonas
+      .map((z) => {
+        if (z.startsWith("texto:")) {
+          const t = z.slice(6).trim();
+          return t ? `texto:${t}` : null;
+        }
+        return z;
+      })
+      .filter(Boolean);
   };
 
   const crearTareaAlVuelo = async () => {
@@ -388,12 +405,12 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
         tareas_libres: [],
         tareas_zonas: usaZonas
           ? Object.fromEntries(
-              tareasIds.map((id) => [id, tareasZonas[id]?.length ? tareasZonas[id] : ["X"]])
+              tareasIds.map((id) => [id, limpiarZonas(tareasZonas[id])?.length ? limpiarZonas(tareasZonas[id]) : ["X"]])
             )
           : Object.fromEntries(
               tareasIds
-                .filter((id) => tareasZonas[id]?.length)
-                .map((id) => [id, tareasZonas[id]])
+                .filter((id) => limpiarZonas(tareasZonas[id])?.length)
+                .map((id) => [id, limpiarZonas(tareasZonas[id])])
             ),
         notas: notas.trim(),
         visibilidad,
