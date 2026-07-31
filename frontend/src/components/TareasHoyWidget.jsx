@@ -47,8 +47,16 @@ const TareasHoyWidget = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [descripcion, setDescripcion] = useState("");
   const [prioridad, setPrioridad] = useState("3");
-  const [destinoClave, setDestinoClave] = useState("");
   const [guardando, setGuardando] = useState(false);
+
+  // Proponer en cualquier cliente/centro
+  const [clientes, setClientes] = useState([]);
+  const [clienteSel, setClienteSel] = useState("");
+  const [centros, setCentros] = useState([]);
+  const [centroSel, setCentroSel] = useState("");
+  const [catalogo, setCatalogo] = useState([]);
+  const [tareaCatalogoSel, setTareaCatalogoSel] = useState("libre");
+  const [zonaTexto, setZonaTexto] = useState("");
 
   const [dialogFotoTareaId, setDialogFotoTareaId] = useState(null);
   const [fotoDataUrl, setFotoDataUrl] = useState(null);
@@ -56,16 +64,35 @@ const TareasHoyWidget = () => {
 
   const cargar = async () => {
     try {
-      const [tRes, dRes] = await Promise.all([
+      const [tRes, dRes, cRes, catRes] = await Promise.all([
         axios.get(`${API}/tareas-centro/mis-tareas-hoy`),
         axios.get(`${API}/tareas-centro/mis-destinos-hoy`),
+        axios.get(`${API}/clients`).catch(() => ({ data: [] })),
+        axios.get(`${API}/work-tasks`).catch(() => ({ data: [] })),
       ]);
       setTareas(tRes.data);
       setDestinos(dRes.data);
+      setClientes(cRes.data || []);
+      setCatalogo(catRes.data || []);
     } catch (err) {
       console.error("Error cargando tareas de hoy:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Al elegir un cliente en el formulario de proponer, cargar sus centros.
+  const onClienteSel = async (clientId) => {
+    setClienteSel(clientId);
+    setCentroSel("");
+    setCentros([]);
+    const cli = clientes.find((c) => c.id === clientId);
+    if (!cli?.slug) return;
+    try {
+      const res = await axios.get(`${API}/clients/${cli.slug}/centros`);
+      setCentros(res.data || []);
+    } catch (err) {
+      console.error("Error cargando centros:", err);
     }
   };
 
@@ -76,25 +103,43 @@ const TareasHoyWidget = () => {
   const abrirNueva = () => {
     setDescripcion("");
     setPrioridad("3");
-    setDestinoClave(destinos.length > 0 ? `${destinos[0].client_id}|${destinos[0].centro_id || ""}` : "");
+    setClienteSel("");
+    setCentroSel("");
+    setCentros([]);
+    setTareaCatalogoSel("libre");
+    setZonaTexto("");
     setDialogOpen(true);
   };
 
   const crear = async () => {
-    if (!descripcion.trim()) {
-      toast.error("Escribe la tarea");
+    if (!clienteSel) {
+      toast.error("Elige un cliente");
       return;
     }
-    const [clientId, centroId] = destinoClave.split("|");
+    // Construir la descripción: o bien tarea del catálogo (+ zona), o bien
+    // texto libre. La zona/anotación se añade al final entre paréntesis.
+    let texto = "";
+    if (tareaCatalogoSel && tareaCatalogoSel !== "libre") {
+      const t = catalogo.find((x) => x.id === tareaCatalogoSel);
+      texto = t ? t.nombre : "";
+      if (zonaTexto.trim()) texto += ` (${zonaTexto.trim()})`;
+    } else {
+      texto = descripcion.trim();
+      if (zonaTexto.trim()) texto += ` (${zonaTexto.trim()})`;
+    }
+    if (!texto) {
+      toast.error("Elige una tarea o escríbela");
+      return;
+    }
     setGuardando(true);
     try {
       await axios.post(`${API}/tareas-centro`, {
-        client_id: clientId,
-        centro_id: centroId || null,
-        descripcion: descripcion.trim(),
+        client_id: clienteSel,
+        centro_id: centroSel || null,
+        descripcion: texto,
         prioridad: Number(prioridad),
       });
-      toast.success("Tarea añadida");
+      toast.success("Tarea propuesta. El administrador la revisará.");
       setDialogOpen(false);
       await cargar();
     } catch (err) {
@@ -146,11 +191,11 @@ const TareasHoyWidget = () => {
 
   const numPendientes = tareas.length;
   const subtitulo =
-    destinos.length === 0
-      ? "Sin destino asignado hoy"
-      : numPendientes === 0
-      ? "Sin tareas pendientes"
-      : `${numPendientes} pendiente${numPendientes === 1 ? "" : "s"}`;
+    numPendientes === 0
+      ? destinos.length === 0
+        ? "Propón una tarea en cualquier centro"
+        : "Sin tareas pendientes hoy"
+      : `${numPendientes} pendiente${numPendientes === 1 ? "" : "s"} hoy`;
 
   if (!expandido) {
     return (
@@ -162,7 +207,7 @@ const TareasHoyWidget = () => {
       >
         <DashboardTileVisual
           icon={ListChecks}
-          title="Tarea de hoy"
+          title="Tareas"
           subtitle={subtitulo}
           color="ambar"
         />
@@ -176,15 +221,13 @@ const TareasHoyWidget = () => {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
             <ListChecks className="w-4 h-4 text-slate-400" />
-            Tareas de hoy
+            Propuesta y ejecución de tareas
           </h2>
           <div className="flex items-center gap-2">
-            {destinos.length > 0 && (
-              <Button size="sm" variant="outline" onClick={abrirNueva} data-testid="anadir-tarea-hoy-btn">
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Añadir
-              </Button>
-            )}
+            <Button size="sm" variant="outline" onClick={abrirNueva} data-testid="anadir-tarea-hoy-btn">
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              Proponer
+            </Button>
             <button
               type="button"
               onClick={() => setExpandido(false)}
@@ -197,10 +240,12 @@ const TareasHoyWidget = () => {
           </div>
         </div>
 
-        {destinos.length === 0 ? (
-          <p className="text-sm text-slate-400">No tienes ningún sitio asignado hoy en Planificación.</p>
-        ) : tareas.length === 0 ? (
-          <p className="text-sm text-slate-400">Sin tareas pendientes en tu sitio de hoy.</p>
+        {tareas.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            {destinos.length === 0
+              ? "No tienes sitios asignados hoy. Puedes proponer una tarea en cualquier centro con el botón de arriba."
+              : "Sin tareas pendientes en tus sitios de hoy. Puedes proponer una nueva."}
+          </p>
         ) : (
           <div className="space-y-1.5">
             {tareas.map((t) => (
@@ -245,57 +290,101 @@ const TareasHoyWidget = () => {
       </CardContent>
 
       <Dialog open={dialogOpen} onOpenChange={(v) => !guardando && setDialogOpen(v)}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nueva tarea</DialogTitle>
+            <DialogTitle>Proponer tarea</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>Descripción</Label>
-              <Textarea
-                value={descripcion}
-                onChange={(e) => setDescripcion(e.target.value)}
-                rows={2}
-                placeholder="Ej. Falta agua en el riego de la zona 3"
-                data-testid="descripcion-tarea-hoy-input"
-              />
+              <Label>Cliente</Label>
+              <Select value={clienteSel} onValueChange={onClienteSel}>
+                <SelectTrigger data-testid="cliente-tarea-select">
+                  <SelectValue placeholder="Elige un cliente..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientes.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+
+            {clienteSel && centros.length > 0 && (
               <div className="space-y-1.5">
-                <Label>Prioridad</Label>
-                <Select value={prioridad} onValueChange={setPrioridad}>
-                  <SelectTrigger>
+                <Label>Centro (opcional)</Label>
+                <Select value={centroSel || "ninguno"} onValueChange={(v) => setCentroSel(v === "ninguno" ? "" : v)}>
+                  <SelectTrigger data-testid="centro-tarea-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="5">5 - Máxima</SelectItem>
-                    <SelectItem value="4">4 - Alta</SelectItem>
-                    <SelectItem value="3">3 - Media</SelectItem>
-                    <SelectItem value="2">2 - Baja</SelectItem>
-                    <SelectItem value="1">1 - Mínima</SelectItem>
+                    <SelectItem value="ninguno">Todo el cliente (sin centro concreto)</SelectItem>
+                    {centros.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              {destinos.length > 1 && (
-                <div className="space-y-1.5">
-                  <Label>Sitio</Label>
-                  <Select value={destinoClave} onValueChange={setDestinoClave}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {destinos.map((d) => (
-                        <SelectItem
-                          key={`${d.client_id}|${d.centro_id || ""}`}
-                          value={`${d.client_id}|${d.centro_id || ""}`}
-                        >
-                          {d.centro_nombre || d.client_nombre}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Tarea</Label>
+              <Select value={tareaCatalogoSel} onValueChange={setTareaCatalogoSel}>
+                <SelectTrigger data-testid="tarea-catalogo-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="libre">Escribirla a mano</SelectItem>
+                  {catalogo.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {tareaCatalogoSel === "libre" && (
+              <div className="space-y-1.5">
+                <Label>Descripción</Label>
+                <Textarea
+                  value={descripcion}
+                  onChange={(e) => setDescripcion(e.target.value)}
+                  rows={2}
+                  placeholder="Ej. Falta agua en el riego"
+                  data-testid="descripcion-tarea-hoy-input"
+                />
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Zona / anotación (opcional)</Label>
+              <Textarea
+                value={zonaTexto}
+                onChange={(e) => setZonaTexto(e.target.value)}
+                rows={2}
+                placeholder="Ej. junto a los cipreses de la entrada"
+                data-testid="zona-tarea-hoy-input"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Prioridad</Label>
+              <Select value={prioridad} onValueChange={setPrioridad}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 - Máxima</SelectItem>
+                  <SelectItem value="4">4 - Alta</SelectItem>
+                  <SelectItem value="3">3 - Media</SelectItem>
+                  <SelectItem value="2">2 - Baja</SelectItem>
+                  <SelectItem value="1">1 - Mínima</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
@@ -308,7 +397,7 @@ const TareasHoyWidget = () => {
               className="bg-indigo-600 hover:bg-indigo-700 text-white"
               data-testid="crear-tarea-hoy-btn"
             >
-              {guardando ? "Creando..." : "Crear"}
+              {guardando ? "Enviando..." : "Proponer"}
             </Button>
           </DialogFooter>
         </DialogContent>
