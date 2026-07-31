@@ -9,7 +9,7 @@ import base64
 import logging
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
-from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
 from typing import List, Optional, Dict
 import uuid
 from datetime import datetime, timezone, timedelta, date
@@ -111,6 +111,9 @@ class NotificationType(str, Enum):
     JUSTIFICANTE_MEDICO = "justificante_medico"
     PAGO_EXTRA = "pago_extra"
     PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
+    TAREA_CENTRO_PROPUESTA = "tarea_centro_propuesta"
+    TAREA_CENTRO_VALIDAR = "tarea_centro_validar"
+    TAREA_CENTRO_RESUELTA = "tarea_centro_resuelta"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -3458,16 +3461,34 @@ class TareaCentro(BaseModel):
     centro_id: Optional[str] = None
     descripcion: str
     prioridad: int
-    completada: bool = False
+    # estado: activa | pendiente_aprobacion | pendiente_validacion | completada
+    #  - pendiente_aprobacion: creada por operario, espera OK del admin
+    #  - activa: aprobada o creada por admin; disponible para hacerse
+    #  - pendiente_validacion: un operario la marco con foto, espera OK admin
+    #  - completada: el admin dio el visto bueno final
+    estado: str = "activa"
+    completada: bool = False  # se mantiene por compatibilidad (== estado completada)
     completada_por: Optional[str] = None
     completada_por_nombre: Optional[str] = None
     completada_en: Optional[datetime] = None
+    marcada_por: Optional[str] = None  # operario que la marco como hecha
+    marcada_por_nombre: Optional[str] = None
+    marcada_en: Optional[datetime] = None
     foto_url: Optional[str] = None
     foto_public_id: Optional[str] = None
     creado_por: str
     creado_por_nombre: str
     creado_en: datetime
     actualizado_en: datetime
+
+    @model_validator(mode="after")
+    def _derivar_estado_antiguo(self):
+        # Documentos antiguos sin 'estado' explicito: derivarlo de
+        # 'completada'. Como 'estado' tiene default "activa", solo
+        # corregimos el caso en que la tarea estaba completada.
+        if self.completada and self.estado == "activa":
+            self.estado = "completada"
+        return self
 
 
 class TareaCentroConNombres(TareaCentro):
@@ -3518,12 +3539,18 @@ async def list_tareas_centro(
 
 
 @api_router.get("/tareas-centro/pendientes-todas", response_model=List[TareaCentroConNombres])
-async def list_todas_pendientes(_: dict = Depends(require_admin)):
-    """Vista para el dashboard del administrador: todas las tareas
-    pendientes de cualquier cliente/centro, ordenadas por prioridad."""
-    cursor = db.tareas_centro.find({"completada": False}).sort(
-        [("prioridad", -1), ("creado_en", 1)]
-    )
+async def list_todas_pendientes(
+    estado: Optional[str] = None, _: dict = Depends(require_admin)
+):
+    """Vista para el administrador. Sin filtro: todas las tareas no
+    completadas. Con 'estado': solo las de ese estado (pendiente_aprobacion,
+    pendiente_validacion, activa)."""
+    if estado:
+        query = {"estado": estado}
+    else:
+        # No completadas: incluye documentos antiguos sin campo 'estado'.
+        query = {"estado": {"$ne": "completada"}, "completada": {"$ne": True}}
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
     tareas = [t async for t in cursor]
     return await _resolver_nombres_tareas(tareas)
 
@@ -3553,8 +3580,19 @@ async def mis_tareas_hoy(current_user: dict = Depends(require_approved)):
                 client_ids_hoy.add(ce["client_id"])
 
     query = {
-        "completada": False,
-        "client_id": {"$in": list(client_ids_hoy)},
+        # No mostrar las que aun esperan aprobacion del admin, ni las ya
+        # completadas. Sí las activas y las pendientes de validar. Se
+        # incluyen tambien tareas antiguas sin campo 'estado' que no esten
+        # completadas (compatibilidad con datos previos a este cambio).
+        "$and": [
+            {"client_id": {"$in": list(client_ids_hoy)}},
+            {
+                "$or": [
+                    {"estado": {"$in": ["activa", "pendiente_validacion"]}},
+                    {"estado": {"$exists": False}, "completada": {"$ne": True}},
+                ]
+            },
+        ],
     }
     cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
     tareas = [t async for t in cursor]
@@ -3634,17 +3672,23 @@ async def crear_tarea_centro(
             )
 
     usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    es_admin = current_user.get("role") == UserRole.ADMIN
     now = datetime.now(timezone.utc)
+    estado = "activa" if es_admin else "pendiente_aprobacion"
     doc = {
         "id": str(uuid.uuid4()),
         "client_id": payload.client_id,
         "centro_id": payload.centro_id,
         "descripcion": payload.descripcion.strip(),
         "prioridad": payload.prioridad,
+        "estado": estado,
         "completada": False,
         "completada_por": None,
         "completada_por_nombre": None,
         "completada_en": None,
+        "marcada_por": None,
+        "marcada_por_nombre": None,
+        "marcada_en": None,
         "foto_url": None,
         "foto_public_id": None,
         "creado_por": current_user["user_id"],
@@ -3653,6 +3697,19 @@ async def crear_tarea_centro(
         "actualizado_en": now,
     }
     await db.tareas_centro.insert_one(doc)
+
+    # Si la crea un operario, queda pendiente de aprobacion y se avisa a
+    # los administradores (como con las fotos).
+    if not es_admin:
+        resueltas_notif = await _resolver_nombres_tareas([doc])
+        centro_txt = resueltas_notif[0].centro_nombre or resueltas_notif[0].client_nombre
+        await notify_admins(
+            notification_type=NotificationType.TAREA_CENTRO_PROPUESTA,
+            title="Nueva tarea propuesta",
+            message=f"{doc['creado_por_nombre']} ha propuesto una tarea en {centro_txt}.",
+            data={"enlace": "/admin/tareas-centro", "tarea_id": doc["id"]},
+        )
+
     resueltas = await _resolver_nombres_tareas([doc])
     return resueltas[0]
 
@@ -3681,19 +3738,23 @@ async def completar_tarea_centro(
     payload: CompletarTareaPayload,
     current_user: dict = Depends(require_approved),
 ):
-    """Cualquier aprobado puede marcarla como hecha (admin u operario);
-    en la practica es el operario en el sitio quien la da por buena."""
+    """El operario marca la tarea como hecha (adjuntando foto): pasa a
+    'pendiente_validacion' y se avisa al admin, que da el OK final. Si
+    quien la marca es un admin, se completa directamente."""
     doc = await db.tareas_centro.find_one({"id": tarea_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
     usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    now = datetime.now(timezone.utc)
+    nombre = usuario["name"] if usuario else "?"
+
     updates = {
-        "completada": True,
-        "completada_por": current_user["user_id"],
-        "completada_por_nombre": usuario["name"] if usuario else "?",
-        "completada_en": datetime.now(timezone.utc),
-        "actualizado_en": datetime.now(timezone.utc),
+        "marcada_por": current_user["user_id"],
+        "marcada_por_nombre": nombre,
+        "marcada_en": now,
+        "actualizado_en": now,
     }
     if payload.foto:
         if not _es_logo_base64(payload.foto):
@@ -3702,7 +3763,107 @@ async def completar_tarea_centro(
         updates["foto_url"] = url
         updates["foto_public_id"] = public_id
 
+    if es_admin:
+        # El admin la completa directamente (queda validada).
+        updates["estado"] = "completada"
+        updates["completada"] = True
+        updates["completada_por"] = current_user["user_id"]
+        updates["completada_por_nombre"] = nombre
+        updates["completada_en"] = now
+    else:
+        # El operario la deja pendiente de validacion del admin.
+        updates["estado"] = "pendiente_validacion"
+        updates["completada"] = False
+
     await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
+
+    if not es_admin:
+        resueltas_notif = await _resolver_nombres_tareas(
+            [{**doc, **updates}]
+        )
+        centro_txt = resueltas_notif[0].centro_nombre or resueltas_notif[0].client_nombre
+        await notify_admins(
+            notification_type=NotificationType.TAREA_CENTRO_VALIDAR,
+            title="Tarea por validar",
+            message=f"{nombre} ha completado una tarea en {centro_txt}. Revisa y valida.",
+            data={"enlace": "/admin/tareas-centro", "tarea_id": tarea_id},
+        )
+
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/aprobar", response_model=TareaCentroConNombres)
+async def aprobar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin aprueba una tarea PROPUESTA por un operario: pasa de
+    'pendiente_aprobacion' a 'activa' (ya disponible para hacerse)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"estado": "activa", "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    # Avisar al operario que la propuso
+    if doc.get("creado_por"):
+        await create_notification(
+            user_id=doc["creado_por"],
+            notification_type=NotificationType.TAREA_CENTRO_RESUELTA,
+            title="Tarea aprobada",
+            message="Tu tarea propuesta ha sido aprobada.",
+            data={"enlace": "/tareas"},
+        )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/validar", response_model=TareaCentroConNombres)
+async def validar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin da el OK final a una tarea que un operario marco como
+    hecha: pasa de 'pendiente_validacion' a 'completada'."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    now = datetime.now(timezone.utc)
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {
+            "$set": {
+                "estado": "completada",
+                "completada": True,
+                "completada_por": doc.get("marcada_por"),
+                "completada_por_nombre": doc.get("marcada_por_nombre"),
+                "completada_en": doc.get("marcada_en") or now,
+                "actualizado_en": now,
+            }
+        },
+    )
+    if doc.get("marcada_por"):
+        await create_notification(
+            user_id=doc["marcada_por"],
+            notification_type=NotificationType.TAREA_CENTRO_RESUELTA,
+            title="Tarea validada",
+            message="La tarea que completaste ha sido validada.",
+            data={"enlace": "/tareas"},
+        )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/rechazar", response_model=TareaCentroConNombres)
+async def rechazar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin devuelve una tarea marcada a 'activa' (no la da por buena;
+    el operario tendra que rehacerla/re-marcarla)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"estado": "activa", "completada": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
     doc = await db.tareas_centro.find_one({"id": tarea_id})
     resueltas = await _resolver_nombres_tareas([doc])
     return resueltas[0]
