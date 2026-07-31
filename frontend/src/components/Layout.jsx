@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro, ListChecks } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,7 @@ const Layout = () => {
     { to: "/admin/prevencion", icon: HardHat, label: "Prevención", show: isAdmin, section: "admin" },
     { to: "/admin/fichajes", icon: Clock, label: "Fichajes", show: isAdmin, section: "admin" },
     { to: "/admin/pagos-extra", icon: Euro, label: "Pagos extra", show: isAdmin, section: "admin" },
+    { to: "/admin/tareas-centro", icon: ListChecks, label: "Tareas", show: isAdmin, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
 
