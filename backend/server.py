@@ -1820,6 +1820,49 @@ async def _borrar_pdf_cloudinary(public_id: Optional[str]) -> None:
         logger.warning("No se pudo borrar un PDF antiguo de Cloudinary", exc_info=True)
 
 
+def _tipo_documento_base64(valor: Optional[str]) -> Optional[str]:
+    """Devuelve 'image', 'pdf' o None segun el data-URI recibido."""
+    if not valor:
+        return None
+    if valor.startswith("data:image"):
+        return "image"
+    if valor.startswith("data:application/pdf"):
+        return "pdf"
+    return None
+
+
+async def _subir_documento_cloudinary(data_uri: str, carpeta: str) -> tuple:
+    """Sube un documento (data-URI base64: imagen o PDF) a Cloudinary.
+    Las imagenes van como 'image' y los PDF como 'raw'. Devuelve
+    (url, public_id, resource_type)."""
+    tipo = _tipo_documento_base64(data_uri)
+    if tipo is None:
+        raise HTTPException(status_code=400, detail="Formato no valido (solo PDF o imagen)")
+    resource_type = "image" if tipo == "image" else "raw"
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder=carpeta,
+            resource_type=resource_type,
+        )
+    except Exception as e:
+        logger.error("Error subiendo documento a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el documento") from e
+    return resultado["secure_url"], resultado["public_id"], resource_type
+
+
+async def _borrar_documento_cloudinary(public_id: Optional[str], resource_type: str) -> None:
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(
+            cloudinary.uploader.destroy, public_id, resource_type=resource_type or "image"
+        )
+    except Exception:
+        logger.warning("No se pudo borrar un documento antiguo de Cloudinary", exc_info=True)
+
+
 # =====================================================================
 # DOCUMENTOS PARA FIRMAR (Fase 14)
 # ---------------------------------------------------------------------
@@ -6053,6 +6096,87 @@ async def eliminar_foto_vehiculo(
     )
     doc = await db.vehiculos.find_one({"id": vehiculo_id})
     return Vehiculo(**doc)
+
+
+# --- Documentacion del vehiculo (PDF o imagen) ----------------------------
+# Permiso de circulacion, ficha tecnica, ITV, seguro, etc. Cada documento
+# guarda su url, el public_id de Cloudinary, el tipo (image/pdf) y un
+# nombre descriptivo.
+
+class DocumentoVehiculoPayload(BaseModel):
+    archivo: str = Field(..., description="Data-URI base64 (imagen o PDF)")
+    nombre: str = Field(..., min_length=1, max_length=200)
+
+
+class DocumentoVehiculo(BaseModel):
+    id: str
+    nombre: str
+    url: str
+    tipo: str  # image | pdf
+    creado_en: datetime
+
+
+@api_router.get(
+    "/vehiculos/{vehiculo_id}/documentos", response_model=List[DocumentoVehiculo]
+)
+async def list_documentos_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    documentos = doc.get("documentos", [])
+    return [DocumentoVehiculo(**d) for d in documentos]
+
+
+@api_router.post(
+    "/vehiculos/{vehiculo_id}/documentos", response_model=DocumentoVehiculo
+)
+async def anadir_documento_vehiculo(
+    vehiculo_id: str, payload: DocumentoVehiculoPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    url, public_id, resource_type = await _subir_documento_cloudinary(
+        payload.archivo, "inicia-gestion/vehiculos-docs"
+    )
+    tipo = "image" if resource_type == "image" else "pdf"
+    nuevo = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre.strip(),
+        "url": url,
+        "public_id": public_id,
+        "resource_type": resource_type,
+        "tipo": tipo,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    documentos = doc.get("documentos", []) + [nuevo]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"documentos": documentos, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return DocumentoVehiculo(**nuevo)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}/documentos/{documento_id}")
+async def eliminar_documento_vehiculo(
+    vehiculo_id: str, documento_id: str, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    documentos = doc.get("documentos", [])
+    objetivo = next((d for d in documentos if d["id"] == documento_id), None)
+    if not objetivo:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_documento_cloudinary(
+        objetivo.get("public_id"), objetivo.get("resource_type", "image")
+    )
+    documentos = [d for d in documentos if d["id"] != documento_id]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"documentos": documentos, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
 
 
 @api_router.get("/vehiculos/{vehiculo_id}/kilometros", response_model=List[RegistroKm])
