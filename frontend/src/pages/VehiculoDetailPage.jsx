@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowLeft, Truck, AlertTriangle, CheckCircle, Plus, Check, Trash2, X, Gauge } from "lucide-react";
+import { ArrowLeft, Truck, AlertTriangle, CheckCircle, Plus, Check, Trash2, X, Gauge, FileText, ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,6 +75,10 @@ const VehiculoDetailPage = () => {
   const [aBorrar, setABorrar] = useState(null);
 
   const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [documentos, setDocumentos] = useState([]);
+  const [subiendoDoc, setSubiendoDoc] = useState(false);
+  const [nombreDoc, setNombreDoc] = useState("");
+  const [docABorrar, setDocABorrar] = useState(null);
   const [fotoAmpliada, setFotoAmpliada] = useState(null);
   const [fotoABorrar, setFotoABorrar] = useState(null);
 
@@ -87,10 +91,11 @@ const VehiculoDetailPage = () => {
 
   const cargar = async () => {
     try {
-      const [vRes, aRes, kmRes] = await Promise.all([
+      const [vRes, aRes, kmRes, docRes] = await Promise.all([
         axios.get(`${API}/vehiculos/${vehiculoId}`),
         axios.get(`${API}/vehiculos/${vehiculoId}/averias`),
         axios.get(`${API}/vehiculos/${vehiculoId}/kilometros`),
+        axios.get(`${API}/vehiculos/${vehiculoId}/documentos`).catch(() => ({ data: [] })),
       ]);
       setVehiculo(vRes.data);
       setForm({
@@ -105,6 +110,7 @@ const VehiculoDetailPage = () => {
       });
       setAverias(aRes.data);
       setKilometrosLog(kmRes.data);
+      setDocumentos(docRes.data || []);
     } catch (err) {
       console.error("Error cargando vehículo:", err);
       toast.error("No se pudo cargar el vehículo");
@@ -171,6 +177,50 @@ const VehiculoDetailPage = () => {
       await cargar();
     } catch (err) {
       console.error("Error eliminando foto:", err);
+      toast.error("No se pudo eliminar");
+    }  };
+
+  const subirDocumento = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const esValido =
+      file.type === "application/pdf" || file.type.startsWith("image/");
+    if (!esValido) {
+      toast.error("Solo se admiten PDF o imágenes");
+      return;
+    }
+    const nombre = nombreDoc.trim() || file.name.replace(/\.[^.]+$/, "");
+    setSubiendoDoc(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        await axios.post(`${API}/vehiculos/${vehiculoId}/documentos`, {
+          archivo: reader.result,
+          nombre,
+        });
+        toast.success("Documento añadido");
+        setNombreDoc("");
+        await cargar();
+      } catch (err) {
+        console.error("Error subiendo documento:", err);
+        toast.error(err?.response?.data?.detail || "No se pudo subir el documento");
+      } finally {
+        setSubiendoDoc(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const eliminarDocumento = async () => {
+    if (!docABorrar) return;
+    try {
+      await axios.delete(`${API}/vehiculos/${vehiculoId}/documentos/${docABorrar.id}`);
+      toast.success("Documento eliminado");
+      setDocABorrar(null);
+      await cargar();
+    } catch (err) {
+      console.error("Error eliminando documento:", err);
       toast.error("No se pudo eliminar");
     }
   };
@@ -348,9 +398,102 @@ const VehiculoDetailPage = () => {
         </CardContent>
       </Card>
 
+      {/* Documentación del vehículo */}
       <Card className="border-slate-100 mb-6">
-        <CardContent className="p-4 space-y-4">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">Datos</p>
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <FileText className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Documentación</h2>
+            <span className="text-xs text-slate-400">
+              (permiso de circulación, ficha técnica, ITV, seguro...)
+            </span>
+          </div>
+
+          {isAdmin && (
+            <div className="flex flex-col sm:flex-row gap-2 mb-4">
+              <Input
+                value={nombreDoc}
+                onChange={(e) => setNombreDoc(e.target.value)}
+                placeholder="Nombre del documento (opcional)"
+                className="flex-1"
+                data-testid="nombre-documento-input"
+              />
+              <label
+                className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium cursor-pointer shrink-0 ${
+                  subiendoDoc
+                    ? "bg-slate-100 text-slate-400"
+                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                }`}
+                data-testid="subir-documento-label"
+              >
+                <Plus className="w-4 h-4" />
+                {subiendoDoc ? "Subiendo..." : "Añadir documento"}
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={subirDocumento}
+                  disabled={subiendoDoc}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          )}
+
+          {documentos.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-3">
+              No hay documentos guardados todavía.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {documentos.map((d) => (
+                <div
+                  key={d.id}
+                  className="flex items-center gap-3 rounded-lg border border-slate-100 p-2.5"
+                  data-testid={`documento-${d.id}`}
+                >
+                  <div
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                      d.tipo === "pdf" ? "bg-red-50 text-red-500" : "bg-blue-50 text-blue-500"
+                    }`}
+                  >
+                    <FileText className="w-4.5 h-4.5" />
+                  </div>
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 min-w-0"
+                  >
+                    <p className="text-sm font-medium text-slate-800 truncate hover:text-indigo-600">
+                      {d.nombre}
+                    </p>
+                    <p className="text-xs text-slate-400 uppercase">{d.tipo}</p>
+                  </a>
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-500 hover:text-indigo-700 shrink-0"
+                    title="Abrir / descargar"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setDocABorrar(d)}
+                      className="text-slate-300 hover:text-red-500 shrink-0"
+                      data-testid={`borrar-documento-${d.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Matrícula</Label>
@@ -656,6 +799,23 @@ const VehiculoDetailPage = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={eliminarFoto} className="bg-red-600 hover:bg-red-700">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!docABorrar} onOpenChange={(open) => !open && setDocABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar este documento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará "{docABorrar?.nombre}". Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={eliminarDocumento} className="bg-red-600 hover:bg-red-700">
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
