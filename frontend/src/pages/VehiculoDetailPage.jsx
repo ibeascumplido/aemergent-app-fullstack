@@ -494,6 +494,10 @@ const VehiculoDetailPage = () => {
           )}
         </CardContent>
       </Card>
+
+      <Card className="border-slate-100 mb-6">
+        <CardContent className="p-4 space-y-4">
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">Datos</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Matrícula</Label>
