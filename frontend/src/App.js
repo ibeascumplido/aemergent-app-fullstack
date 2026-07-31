@@ -22,6 +22,7 @@ import AdminPrevencionPage from "@/pages/AdminPrevencionPage";
 import AdminFichajesPage from "@/pages/AdminFichajesPage";
 import PagosExtraPage from "@/pages/PagosExtraPage";
 import AdminPagosExtraPage from "@/pages/AdminPagosExtraPage";
+import AdminTareasCentroPage from "@/pages/AdminTareasCentroPage";
 import DocumentoFirmaPage from "@/pages/DocumentoFirmaPage";
 import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
@@ -121,6 +122,11 @@ function App() {
               <Route path="admin/pagos-extra" element={
                 <ProtectedRoute requireAdmin>
                   <AdminPagosExtraPage />
+                </ProtectedRoute>
+              } />
+              <Route path="admin/tareas-centro" element={
+                <ProtectedRoute requireAdmin>
+                  <AdminTareasCentroPage />
                 </ProtectedRoute>
               } />
               <Route path="clients/:id" element={
