@@ -15,6 +15,7 @@ import {
   CloudRain,
   HardHat,
   Euro,
+  ListChecks,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -115,6 +116,11 @@ const NotificationBell = () => {
         return "/admin/pagos-extra";
       case "pago_extra_resuelto":
         return "/pagos-extra";
+      case "tarea_centro_propuesta":
+      case "tarea_centro_validar":
+        return "/admin/tareas-centro";
+      case "tarea_centro_resuelta":
+        return "/tareas";
       default:
         return null;
     }
@@ -159,6 +165,10 @@ const NotificationBell = () => {
       case "pago_extra":
       case "pago_extra_resuelto":
         return <Euro className="w-4 h-4 text-emerald-600" />;
+      case "tarea_centro_propuesta":
+      case "tarea_centro_validar":
+      case "tarea_centro_resuelta":
+        return <ListChecks className="w-4 h-4 text-indigo-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
