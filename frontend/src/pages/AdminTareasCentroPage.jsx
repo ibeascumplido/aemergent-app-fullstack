@@ -8,16 +8,11 @@ import {
   X,
   Clock,
   ThumbsUp,
-  Image as ImageIcon,
   MapPin,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -245,10 +240,30 @@ const AdminTareasCentroPage = () => {
                     </>
                   )}
                   {filtro === "activa" && (
-                    <span className="text-xs text-slate-400 inline-flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      Pendiente de que un operario la complete
-                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {t.incidencia_id ? (
+                        <span className="text-xs text-red-600 inline-flex items-center gap-1 font-medium">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Marcada como incidencia
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => accion(t.id, "a-incidencia", "Convertida en incidencia")}
+                          disabled={procesando === t.id}
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                          data-testid={`a-incidencia-${t.id}`}
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5 mr-1" />
+                          Pasar a incidencia
+                        </Button>
+                      )}
+                      <span className="text-xs text-slate-400 inline-flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        Pendiente de que un operario la complete
+                      </span>
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -257,14 +272,28 @@ const AdminTareasCentroPage = () => {
         </div>
       )}
 
-      <Dialog open={!!fotoAmpliada} onOpenChange={(v) => !v && setFotoAmpliada(null)}>
-        <DialogContent className="max-w-lg p-2">
-          <DialogTitle className="sr-only">Foto de la tarea</DialogTitle>
-          {fotoAmpliada && (
-            <img src={fotoAmpliada} alt="Foto de la tarea" className="w-full rounded-lg" />
-          )}
-        </DialogContent>
-      </Dialog>
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setFotoAmpliada(null)}
+          data-testid="foto-pantalla-completa"
+        >
+          <button
+            type="button"
+            onClick={() => setFotoAmpliada(null)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white"
+            aria-label="Cerrar"
+          >
+            <X className="w-7 h-7" />
+          </button>
+          <img
+            src={fotoAmpliada}
+            alt="Foto de la tarea"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
