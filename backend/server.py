@@ -8061,8 +8061,24 @@ class RegistroFitosanitario(BaseModel):
 
 
 @api_router.get("/admin/registro-fitosanitarios", response_model=List[RegistroFitosanitario])
-async def list_registro_fitosanitarios(_: dict = Depends(require_admin)):
-    cursor = db.registro_fitosanitarios.find({}).sort("fecha", -1)
+async def list_registro_fitosanitarios(
+    client_id: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    query = {}
+    if client_id:
+        query["client_id"] = client_id
+    # Filtro por rango de fechas (la fecha se guarda como texto YYYY-MM-DD,
+    # que ordena y compara bien lexicograficamente).
+    if desde or hasta:
+        query["fecha"] = {}
+        if desde:
+            query["fecha"]["$gte"] = desde
+        if hasta:
+            query["fecha"]["$lte"] = hasta
+    cursor = db.registro_fitosanitarios.find(query).sort("fecha", -1)
     registros = [r async for r in cursor]
     # Resolver nombre del operario
     op_ids = {r.get("operario_id") for r in registros if r.get("operario_id")}
@@ -8088,6 +8104,141 @@ async def list_registro_fitosanitarios(_: dict = Depends(require_admin)):
             )
         )
     return salida
+
+
+@api_router.get("/admin/registro-fitosanitarios/pdf")
+async def descargar_pdf_fitosanitarios(
+    client_id: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Registro oficial de aplicacion de fitosanitarios en PDF, con los
+    mismos filtros que el listado (cliente y rango de fechas)."""
+    query = {}
+    cliente_nombre = None
+    if client_id:
+        query["client_id"] = client_id
+        cli = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if cli:
+            cliente_nombre = cli.get("nombre")
+    if desde or hasta:
+        query["fecha"] = {}
+        if desde:
+            query["fecha"]["$gte"] = desde
+        if hasta:
+            query["fecha"]["$lte"] = hasta
+    cursor = db.registro_fitosanitarios.find(query).sort("fecha", 1)
+    registros = [r async for r in cursor]
+    op_ids = {r.get("operario_id") for r in registros if r.get("operario_id")}
+    nombres = {}
+    if op_ids:
+        async for u in db.users.find({"user_id": {"$in": list(op_ids)}}):
+            nombres[u["user_id"]] = u["name"]
+
+    pdf_bytes = _generar_pdf_fitosanitarios(registros, nombres, cliente_nombre, desde, hasta)
+    filename = "registro-fitosanitarios.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _generar_pdf_fitosanitarios(
+    registros: list, nombres: dict, cliente_nombre: Optional[str],
+    desde: Optional[str], hasta: Optional[str],
+) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4), topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm, title="Registro de fitosanitarios",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=14,
+    )
+    celda_style = ParagraphStyle("Celda", parent=styles["Normal"], fontSize=8.5, leading=11)
+    celda_header_style = ParagraphStyle(
+        "CeldaHeader", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.white, fontName="Helvetica-Bold",
+    )
+
+    logo_img = _logo_inicia_image(max_width_cm=3.5, max_height_cm=1.1)
+    story = []
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph("Registro de aplicación de fitosanitarios", titulo_style))
+
+    partes_sub = []
+    if cliente_nombre:
+        partes_sub.append(f"Cliente: {_p(cliente_nombre)}")
+    if desde:
+        partes_sub.append(f"Desde: {desde}")
+    if hasta:
+        partes_sub.append(f"Hasta: {hasta}")
+    partes_sub.append(f"{len(registros)} registro(s)")
+    story.append(Paragraph(" · ".join(partes_sub), subtitulo_style))
+
+    if not registros:
+        story.append(Paragraph("No hay aplicaciones registradas para estos filtros.", celda_style))
+    else:
+        filas = [[
+            Paragraph("Fecha", celda_header_style),
+            Paragraph("Cliente", celda_header_style),
+            Paragraph("Centro", celda_header_style),
+            Paragraph("Producto", celda_header_style),
+            Paragraph("Zona", celda_header_style),
+            Paragraph("Horario", celda_header_style),
+            Paragraph("Operario", celda_header_style),
+        ]]
+        for r in registros:
+            fecha_txt = ""
+            if r.get("fecha"):
+                try:
+                    fecha_txt = datetime.strptime(r["fecha"], "%Y-%m-%d").strftime("%d/%m/%Y")
+                except Exception:
+                    fecha_txt = r["fecha"]
+            horario = ""
+            if r.get("hora_inicio") or r.get("hora_fin"):
+                horario = f"{r.get('hora_inicio') or '?'}–{r.get('hora_fin') or '?'}"
+            filas.append([
+                Paragraph(fecha_txt, celda_style),
+                Paragraph(_p(r.get("client_nombre", "")), celda_style),
+                Paragraph(_p(r.get("centro_nombre") or "—"), celda_style),
+                Paragraph(_p(r.get("producto", "")), celda_style),
+                Paragraph(_p(r.get("zona") or "—"), celda_style),
+                Paragraph(horario, celda_style),
+                Paragraph(_p(nombres.get(r.get("operario_id"), "—")), celda_style),
+            ])
+
+        tabla = Table(
+            filas,
+            colWidths=[2.4 * cm, 5.0 * cm, 4.5 * cm, 3.5 * cm, 4.5 * cm, 2.6 * cm, 4.0 * cm],
+            repeatRows=1,
+        )
+        tabla.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ]
+            )
+        )
+        story.append(tabla)
+
+    doc.build(story)
+    return buffer.getvalue()
 
 
 # =====================================================================
