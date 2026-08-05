@@ -7744,6 +7744,8 @@ def _calcular_importe_pago(categoria: str, subtipo: str, cantidad: float,
 class PagoExtraCreate(BaseModel):
     categoria: str = Field(..., pattern=_CATEGORIA_PAGO_PATTERN)
     subtipo: str = Field(..., pattern=_SUBTIPO_PAGO_PATTERN)
+    client_id: Optional[str] = None
+    client_nombre: Optional[str] = None  # texto libre si no hay cliente registrado
     centro_id: Optional[str] = None
     centro_nombre: Optional[str] = None  # texto libre si no hay centro registrado
     tarea_id: Optional[str] = None
@@ -7752,6 +7754,14 @@ class PagoExtraCreate(BaseModel):
     cantidad: float = Field(..., gt=0)  # nº de horas, o nº de dias
     importe_manual: Optional[float] = Field(None, ge=0)  # solo para subtipo "variable"
     nota: Optional[str] = None
+    # --- Cuestionario de toxicidad/penosidad (solo categoria "plus") ---
+    tox_tipo_trabajo: Optional[str] = None  # fitosanitario | altura | glorieta | motosierra | otro
+    tox_producto: Optional[str] = None  # herbicida | fungicida | insecticida | otro
+    tox_producto_detalle: Optional[str] = None  # si tox_producto == "otro"
+    tox_zona: Optional[str] = None  # zona trabajada (letras o texto libre)
+    tox_hora_inicio: Optional[str] = None  # "HH:MM"
+    tox_hora_fin: Optional[str] = None  # "HH:MM"
+    tox_foto: Optional[str] = None  # data-URI base64 (se sube a Cloudinary)
 
 
 class PagoExtraUpdate(BaseModel):
@@ -7770,6 +7780,8 @@ class PagoExtra(BaseModel):
     operario_id: str
     categoria: str
     subtipo: str
+    client_id: Optional[str] = None
+    client_nombre: Optional[str] = None
     centro_id: Optional[str] = None
     centro_nombre: Optional[str] = None
     tarea_id: Optional[str] = None
@@ -7782,6 +7794,14 @@ class PagoExtra(BaseModel):
     estado: str
     creado_en: datetime
     resuelto_en: Optional[datetime] = None
+    # Cuestionario de toxicidad/penosidad
+    tox_tipo_trabajo: Optional[str] = None
+    tox_producto: Optional[str] = None
+    tox_producto_detalle: Optional[str] = None
+    tox_zona: Optional[str] = None
+    tox_hora_inicio: Optional[str] = None
+    tox_hora_fin: Optional[str] = None
+    tox_foto_url: Optional[str] = None
 
     @field_validator("creado_en", "resuelto_en")
     @classmethod
@@ -7824,16 +7844,32 @@ async def crear_pago_extra(payload: PagoExtraCreate, current_user: dict = Depend
         if centro:
             centro_nombre = centro["nombre"]
 
+    # Nombre del cliente: registrado o texto libre
+    client_nombre = payload.client_nombre
+    if payload.client_id:
+        cliente = await db.clients.find_one({"id": payload.client_id}, {"_id": 0})
+        if cliente:
+            client_nombre = cliente["nombre"]
+
     trabajo_desc = await _resolver_nombre_trabajo(payload.tarea_id, payload.trabajo_descripcion)
     importe = _calcular_importe_pago(
         payload.categoria, payload.subtipo, payload.cantidad, payload.importe_manual
     )
+
+    # Foto del cuestionario de toxicidad (si viene)
+    tox_foto_url = None
+    if payload.tox_foto:
+        if not _es_logo_base64(payload.tox_foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        tox_foto_url, _ = await _subir_logo_cloudinary(payload.tox_foto)
 
     doc = {
         "id": str(uuid.uuid4()),
         "operario_id": current_user["user_id"],
         "categoria": payload.categoria,
         "subtipo": payload.subtipo,
+        "client_id": payload.client_id,
+        "client_nombre": client_nombre,
         "centro_id": payload.centro_id,
         "centro_nombre": centro_nombre,
         "tarea_id": payload.tarea_id,
@@ -7846,6 +7882,13 @@ async def crear_pago_extra(payload: PagoExtraCreate, current_user: dict = Depend
         "estado": "pendiente",
         "creado_en": datetime.now(timezone.utc),
         "resuelto_en": None,
+        "tox_tipo_trabajo": payload.tox_tipo_trabajo,
+        "tox_producto": payload.tox_producto,
+        "tox_producto_detalle": payload.tox_producto_detalle,
+        "tox_zona": payload.tox_zona,
+        "tox_hora_inicio": payload.tox_hora_inicio,
+        "tox_hora_fin": payload.tox_hora_fin,
+        "tox_foto_url": tox_foto_url,
     }
     await db.pagos_extra.insert_one(doc)
 
@@ -7956,6 +7999,37 @@ async def resolver_pago_extra_admin(
         {"$set": {"estado": pago["estado"], "resuelto_en": pago["resuelto_en"]}},
     )
 
+    # Si se acepta un plus de toxicidad cuyo trabajo es aplicacion de
+    # fitosanitario, se genera automaticamente el registro oficial (por
+    # cliente, producto, zona, dia y horario). Solo aplicaciones aceptadas.
+    if (
+        aceptar
+        and pago.get("categoria") == "plus"
+        and pago.get("tox_tipo_trabajo") == "fitosanitario"
+    ):
+        ya = await db.registro_fitosanitarios.find_one({"pago_extra_id": pago_id})
+        if not ya:
+            producto = pago.get("tox_producto") or "?"
+            if producto == "otro" and pago.get("tox_producto_detalle"):
+                producto = pago["tox_producto_detalle"]
+            await db.registro_fitosanitarios.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "pago_extra_id": pago_id,
+                    "client_id": pago.get("client_id"),
+                    "client_nombre": pago.get("client_nombre") or "?",
+                    "centro_nombre": pago.get("centro_nombre"),
+                    "producto": producto,
+                    "zona": pago.get("tox_zona"),
+                    "fecha": pago.get("fecha"),
+                    "hora_inicio": pago.get("tox_hora_inicio"),
+                    "hora_fin": pago.get("tox_hora_fin"),
+                    "foto_url": pago.get("tox_foto_url"),
+                    "operario_id": pago.get("operario_id"),
+                    "creado_en": datetime.now(timezone.utc),
+                }
+            )
+
     # Notificar al operario
     etiqueta = "aceptada" if aceptar else "rechazada"
     await create_notification(
@@ -7966,6 +8040,54 @@ async def resolver_pago_extra_admin(
         data={"enlace": "/pagos-extra", "pago_id": pago_id},
     )
     return PagoExtra(**pago)
+
+
+# --- Registro oficial de aplicacion de fitosanitarios ---------------------
+# Se alimenta automaticamente al aceptar un plus de toxicidad cuyo trabajo
+# es aplicacion de fitosanitario. Lo consulta el admin en Prevencion.
+
+class RegistroFitosanitario(BaseModel):
+    id: str
+    client_nombre: str
+    centro_nombre: Optional[str] = None
+    producto: str
+    zona: Optional[str] = None
+    fecha: str
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    foto_url: Optional[str] = None
+    operario_nombre: Optional[str] = None
+    creado_en: datetime
+
+
+@api_router.get("/admin/registro-fitosanitarios", response_model=List[RegistroFitosanitario])
+async def list_registro_fitosanitarios(_: dict = Depends(require_admin)):
+    cursor = db.registro_fitosanitarios.find({}).sort("fecha", -1)
+    registros = [r async for r in cursor]
+    # Resolver nombre del operario
+    op_ids = {r.get("operario_id") for r in registros if r.get("operario_id")}
+    nombres = {}
+    if op_ids:
+        async for u in db.users.find({"user_id": {"$in": list(op_ids)}}):
+            nombres[u["user_id"]] = u["name"]
+    salida = []
+    for r in registros:
+        salida.append(
+            RegistroFitosanitario(
+                id=r["id"],
+                client_nombre=r.get("client_nombre") or "?",
+                centro_nombre=r.get("centro_nombre"),
+                producto=r.get("producto") or "?",
+                zona=r.get("zona"),
+                fecha=r.get("fecha") or "",
+                hora_inicio=r.get("hora_inicio"),
+                hora_fin=r.get("hora_fin"),
+                foto_url=r.get("foto_url"),
+                operario_nombre=nombres.get(r.get("operario_id")),
+                creado_en=r.get("creado_en") or datetime.now(timezone.utc),
+            )
+        )
+    return salida
 
 
 # =====================================================================
