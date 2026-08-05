@@ -304,15 +304,17 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
 
       {fotoAmpliada && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
           onClick={() => setFotoAmpliada(null)}
+          data-testid="foto-pantalla-completa"
         >
           <button
             type="button"
             onClick={() => setFotoAmpliada(null)}
-            className="absolute top-4 right-4 text-white"
+            className="absolute top-4 right-4 text-white/80 hover:text-white z-10"
+            aria-label="Cerrar"
           >
-            <X className="w-6 h-6" />
+            <X className="w-7 h-7" />
           </button>
           <div
             className="flex flex-col items-center gap-3 max-w-full max-h-full"
@@ -321,7 +323,7 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
             <img
               src={fotoAmpliada.url}
               alt=""
-              className="max-w-full max-h-[70vh] rounded-lg object-contain"
+              className="max-w-full max-h-[90vh] rounded-lg object-contain"
             />
             <div className="flex items-center gap-2 flex-wrap justify-center">
               {fotoAmpliada.antes_despues && (
