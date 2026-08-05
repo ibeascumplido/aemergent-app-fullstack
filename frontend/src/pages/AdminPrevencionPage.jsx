@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Trash2,
   PenLine,
+  Biohazard,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,8 @@ const AdminPrevencionPage = () => {
   const [solicitudesEpi, setSolicitudesEpi] = useState([]);
   const [justificantes, setJustificantes] = useState([]);
   const [documentos, setDocumentos] = useState([]);
+  const [fitosanitarios, setFitosanitarios] = useState([]);
+  const [fotoFitoAmpliada, setFotoFitoAmpliada] = useState(null);
   const [config, setConfig] = useState({ protocolo_baja: "", protocolo_accidente: "", mutua_nombre: "", mutua_url: "", mutua_telefono: "" });
   const [loading, setLoading] = useState(true);
 
@@ -95,17 +98,19 @@ const AdminPrevencionPage = () => {
 
   const cargar = useCallback(async () => {
     try {
-      const [avisosRes, epiRes, justRes, configRes, docsRes] = await Promise.all([
+      const [avisosRes, epiRes, justRes, configRes, docsRes, fitoRes] = await Promise.all([
         axios.get(`${API}/avisos-clima`),
         axios.get(`${API}/solicitudes-epi`),
         axios.get(`${API}/justificantes-medicos`),
         axios.get(`${API}/configuracion/prevencion`),
         axios.get(`${API}/documentos-firma`, { params: { categoria: "prevencion" } }),
+        axios.get(`${API}/admin/registro-fitosanitarios`).catch(() => ({ data: [] })),
       ]);
       setAvisos(avisosRes.data);
       setSolicitudesEpi(epiRes.data);
       setJustificantes(justRes.data);
       setDocumentos(docsRes.data);
+      setFitosanitarios(fitoRes.data || []);
       setConfig({
         protocolo_baja: configRes.data.protocolo_baja || "",
         protocolo_accidente: configRes.data.protocolo_accidente || "",
@@ -597,9 +602,88 @@ const AdminPrevencionPage = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* Registro de aplicación de fitosanitarios */}
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Biohazard className="w-4 h-4 text-amber-600" />
+              <h2 className="text-sm font-semibold text-slate-900">
+                Registro de aplicación de fitosanitarios
+              </h2>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              Se genera automáticamente al aprobar un plus de toxicidad cuyo trabajo es aplicación
+              de fitosanitario.
+            </p>
+            {fitosanitarios.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-3">
+                Todavía no hay aplicaciones registradas.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {fitosanitarios.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-start gap-3 rounded-lg border border-slate-100 p-2.5"
+                    data-testid={`fito-${r.id}`}
+                  >
+                    <div className="flex-1 min-w-0 text-xs">
+                      <p className="font-medium text-slate-800">
+                        {r.client_nombre}
+                        {r.centro_nombre ? ` · ${r.centro_nombre}` : ""}
+                      </p>
+                      <p className="text-slate-600 mt-0.5">
+                        <span className="font-medium capitalize">{r.producto}</span>
+                        {r.zona ? ` · Zona: ${r.zona}` : ""}
+                      </p>
+                      <p className="text-slate-400 mt-0.5">
+                        {r.fecha ? new Date(r.fecha + "T00:00:00").toLocaleDateString("es-ES") : ""}
+                        {r.hora_inicio || r.hora_fin
+                          ? ` · ${r.hora_inicio || "?"}–${r.hora_fin || "?"}`
+                          : ""}
+                        {r.operario_nombre ? ` · ${r.operario_nombre}` : ""}
+                      </p>
+                    </div>
+                    {r.foto_url && (
+                      <button type="button" onClick={() => setFotoFitoAmpliada(r.foto_url)}>
+                        <img
+                          src={r.foto_url}
+                          alt=""
+                          className="w-14 h-14 rounded-lg object-cover border border-slate-200 shrink-0"
+                        />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Dialogo nuevo aviso climatologico */}
+      {fotoFitoAmpliada && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setFotoFitoAmpliada(null)}
+          data-testid="fito-foto-pantalla-completa"
+        >
+          <button
+            type="button"
+            onClick={() => setFotoFitoAmpliada(null)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white"
+            aria-label="Cerrar"
+          >
+            <X className="w-7 h-7" />
+          </button>
+          <img
+            src={fotoFitoAmpliada}
+            alt="Zona tratada"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
       <Dialog open={dialogAvisoOpen} onOpenChange={setDialogAvisoOpen}>
         <DialogContent>
           <DialogHeader>

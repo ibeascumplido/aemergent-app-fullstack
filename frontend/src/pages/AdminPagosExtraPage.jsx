@@ -38,10 +38,26 @@ const ESTADO_PILL = {
   rechazado: "bg-red-50 text-red-600 border-red-200",
 };
 
+const TOX_TIPO_LABEL = {
+  fitosanitario: "Aplicación de fitosanitario",
+  altura: "Trabajo en altura",
+  glorieta: "Trabajo en glorieta",
+  motosierra: "Trabajo con motosierra",
+  otro: "Otro trabajo peligroso",
+};
+
+const TOX_PRODUCTO_LABEL = {
+  herbicida: "Herbicida",
+  fungicida: "Fungicida",
+  insecticida: "Insecticida",
+  otro: "Otro fitosanitario",
+};
+
 const AdminPagosExtraPage = () => {
   const [filtroEstado, setFiltroEstado] = useState("pendiente");
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fotoAmpliada, setFotoAmpliada] = useState(null);
 
   const [editando, setEditando] = useState(null); // objeto pago o null
   const [editSubtipo, setEditSubtipo] = useState("");
@@ -214,6 +230,49 @@ const AdminPagosExtraPage = () => {
                     </p>
                   )}
 
+                  {p.tox_tipo_trabajo && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/40 p-2.5 text-xs space-y-1">
+                      <p className="font-semibold text-amber-700 flex items-center gap-1.5">
+                        <Biohazard className="w-3.5 h-3.5" />
+                        Trabajo peligroso
+                      </p>
+                      <p className="text-slate-600">
+                        <span className="font-medium">Tipo:</span> {TOX_TIPO_LABEL[p.tox_tipo_trabajo] || p.tox_tipo_trabajo}
+                        {p.tox_tipo_trabajo === "fitosanitario" && p.tox_producto && (
+                          <>
+                            {" · "}
+                            {p.tox_producto === "otro" && p.tox_producto_detalle
+                              ? p.tox_producto_detalle
+                              : TOX_PRODUCTO_LABEL[p.tox_producto] || p.tox_producto}
+                          </>
+                        )}
+                      </p>
+                      {p.tox_zona && (
+                        <p className="text-slate-600">
+                          <span className="font-medium">Zona:</span> {p.tox_zona}
+                        </p>
+                      )}
+                      {(p.tox_hora_inicio || p.tox_hora_fin) && (
+                        <p className="text-slate-600">
+                          <span className="font-medium">Horario:</span> {p.tox_hora_inicio || "?"} – {p.tox_hora_fin || "?"}
+                        </p>
+                      )}
+                      {p.tox_foto_url && (
+                        <button
+                          type="button"
+                          onClick={() => setFotoAmpliada(p.tox_foto_url)}
+                          className="mt-1"
+                        >
+                          <img
+                            src={p.tox_foto_url}
+                            alt="Zona trabajada"
+                            className="w-16 h-16 rounded-lg object-cover border border-slate-200"
+                          />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex gap-2 mt-3">
                     <Button
                       size="sm"
@@ -345,6 +404,29 @@ const AdminPagosExtraPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setFotoAmpliada(null)}
+          data-testid="foto-pantalla-completa"
+        >
+          <button
+            type="button"
+            onClick={() => setFotoAmpliada(null)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white"
+            aria-label="Cerrar"
+          >
+            <X className="w-7 h-7" />
+          </button>
+          <img
+            src={fotoAmpliada}
+            alt="Zona trabajada"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
