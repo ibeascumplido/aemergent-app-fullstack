@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Euro, Plus, Clock, Biohazard, Trash2, Check, X, Hourglass } from "lucide-react";
+import { Euro, Plus, Clock, Biohazard, Trash2, Check, X, Hourglass, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,6 +69,15 @@ const PagosExtraPage = () => {
   const [nota, setNota] = useState("");
   const [enviando, setEnviando] = useState(false);
 
+  // Cuestionario de toxicidad (solo cuando categoria === "plus")
+  const [toxTipo, setToxTipo] = useState("");
+  const [toxProducto, setToxProducto] = useState("");
+  const [toxProductoDetalle, setToxProductoDetalle] = useState("");
+  const [toxZona, setToxZona] = useState("");
+  const [toxHoraInicio, setToxHoraInicio] = useState("");
+  const [toxHoraFin, setToxHoraFin] = useState("");
+  const [toxFoto, setToxFoto] = useState(null);
+
   const cargarPagos = useCallback(async () => {
     setLoading(true);
     try {
@@ -100,6 +109,13 @@ const PagosExtraPage = () => {
     setCantidad("");
     setImporteManual("");
     setNota("");
+    setToxTipo("");
+    setToxProducto("");
+    setToxProductoDetalle("");
+    setToxZona("");
+    setToxHoraInicio("");
+    setToxHoraFin("");
+    setToxFoto(null);
     setDialogOpen(true);
     if (clientes.length === 0) {
       axios.get(`${API}/clients`).then((res) => setClientes(res.data)).catch(() => {});
@@ -135,6 +151,19 @@ const PagosExtraPage = () => {
     ? parseFloat(importeManual) || 0
     : (tarifaActual?.precio || 0) * cantidadNum;
 
+  const onToxFoto = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Sube una imagen");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setToxFoto(reader.result);
+    reader.readAsDataURL(file);
+  };
+
   const enviar = async () => {
     if (!cantidad || cantidadNum <= 0) {
       toast.error("Indica la cantidad (horas o días)");
@@ -152,11 +181,36 @@ const PagosExtraPage = () => {
       toast.error("Selecciona el tipo de trabajo");
       return;
     }
+    // Cuestionario obligatorio para pluses de toxicidad/penosidad
+    if (categoria === "plus") {
+      if (!toxTipo) {
+        toast.error("Indica el tipo de trabajo peligroso");
+        return;
+      }
+      if (toxTipo === "fitosanitario" && !toxProducto) {
+        toast.error("Indica el producto fitosanitario");
+        return;
+      }
+      if (toxTipo === "fitosanitario" && toxProducto === "otro" && !toxProductoDetalle.trim()) {
+        toast.error("Especifica qué producto fitosanitario");
+        return;
+      }
+      if (!toxZona.trim()) {
+        toast.error("Indica la zona trabajada");
+        return;
+      }
+      if (!toxHoraInicio || !toxHoraFin) {
+        toast.error("Indica el horario (de qué hora a qué hora)");
+        return;
+      }
+    }
     setEnviando(true);
     try {
       await axios.post(`${API}/pagos-extra`, {
         categoria,
         subtipo,
+        client_id: usarCentroLibre ? null : clienteId || null,
+        client_nombre: usarCentroLibre ? null : null,
         centro_id: usarCentroLibre ? null : centroId || null,
         centro_nombre: usarCentroLibre ? centroLibre.trim() || null : null,
         tarea_id: usarTrabajoLibre ? null : tareaId || null,
@@ -165,6 +219,16 @@ const PagosExtraPage = () => {
         cantidad: cantidadNum,
         importe_manual: esVariable ? parseFloat(importeManual) : null,
         nota: nota.trim() || null,
+        tox_tipo_trabajo: categoria === "plus" ? toxTipo : null,
+        tox_producto: categoria === "plus" && toxTipo === "fitosanitario" ? toxProducto : null,
+        tox_producto_detalle:
+          categoria === "plus" && toxTipo === "fitosanitario" && toxProducto === "otro"
+            ? toxProductoDetalle.trim()
+            : null,
+        tox_zona: categoria === "plus" ? toxZona.trim() : null,
+        tox_hora_inicio: categoria === "plus" ? toxHoraInicio : null,
+        tox_hora_fin: categoria === "plus" ? toxHoraFin : null,
+        tox_foto: categoria === "plus" ? toxFoto : null,
       });
       toast.success("Solicitud enviada");
       setDialogOpen(false);
@@ -457,6 +521,114 @@ const PagosExtraPage = () => {
                   placeholder="0.00"
                   data-testid="importe-manual-input"
                 />
+              </div>
+            )}
+
+            {categoria === "plus" && (
+              <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                <p className="text-xs uppercase tracking-wider text-amber-700 font-semibold flex items-center gap-1.5">
+                  <Biohazard className="w-3.5 h-3.5" />
+                  Datos del trabajo peligroso
+                </p>
+
+                <div className="space-y-1.5">
+                  <Label>Tipo de trabajo</Label>
+                  <Select value={toxTipo} onValueChange={setToxTipo}>
+                    <SelectTrigger data-testid="tox-tipo-select">
+                      <SelectValue placeholder="Elige..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fitosanitario">Aplicación de fitosanitario</SelectItem>
+                      <SelectItem value="altura">Trabajo en altura</SelectItem>
+                      <SelectItem value="glorieta">Trabajo en glorieta</SelectItem>
+                      <SelectItem value="motosierra">Trabajo con motosierra</SelectItem>
+                      <SelectItem value="otro">Otro trabajo peligroso</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {toxTipo === "fitosanitario" && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>Producto fitosanitario</Label>
+                      <Select value={toxProducto} onValueChange={setToxProducto}>
+                        <SelectTrigger data-testid="tox-producto-select">
+                          <SelectValue placeholder="Elige..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="herbicida">Herbicida</SelectItem>
+                          <SelectItem value="fungicida">Fungicida</SelectItem>
+                          <SelectItem value="insecticida">Insecticida</SelectItem>
+                          <SelectItem value="otro">Otro fitosanitario</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {toxProducto === "otro" && (
+                      <div className="space-y-1.5">
+                        <Label>¿Qué producto?</Label>
+                        <Input
+                          value={toxProductoDetalle}
+                          onChange={(e) => setToxProductoDetalle(e.target.value)}
+                          placeholder="Nombre del producto"
+                          data-testid="tox-producto-detalle-input"
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label>Zona trabajada</Label>
+                  <Input
+                    value={toxZona}
+                    onChange={(e) => setToxZona(e.target.value)}
+                    placeholder="Ej. zona norte, junto a los cipreses"
+                    data-testid="tox-zona-input"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>De</Label>
+                    <Input
+                      type="time"
+                      value={toxHoraInicio}
+                      onChange={(e) => setToxHoraInicio(e.target.value)}
+                      data-testid="tox-hora-inicio-input"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>A</Label>
+                    <Input
+                      type="time"
+                      value={toxHoraFin}
+                      onChange={(e) => setToxHoraFin(e.target.value)}
+                      data-testid="tox-hora-fin-input"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Foto de la zona</Label>
+                  {toxFoto ? (
+                    <div className="relative inline-block">
+                      <img src={toxFoto} alt="" className="w-24 h-24 rounded-lg object-cover border border-slate-200" />
+                      <button
+                        type="button"
+                        onClick={() => setToxFoto(null)}
+                        className="absolute -top-2 -right-2 bg-white rounded-full border border-slate-200 p-0.5 text-slate-500"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                      <Camera className="w-4 h-4" />
+                      Añadir foto
+                      <input type="file" accept="image/*" onChange={onToxFoto} className="hidden" />
+                    </label>
+                  )}
+                </div>
               </div>
             )}
 
