@@ -82,6 +82,10 @@ const AdminPrevencionPage = () => {
   const [documentos, setDocumentos] = useState([]);
   const [fitosanitarios, setFitosanitarios] = useState([]);
   const [fotoFitoAmpliada, setFotoFitoAmpliada] = useState(null);
+  const [fitoClientes, setFitoClientes] = useState([]);
+  const [fitoClienteFiltro, setFitoClienteFiltro] = useState("");
+  const [fitoDesde, setFitoDesde] = useState("");
+  const [fitoHasta, setFitoHasta] = useState("");
   const [config, setConfig] = useState({ protocolo_baja: "", protocolo_accidente: "", mutua_nombre: "", mutua_url: "", mutua_telefono: "" });
   const [loading, setLoading] = useState(true);
 
@@ -129,6 +133,55 @@ const AdminPrevencionPage = () => {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Clientes para el filtro del registro de fitosanitarios
+  useEffect(() => {
+    axios
+      .get(`${API}/clients`)
+      .then((res) => setFitoClientes(res.data || []))
+      .catch(() => {});
+  }, []);
+
+  const recargarFitosanitarios = useCallback(async () => {
+    try {
+      const params = {};
+      if (fitoClienteFiltro) params.client_id = fitoClienteFiltro;
+      if (fitoDesde) params.desde = fitoDesde;
+      if (fitoHasta) params.hasta = fitoHasta;
+      const res = await axios.get(`${API}/admin/registro-fitosanitarios`, { params });
+      setFitosanitarios(res.data || []);
+    } catch (err) {
+      console.error("Error filtrando fitosanitarios:", err);
+    }
+  }, [fitoClienteFiltro, fitoDesde, fitoHasta]);
+
+  useEffect(() => {
+    recargarFitosanitarios();
+  }, [recargarFitosanitarios]);
+
+  const descargarPdfFitosanitarios = async () => {
+    try {
+      const params = {};
+      if (fitoClienteFiltro) params.client_id = fitoClienteFiltro;
+      if (fitoDesde) params.desde = fitoDesde;
+      if (fitoHasta) params.hasta = fitoHasta;
+      const res = await axios.get(`${API}/admin/registro-fitosanitarios/pdf`, {
+        params,
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "registro-fitosanitarios.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error descargando PDF:", err);
+      toast.error("No se pudo generar el PDF");
+    }
+  };
 
   const crearAviso = async () => {
     if (!avisoForm.motivo || !avisoForm.fecha_inicio) {
@@ -616,6 +669,71 @@ const AdminPrevencionPage = () => {
               Se genera automáticamente al aprobar un plus de toxicidad cuyo trabajo es aplicación
               de fitosanitario.
             </p>
+
+            <div className="flex flex-wrap items-end gap-2 mb-4">
+              <div className="space-y-1">
+                <Label className="text-xs">Cliente</Label>
+                <Select
+                  value={fitoClienteFiltro || "todos"}
+                  onValueChange={(v) => setFitoClienteFiltro(v === "todos" ? "" : v)}
+                >
+                  <SelectTrigger className="h-9 w-44" data-testid="fito-cliente-filtro">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos los clientes</SelectItem>
+                    {fitoClientes.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Desde</Label>
+                <Input
+                  type="date"
+                  value={fitoDesde}
+                  onChange={(e) => setFitoDesde(e.target.value)}
+                  className="h-9 w-40"
+                  data-testid="fito-desde"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Hasta</Label>
+                <Input
+                  type="date"
+                  value={fitoHasta}
+                  onChange={(e) => setFitoHasta(e.target.value)}
+                  className="h-9 w-40"
+                  data-testid="fito-hasta"
+                />
+              </div>
+              {(fitoClienteFiltro || fitoDesde || fitoHasta) && (
+                <Button
+                  variant="ghost"
+                  className="h-9"
+                  onClick={() => {
+                    setFitoClienteFiltro("");
+                    setFitoDesde("");
+                    setFitoHasta("");
+                  }}
+                >
+                  Limpiar
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="h-9 ml-auto"
+                onClick={descargarPdfFitosanitarios}
+                disabled={fitosanitarios.length === 0}
+                data-testid="fito-pdf-btn"
+              >
+                <FileText className="w-4 h-4 mr-1.5" />
+                Descargar PDF
+              </Button>
+            </div>
             {fitosanitarios.length === 0 ? (
               <p className="text-sm text-slate-400 text-center py-3">
                 Todavía no hay aplicaciones registradas.
