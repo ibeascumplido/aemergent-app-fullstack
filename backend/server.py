@@ -3476,6 +3476,7 @@ class TareaCentro(BaseModel):
     marcada_en: Optional[datetime] = None
     foto_url: Optional[str] = None
     foto_public_id: Optional[str] = None
+    incidencia_id: Optional[str] = None  # si se convirtio en incidencia
     creado_por: str
     creado_por_nombre: str
     creado_en: datetime
@@ -3863,6 +3864,51 @@ async def rechazar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin))
     await db.tareas_centro.update_one(
         {"id": tarea_id},
         {"$set": {"estado": "activa", "completada": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/a-incidencia", response_model=TareaCentroConNombres)
+async def convertir_tarea_en_incidencia(
+    tarea_id: str, current_user: dict = Depends(require_admin)
+):
+    """Crea una incidencia en el cliente de la tarea, a partir de la propia
+    tarea. La tarea NO desaparece: se queda y guarda el id de la incidencia
+    generada (para no crear duplicados y dejar constancia en ambos sitios)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    if doc.get("incidencia_id"):
+        raise HTTPException(status_code=400, detail="Esta tarea ya generó una incidencia")
+
+    cliente = await db.clients.find_one({"id": doc["client_id"], "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+
+    # Título de la incidencia: la descripción de la tarea (recortada).
+    titulo = doc["descripcion"][:200]
+    inc = {
+        "id": str(uuid.uuid4()),
+        "client_id": doc["client_id"],
+        "titulo": titulo,
+        "descripcion": f"Generada desde una tarea de {doc.get('creado_por_nombre', '?')}.",
+        "estado": "abierta",
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "cerrado_por_nombre": None,
+        "cerrado_en": None,
+    }
+    await db.incidencias.insert_one(inc)
+
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"incidencia_id": inc["id"], "actualizado_en": now}},
     )
     doc = await db.tareas_centro.find_one({"id": tarea_id})
     resueltas = await _resolver_nombres_tareas([doc])
