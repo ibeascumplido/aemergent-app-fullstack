@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import NotificationBell from "./NotificationBell";
 
 const Layout = () => {
-  const { user, isAdmin, isPending, canBudgets, logout } = useAuth();
+  const { user, isAdmin, isFacturacion, isPending, canBudgets, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -21,9 +21,9 @@ const Layout = () => {
   // Navigation items based on role
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
-    { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: true, section: "personal" },
-    { to: "/prevencion", icon: HardHat, label: "Prevención", show: true, section: "personal" },
-    { to: "/pagos-extra", icon: Euro, label: "Pagos extra", show: true, section: "personal" },
+    { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: !isFacturacion, section: "personal" },
+    { to: "/prevencion", icon: HardHat, label: "Prevención", show: !isFacturacion, section: "personal" },
+    { to: "/pagos-extra", icon: Euro, label: "Pagos extra", show: !isFacturacion, section: "personal" },
     {
       label: "Planificación",
       icon: CalendarDays,
@@ -38,13 +38,13 @@ const Layout = () => {
     },
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
-    { to: "/clients", icon: Building2, label: "Clientes", show: canBudgets, section: "admin" },
+    { to: "/clients", icon: Building2, label: "Clientes", show: isAdmin, section: "admin" },
     { to: "/vehiculos", icon: Truck, label: "Vehículos", show: isAdmin, section: "admin" },
     { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: isAdmin, section: "admin" },
     { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
     { to: "/admin/prevencion", icon: HardHat, label: "Prevención", show: isAdmin, section: "admin" },
     { to: "/admin/fichajes", icon: Clock, label: "Fichajes", show: isAdmin, section: "admin" },
-    { to: "/admin/pagos-extra", icon: Euro, label: "Pagos extra", show: isAdmin, section: "admin" },
+    { to: "/admin/pagos-extra", icon: Euro, label: "Pagos extra", show: isAdmin || isFacturacion, section: "admin" },
     { to: "/admin/tareas-centro", icon: ListChecks, label: "Tareas", show: isAdmin, section: "admin" },
     { to: "/admin/users", icon: Users, label: "Usuarios", show: isAdmin, section: "admin" },
   ].filter(item => item.show);
