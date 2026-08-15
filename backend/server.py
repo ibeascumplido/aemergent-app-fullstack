@@ -8305,15 +8305,18 @@ async def borrar_todas_maquinas(_: dict = Depends(require_admin)):
 
 @api_router.post("/admin/limpiar-datos-prueba")
 async def limpiar_datos_prueba(
-    confirmar: str = "", _: dict = Depends(require_admin)
+    confirmar: str = "", incluir_fotos: bool = False, _: dict = Depends(require_admin)
 ):
     """TEMPORAL. Borra por completo todos los partes de trabajo (y sus
     sesiones, celdas y notas de rejilla), todas las incidencias y todas
-    las tareas de centro. NO toca clientes, centros, maquinaria, vehiculos,
-    usuarios, fichajes ni el catalogo de tipos de tarea (work_tasks).
+    las tareas de centro. Con ?incluir_fotos=true tambien borra TODAS las
+    fotos (por clasificar y clasificadas), incluidos sus archivos de
+    Cloudinary (imagen y audio) y sus comentarios.
 
-    Requiere ?confirmar=BORRAR para ejecutarse (evita llamadas por error).
-    Es un borrado DEFINITIVO, sin papelera."""
+    NO toca clientes, centros, maquinaria, vehiculos, usuarios, fichajes
+    ni el catalogo de tipos de tarea (work_tasks).
+
+    Requiere ?confirmar=BORRAR para ejecutarse. Borrado DEFINITIVO."""
     if confirmar != "BORRAR":
         raise HTTPException(
             status_code=400,
@@ -8327,6 +8330,23 @@ async def limpiar_datos_prueba(
         "incidencias": (await db.incidencias.delete_many({})).deleted_count,
         "tareas_centro": (await db.tareas_centro.delete_many({})).deleted_count,
     }
+
+    if incluir_fotos:
+        # Primero borrar los archivos de Cloudinary (imagen y audio de cada
+        # foto), luego los registros y sus comentarios. El borrado en
+        # Cloudinary nunca lanza excepcion (si falla uno, sigue con el resto).
+        borradas_cloudinary = 0
+        async for f in db.fotos.find({}):
+            if f.get("public_id"):
+                await _borrar_logo_cloudinary(f["public_id"])
+                borradas_cloudinary += 1
+            if f.get("audio_public_id"):
+                # El audio se subio con resource_type auto (video para Cloudinary)
+                await _borrar_documento_cloudinary(f["audio_public_id"], "video")
+        resultado["fotos"] = (await db.fotos.delete_many({})).deleted_count
+        resultado["foto_comentarios"] = (await db.foto_comentarios.delete_many({})).deleted_count
+        resultado["archivos_cloudinary_borrados"] = borradas_cloudinary
+
     return {"borrado": resultado}
 
 
