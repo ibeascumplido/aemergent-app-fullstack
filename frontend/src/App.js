@@ -120,7 +120,7 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="admin/pagos-extra" element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute requireBudgets>
                   <AdminPagosExtraPage />
                 </ProtectedRoute>
               } />
