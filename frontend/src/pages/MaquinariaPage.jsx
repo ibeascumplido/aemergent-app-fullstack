@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Wrench, Plus, ChevronRight, Search } from "lucide-react";
+import { Wrench, Plus, ChevronRight, ChevronDown, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,7 @@ const MaquinariaPage = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [busqueda, setBusqueda] = useState("");
+  const [gruposPlegados, setGruposPlegados] = useState({});
   const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -185,15 +186,33 @@ const MaquinariaPage = () => {
         </Card>
       ) : (
         <div className="space-y-6">
-          {grupos.map((grupo) => (
+          {grupos.map((grupo) => {
+            const plegado = gruposPlegados[grupo.categoria];
+            return (
             <div key={grupo.categoria}>
-              <div className="flex items-center gap-2 mb-2">
-                <h2 className="text-sm font-semibold text-slate-700">{grupo.categoria}</h2>
-                <span className="text-xs text-slate-400">
-                  {grupo.maquinas.length}
-                </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setGruposPlegados((prev) => ({
+                    ...prev,
+                    [grupo.categoria]: !prev[grupo.categoria],
+                  }))
+                }
+                className="w-full flex items-center gap-2 mb-2 group"
+                data-testid={`grupo-toggle-${grupo.categoria}`}
+              >
+                <ChevronDown
+                  className={`w-4 h-4 text-slate-400 transition-transform ${
+                    plegado ? "-rotate-90" : ""
+                  }`}
+                />
+                <h2 className="text-sm font-semibold text-slate-700 group-hover:text-slate-900">
+                  {grupo.categoria}
+                </h2>
+                <span className="text-xs text-slate-400">{grupo.maquinas.length}</span>
                 <div className="flex-1 h-px bg-slate-100" />
-              </div>
+              </button>
+              {!plegado && (
               <div className="space-y-2">
                 {grupo.maquinas.map((m) => {
                   const info = estadoInfo(m.estado);
@@ -248,8 +267,10 @@ const MaquinariaPage = () => {
                   );
                 })}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
