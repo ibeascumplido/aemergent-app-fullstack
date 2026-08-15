@@ -48,7 +48,14 @@ const MaquinariaPage = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [gruposPlegados, setGruposPlegados] = useState({});
+  const [gruposPlegados, setGruposPlegados] = useState(() => {
+    try {
+      const guardado = localStorage.getItem("maquinaria_grupos_plegados");
+      return guardado ? JSON.parse(guardado) : {};
+    } catch {
+      return {};
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -70,6 +77,15 @@ const MaquinariaPage = () => {
   useEffect(() => {
     cargar();
   }, []);
+
+  // Recordar qué grupos están plegados entre visitas a la página.
+  useEffect(() => {
+    try {
+      localStorage.setItem("maquinaria_grupos_plegados", JSON.stringify(gruposPlegados));
+    } catch {
+      // Si el navegador bloquea localStorage, no pasa nada: solo no se recuerda.
+    }
+  }, [gruposPlegados]);
 
   // Agrupar por categoria (primera palabra), aplicando primero el filtro
   // de busqueda por nombre, marca, modelo o ubicacion.
