@@ -8303,6 +8303,33 @@ async def borrar_todas_maquinas(_: dict = Depends(require_admin)):
     return {"borradas": result.modified_count}
 
 
+@api_router.post("/admin/limpiar-datos-prueba")
+async def limpiar_datos_prueba(
+    confirmar: str = "", _: dict = Depends(require_admin)
+):
+    """TEMPORAL. Borra por completo todos los partes de trabajo (y sus
+    sesiones, celdas y notas de rejilla), todas las incidencias y todas
+    las tareas de centro. NO toca clientes, centros, maquinaria, vehiculos,
+    usuarios, fichajes ni el catalogo de tipos de tarea (work_tasks).
+
+    Requiere ?confirmar=BORRAR para ejecutarse (evita llamadas por error).
+    Es un borrado DEFINITIVO, sin papelera."""
+    if confirmar != "BORRAR":
+        raise HTTPException(
+            status_code=400,
+            detail="Para confirmar el borrado definitivo, añade ?confirmar=BORRAR a la URL.",
+        )
+    resultado = {
+        "work_orders": (await db.work_orders.delete_many({})).deleted_count,
+        "work_sessions": (await db.work_sessions.delete_many({})).deleted_count,
+        "rejilla_celdas": (await db.rejilla_celdas.delete_many({})).deleted_count,
+        "rejilla_notas": (await db.rejilla_notas.delete_many({})).deleted_count,
+        "incidencias": (await db.incidencias.delete_many({})).deleted_count,
+        "tareas_centro": (await db.tareas_centro.delete_many({})).deleted_count,
+    }
+    return {"borrado": resultado}
+
+
 @api_router.post("/admin/importar-maquinaria-2023")
 async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
     # Idempotencia: si ya hay maquinaria activa, no hacemos nada para
