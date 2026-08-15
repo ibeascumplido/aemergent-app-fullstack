@@ -32,7 +32,7 @@ const item = {
 };
 
 const HomePage = () => {
-  const { user, isAdmin, isPending } = useAuth();
+  const { user, isAdmin, isFacturacion, isPending } = useAuth();
   const [stats, setStats] = useState(null);
   const [recentBudgets, setRecentBudgets] = useState([]);
   const [myResumen, setMyResumen] = useState(null);
@@ -189,8 +189,9 @@ const HomePage = () => {
       {isAdmin && <FotosPendientesAviso />}
 
       {/* Accesos rápidos: Mi Calendario, Tarea de hoy, Foto rápida, Parte
-          de trabajo, Solicitud de ropa y Firma de documentos, en ese orden */}
-      {!isPending && (
+          de trabajo, Solicitud de ropa y Firma de documentos, en ese orden.
+          No se muestran al rol facturación (no realiza trabajo operativo). */}
+      {!isPending && !isFacturacion && (
         <div className="grid grid-cols-2 gap-3 mb-8">
           {myResumen && (
             <Link

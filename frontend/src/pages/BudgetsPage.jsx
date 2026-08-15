@@ -99,9 +99,25 @@ const BudgetsPage = () => {
     }
   };
 
+  // Campos de la parte de facturación (azules) que facturación sí puede tocar.
+  const CAMPOS_FACTURACION = ["facturado", "pedido_par", "pedido_cliente", "factura_inicio", "factura_proveedor", "importe_proveedor", "anotaciones_facturacion"];
+
   // Actualiza un campo simple del presupuesto (estado, pedido/par, facturado)
   const patchBudget = async (budgetId, payload, okMsg) => {
-    if (isFacturacion) return; // facturación no modifica estados
+    // Facturación solo puede tocar los campos de la parte de facturación.
+    if (isFacturacion) {
+      const soloFacturacion = Object.keys(payload).every((k) => CAMPOS_FACTURACION.includes(k));
+      if (!soloFacturacion) return;
+      try {
+        await axios.put(`${API}/budget-templates/${budgetId}/facturacion`, payload);
+        if (okMsg) toast.success(okMsg);
+        fetchBudgets();
+      } catch (error) {
+        console.error("Error updating budget (facturacion):", error);
+        toast.error("Error al actualizar");
+      }
+      return;
+    }
     try {
       await axios.put(`${API}/budget-templates/${budgetId}`, payload);
       if (okMsg) toast.success(okMsg);

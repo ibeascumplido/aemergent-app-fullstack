@@ -372,20 +372,24 @@ const BudgetTemplatePage = () => {
 
   // Save budget
   const handleSave = async () => {
-    // Facturación solo puede tocar la anotación de facturación: se guarda
-    // únicamente ese campo, sin enviar el resto del presupuesto.
+    // Facturación solo puede tocar los campos de facturación (los azules):
+    // se guardan únicamente esos, sin enviar el resto del presupuesto.
     if (isFacturacion) {
       if (!isEditing) return; // facturación no crea presupuestos
       setSaving(true);
       try {
-        await axios.put(`${API}/budget-templates/${id}/anotacion-facturacion`, {
+        await axios.put(`${API}/budget-templates/${id}/facturacion`, {
+          pedido_cliente: pedidoCliente,
+          factura_inicio: facturaInicio,
+          factura_proveedor: facturaProveedor,
+          importe_proveedor: importeProveedor === "" ? null : Number(importeProveedor),
           anotaciones_facturacion: anotacionesFacturacion,
         });
-        toast.success("Anotación de facturación guardada");
+        toast.success("Datos de facturación guardados");
         navigate("/budgets");
       } catch (error) {
-        console.error("Error saving anotacion facturacion:", error);
-        toast.error("No se pudo guardar la anotación");
+        console.error("Error saving datos facturacion:", error);
+        toast.error("No se pudieron guardar los datos de facturación");
       } finally {
         setSaving(false);
       }
@@ -643,7 +647,7 @@ const BudgetTemplatePage = () => {
         </div>
 
         {/* Datos de Facturación (departamento facturación) */}
-        <div className="mb-8">
+        <div className={`mb-8 ${isFacturacion ? "[&_input]:!pointer-events-auto [&_textarea]:!pointer-events-auto [&_input]:!bg-white [&_textarea]:!bg-white ring-2 ring-sky-300 rounded-lg" : ""}`}>
           <div className="bg-sky-600 text-white px-4 py-2 rounded-t-lg font-medium">
             DATOS DE FACTURACIÓN
           </div>
@@ -666,7 +670,7 @@ const BudgetTemplatePage = () => {
             </div>
             <div className="grid grid-cols-[120px_1fr] items-start gap-2 md:col-span-2">
               <label className="text-sm font-medium text-slate-700 pt-2">Anotaciones</label>
-              <Textarea value={anotacionesFacturacion} onChange={(e) => setAnotacionesFacturacion(e.target.value)} placeholder="Anotaciones de facturación..." rows={2} className={`resize-none ${isFacturacion ? "!pointer-events-auto !bg-white ring-2 ring-sky-300" : "bg-white"}`} data-testid="anotacionesfact-textarea" />
+              <Textarea value={anotacionesFacturacion} onChange={(e) => setAnotacionesFacturacion(e.target.value)} placeholder="Anotaciones de facturación..." rows={2} className="resize-none bg-white" data-testid="anotacionesfact-textarea" />
             </div>
           </div>
         </div>
