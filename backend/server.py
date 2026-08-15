@@ -1679,26 +1679,36 @@ async def delete_budget_template(template_id: str):
     return {"message": "Budget template deleted successfully"}
 
 
-class AnotacionFacturacionPayload(BaseModel):
-    anotaciones_facturacion: str = ""
+class DatosFacturacionPayload(BaseModel):
+    pedido_cliente: Optional[str] = None
+    factura_inicio: Optional[str] = None
+    factura_proveedor: Optional[str] = None
+    importe_proveedor: Optional[float] = None
+    anotaciones_facturacion: Optional[str] = None
+    facturado: Optional[bool] = None
+    pedido_par: Optional[str] = None
 
 
-@api_router.put("/budget-templates/{template_id}/anotacion-facturacion")
-async def update_anotacion_facturacion(
+@api_router.put("/budget-templates/{template_id}/facturacion")
+async def update_datos_facturacion(
     template_id: str,
-    payload: AnotacionFacturacionPayload,
+    payload: DatosFacturacionPayload,
     _: dict = Depends(require_budgets),
 ):
-    """Actualiza SOLO la anotación de facturación de un presupuesto. Es el
-    único cambio que el rol facturación puede hacer sobre un presupuesto;
-    el resto de campos quedan intactos."""
+    """Actualiza SOLO los campos de facturación (los azules) de un
+    presupuesto: pedido cliente, facturas, importe proveedor, anotaciones,
+    facturado y pedido/par. El resto del presupuesto queda intacto. Es lo
+    que el rol facturación puede editar."""
     existing = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Budget template not found")
-    await db.budget_templates.update_one(
-        {"id": template_id},
-        {"$set": {"anotaciones_facturacion": payload.anotaciones_facturacion}},
-    )
+    # Solo los campos de facturación; se aceptan aunque vengan vacíos (para
+    # poder borrar un valor), pero se ignoran los que lleguen como None.
+    campos = payload.model_dump(exclude_none=True)
+    if campos:
+        await db.budget_templates.update_one(
+            {"id": template_id}, {"$set": campos}
+        )
     return {"ok": True}
 
 # ============ DASHBOARD STATS ============
