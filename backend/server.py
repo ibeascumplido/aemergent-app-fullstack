@@ -8303,53 +8303,6 @@ async def borrar_todas_maquinas(_: dict = Depends(require_admin)):
     return {"borradas": result.modified_count}
 
 
-@api_router.post("/admin/limpiar-datos-prueba")
-async def limpiar_datos_prueba(
-    confirmar: str = "", incluir_fotos: bool = False, _: dict = Depends(require_admin)
-):
-    """TEMPORAL. Borra por completo todos los partes de trabajo (y sus
-    sesiones, celdas y notas de rejilla), todas las incidencias y todas
-    las tareas de centro. Con ?incluir_fotos=true tambien borra TODAS las
-    fotos (por clasificar y clasificadas), incluidos sus archivos de
-    Cloudinary (imagen y audio) y sus comentarios.
-
-    NO toca clientes, centros, maquinaria, vehiculos, usuarios, fichajes
-    ni el catalogo de tipos de tarea (work_tasks).
-
-    Requiere ?confirmar=BORRAR para ejecutarse. Borrado DEFINITIVO."""
-    if confirmar != "BORRAR":
-        raise HTTPException(
-            status_code=400,
-            detail="Para confirmar el borrado definitivo, añade ?confirmar=BORRAR a la URL.",
-        )
-    resultado = {
-        "work_orders": (await db.work_orders.delete_many({})).deleted_count,
-        "work_sessions": (await db.work_sessions.delete_many({})).deleted_count,
-        "rejilla_celdas": (await db.rejilla_celdas.delete_many({})).deleted_count,
-        "rejilla_notas": (await db.rejilla_notas.delete_many({})).deleted_count,
-        "incidencias": (await db.incidencias.delete_many({})).deleted_count,
-        "tareas_centro": (await db.tareas_centro.delete_many({})).deleted_count,
-    }
-
-    if incluir_fotos:
-        # Primero borrar los archivos de Cloudinary (imagen y audio de cada
-        # foto), luego los registros y sus comentarios. El borrado en
-        # Cloudinary nunca lanza excepcion (si falla uno, sigue con el resto).
-        borradas_cloudinary = 0
-        async for f in db.fotos.find({}):
-            if f.get("public_id"):
-                await _borrar_logo_cloudinary(f["public_id"])
-                borradas_cloudinary += 1
-            if f.get("audio_public_id"):
-                # El audio se subio con resource_type auto (video para Cloudinary)
-                await _borrar_documento_cloudinary(f["audio_public_id"], "video")
-        resultado["fotos"] = (await db.fotos.delete_many({})).deleted_count
-        resultado["foto_comentarios"] = (await db.foto_comentarios.delete_many({})).deleted_count
-        resultado["archivos_cloudinary_borrados"] = borradas_cloudinary
-
-    return {"borrado": resultado}
-
-
 @api_router.post("/admin/importar-maquinaria-2023")
 async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
     # Idempotencia: si ya hay maquinaria activa, no hacemos nada para
