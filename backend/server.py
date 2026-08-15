@@ -376,6 +376,13 @@ async def require_approved(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="Account pending approval")
     return user
 
+# Helper to require budgets access (admin or facturacion)
+async def require_budgets(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") not in (UserRole.ADMIN, "facturacion"):
+        raise HTTPException(status_code=403, detail="Budgets access required")
+    return user
+
 # Budget Status Enum
 class BudgetStatus(str, Enum):
     PENDING = "pending"
@@ -1670,6 +1677,29 @@ async def delete_budget_template(template_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Budget template not found")
     return {"message": "Budget template deleted successfully"}
+
+
+class AnotacionFacturacionPayload(BaseModel):
+    anotaciones_facturacion: str = ""
+
+
+@api_router.put("/budget-templates/{template_id}/anotacion-facturacion")
+async def update_anotacion_facturacion(
+    template_id: str,
+    payload: AnotacionFacturacionPayload,
+    _: dict = Depends(require_budgets),
+):
+    """Actualiza SOLO la anotación de facturación de un presupuesto. Es el
+    único cambio que el rol facturación puede hacer sobre un presupuesto;
+    el resto de campos quedan intactos."""
+    existing = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget template not found")
+    await db.budget_templates.update_one(
+        {"id": template_id},
+        {"$set": {"anotaciones_facturacion": payload.anotaciones_facturacion}},
+    )
+    return {"ok": True}
 
 # ============ DASHBOARD STATS ============
 
@@ -7927,10 +7957,14 @@ async def borrar_mi_pago_extra(pago_id: str, current_user: dict = Depends(requir
 async def list_pagos_extra_admin(
     estado: Optional[str] = None,
     categoria: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_budgets),
 ):
     query = {}
-    if estado:
+    # Facturación solo puede ver pagos ya aceptados por el administrador,
+    # independientemente del filtro que pida (defensa en el servidor).
+    if current_user.get("role") == "facturacion":
+        query["estado"] = "aceptado"
+    elif estado:
         query["estado"] = estado
     if categoria:
         query["categoria"] = categoria
