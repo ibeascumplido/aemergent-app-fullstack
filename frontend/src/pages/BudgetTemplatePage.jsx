@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import axios from "axios";
 import html2pdf from "html2pdf.js";
 
@@ -38,6 +39,7 @@ const emptyMaterialRow = {
 
 const BudgetTemplatePage = () => {
   const { id } = useParams();
+  const { isFacturacion } = useAuth();
   const navigate = useNavigate();
   const isEditing = Boolean(id);
   const pdfRef = useRef(null);
@@ -370,6 +372,26 @@ const BudgetTemplatePage = () => {
 
   // Save budget
   const handleSave = async () => {
+    // Facturación solo puede tocar la anotación de facturación: se guarda
+    // únicamente ese campo, sin enviar el resto del presupuesto.
+    if (isFacturacion) {
+      if (!isEditing) return; // facturación no crea presupuestos
+      setSaving(true);
+      try {
+        await axios.put(`${API}/budget-templates/${id}/anotacion-facturacion`, {
+          anotaciones_facturacion: anotacionesFacturacion,
+        });
+        toast.success("Anotación de facturación guardada");
+        navigate("/budgets");
+      } catch (error) {
+        console.error("Error saving anotacion facturacion:", error);
+        toast.error("No se pudo guardar la anotación");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     if (!cliente.trim()) {
       toast.error("El campo Cliente es obligatorio");
       return;
@@ -506,7 +528,7 @@ const BudgetTemplatePage = () => {
       </div>
 
       {/* Budget Template */}
-      <div ref={pdfRef}>
+      <div ref={pdfRef} className={isFacturacion ? "[&_input]:pointer-events-none [&_textarea]:pointer-events-none [&_button]:pointer-events-none [&_[role=combobox]]:pointer-events-none [&_input]:bg-slate-50 [&_textarea]:bg-slate-50" : ""}>
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -644,7 +666,7 @@ const BudgetTemplatePage = () => {
             </div>
             <div className="grid grid-cols-[120px_1fr] items-start gap-2 md:col-span-2">
               <label className="text-sm font-medium text-slate-700 pt-2">Anotaciones</label>
-              <Textarea value={anotacionesFacturacion} onChange={(e) => setAnotacionesFacturacion(e.target.value)} placeholder="Anotaciones de facturación..." rows={2} className="resize-none bg-white" data-testid="anotacionesfact-textarea" />
+              <Textarea value={anotacionesFacturacion} onChange={(e) => setAnotacionesFacturacion(e.target.value)} placeholder="Anotaciones de facturación..." rows={2} className={`resize-none ${isFacturacion ? "!pointer-events-auto !bg-white ring-2 ring-sky-300" : "bg-white"}`} data-testid="anotacionesfact-textarea" />
             </div>
           </div>
         </div>

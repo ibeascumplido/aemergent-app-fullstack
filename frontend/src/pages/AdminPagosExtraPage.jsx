@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import { Euro, Clock, Biohazard, Check, X, Pencil, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,9 @@ const TOX_PRODUCTO_LABEL = {
 };
 
 const AdminPagosExtraPage = () => {
-  const [filtroEstado, setFiltroEstado] = useState("pendiente");
+  const { isAdmin, isFacturacion } = useAuth();
+  // Facturación solo ve los pagos ya aceptados por el administrador.
+  const [filtroEstado, setFiltroEstado] = useState(isFacturacion ? "aceptado" : "pendiente");
   const [pagos, setPagos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fotoAmpliada, setFotoAmpliada] = useState(null);
@@ -144,26 +147,32 @@ const AdminPagosExtraPage = () => {
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight font-['Manrope']">
             Pagos extra
           </h1>
-          <p className="text-sm text-slate-500">Revisa, ajusta y aprueba horas extra y pluses</p>
+          <p className="text-sm text-slate-500">
+            {isFacturacion
+              ? "Pagos extra aceptados por el administrador"
+              : "Revisa, ajusta y aprueba horas extra y pluses"}
+          </p>
         </div>
       </div>
 
-      <div className="flex gap-2 mb-4">
-        {["pendiente", "aceptado", "rechazado", "todos"].map((e) => (
-          <button
-            key={e}
-            onClick={() => setFiltroEstado(e)}
-            className={`px-3 py-1.5 rounded-lg text-sm border capitalize transition-colors ${
-              filtroEstado === e
-                ? "bg-slate-800 text-white border-slate-800"
-                : "bg-white text-slate-500 border-slate-200"
-            }`}
-            data-testid={`filtro-${e}`}
-          >
-            {e}
-          </button>
-        ))}
-      </div>
+      {!isFacturacion && (
+        <div className="flex gap-2 mb-4">
+          {["pendiente", "aceptado", "rechazado", "todos"].map((e) => (
+            <button
+              key={e}
+              onClick={() => setFiltroEstado(e)}
+              className={`px-3 py-1.5 rounded-lg text-sm border capitalize transition-colors ${
+                filtroEstado === e
+                  ? "bg-slate-800 text-white border-slate-800"
+                  : "bg-white text-slate-500 border-slate-200"
+              }`}
+              data-testid={`filtro-${e}`}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-slate-400 text-center py-8">Cargando...</p>
@@ -273,6 +282,7 @@ const AdminPagosExtraPage = () => {
                     </div>
                   )}
 
+                  {!isFacturacion && (
                   <div className="flex gap-2 mt-3">
                     <Button
                       size="sm"
@@ -307,6 +317,7 @@ const AdminPagosExtraPage = () => {
                       </Button>
                     )}
                   </div>
+                  )}
                 </CardContent>
               </Card>
             );

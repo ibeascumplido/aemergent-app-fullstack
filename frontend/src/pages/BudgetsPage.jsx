@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import axios from "axios";
+import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -60,6 +61,7 @@ const pedidoParOrder = ["ninguno", "enviado", "pendiente"];
 
 const BudgetsPage = () => {
   const navigate = useNavigate();
+  const { isFacturacion } = useAuth();
   const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -99,6 +101,7 @@ const BudgetsPage = () => {
 
   // Actualiza un campo simple del presupuesto (estado, pedido/par, facturado)
   const patchBudget = async (budgetId, payload, okMsg) => {
+    if (isFacturacion) return; // facturación no modifica estados
     try {
       await axios.put(`${API}/budget-templates/${budgetId}`, payload);
       if (okMsg) toast.success(okMsg);
@@ -148,6 +151,7 @@ const BudgetsPage = () => {
             Vista global de presupuestos y trabajos
           </p>
         </div>
+        {!isFacturacion && (
         <Button
           onClick={() => navigate("/budgets/new")}
           className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
@@ -156,6 +160,7 @@ const BudgetsPage = () => {
           <Plus className="w-4 h-4 mr-2" />
           Nuevo Presupuesto
         </Button>
+        )}
       </div>
 
       {/* Barra superior: búsqueda + toggle facturación */}
@@ -267,6 +272,7 @@ const BudgetsPage = () => {
                             >
                               <Pencil className="w-4 h-4" />
                             </Button>
+                            {!isFacturacion && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -279,6 +285,7 @@ const BudgetsPage = () => {
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
+                            )}
                           </div>
                         </td>
                         <td className={td}>{b.anio || "-"}</td>
