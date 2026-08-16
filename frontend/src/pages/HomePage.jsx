@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users, Building2 } from "lucide-react";
+import { FileText, Calendar, Clock, CheckCircle, ArrowRight, Palmtree, Sun, Users, Building2, Biohazard } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
@@ -37,6 +37,7 @@ const HomePage = () => {
   const [recentBudgets, setRecentBudgets] = useState([]);
   const [myResumen, setMyResumen] = useState(null);
   const [pendingUsers, setPendingUsers] = useState([]);
+  const [factResumen, setFactResumen] = useState(null); // dashboard facturación
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -59,6 +60,34 @@ const HomePage = () => {
           setRecentBudgets(budgetsRes.data.slice(0, 5));
           setPendingUsers(pendingRes.data);
         }
+
+        // Datos para el dashboard del rol facturación
+        if (isFacturacion) {
+          const [budgetsRes, pagosRes] = await Promise.all([
+            axios.get(`${API}/budget-templates`),
+            axios.get(`${API}/admin/pagos-extra`, { params: { estado: "aceptado" } }),
+          ]);
+          setRecentBudgets(budgetsRes.data.slice(0, 5));
+
+          // Filtrar los aprobados del mes en curso y desglosar por categoría.
+          const ahora = new Date();
+          const mesActual = ahora.getMonth();
+          const anioActual = ahora.getFullYear();
+          const delMes = (pagosRes.data || []).filter((p) => {
+            if (!p.fecha) return false;
+            const f = new Date(p.fecha + "T00:00:00");
+            return f.getMonth() === mesActual && f.getFullYear() === anioActual;
+          });
+          const horasExtra = delMes.filter((p) => p.categoria === "horas_extra");
+          const penosidad = delMes.filter((p) => p.categoria === "plus");
+          const suma = (arr) => arr.reduce((t, p) => t + (p.importe || 0), 0);
+          setFactResumen({
+            horasExtra,
+            penosidad,
+            totalHorasExtra: suma(horasExtra),
+            totalPenosidad: suma(penosidad),
+          });
+        }
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
       } finally {
@@ -66,7 +95,7 @@ const HomePage = () => {
       }
     };
     fetchData();
-  }, [isAdmin, isPending]);
+  }, [isAdmin, isFacturacion, isPending]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('es-ES', {
@@ -94,7 +123,7 @@ const HomePage = () => {
             {isPending ? 'Tu cuenta está pendiente de aprobación' : 'Resumen de tu actividad'}
           </p>
         </div>
-        {!isPending && <FichajeBoton />}
+        {!isPending && !isFacturacion && <FichajeBoton />}
       </div>
 
       {/* Presupuestos Recientes + Acciones Rapidas: prioritario para el admin */}
@@ -185,6 +214,101 @@ const HomePage = () => {
             </Card>
           </div>
 )}
+
+      {/* Dashboard del rol facturación */}
+      {isFacturacion && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Presupuestos recientes */}
+          <Card className="border-slate-100 shadow-sm">
+            <CardHeader className="border-b border-slate-50 pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Presupuestos Recientes</CardTitle>
+                <Link to="/budgets">
+                  <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white shadow-sm px-4">
+                    Ver todos <ArrowRight className="w-4 h-4 ml-1.5" />
+                  </Button>
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {recentBudgets.length === 0 ? (
+                <div className="p-6 text-center text-slate-400">No hay presupuestos todavía</div>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {recentBudgets.map((budget) => (
+                    <li key={budget.id} className="p-4 hover:bg-slate-50 transition-colors">
+                      <Link to={`/budgets/${budget.id}`} className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-slate-900">{budget.budget_number}</p>
+                          <p className="text-sm text-slate-500">{budget.cliente}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-mono font-medium text-slate-900">{formatCurrency(budget.total_con_iva || 0)}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Pagos extra aprobados del mes, desglosados */}
+          <Card className="border-slate-100 shadow-sm">
+            <CardHeader className="border-b border-slate-50 pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Pagos extra aprobados (este mes)</CardTitle>
+                <Link to="/admin/pagos-extra">
+                  <Button size="sm" variant="outline" className="px-4">
+                    Ver todos <ArrowRight className="w-4 h-4 ml-1.5" />
+                  </Button>
+                </Link>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 space-y-4">
+              {/* Horas extra */}
+              <div className="rounded-lg border border-slate-100 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-indigo-500" />
+                    Horas extra
+                  </span>
+                  <span className="font-mono font-semibold text-slate-900">
+                    {formatCurrency(factResumen?.totalHorasExtra || 0)}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {factResumen?.horasExtra?.length || 0} solicitud(es) aprobada(s)
+                </p>
+              </div>
+
+              {/* Penosidad / toxicidad */}
+              <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-amber-700 flex items-center gap-1.5">
+                    <Biohazard className="w-4 h-4" />
+                    Trabajos de penosidad
+                  </span>
+                  <span className="font-mono font-semibold text-slate-900">
+                    {formatCurrency(factResumen?.totalPenosidad || 0)}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  {factResumen?.penosidad?.length || 0} solicitud(es) aprobada(s)
+                </p>
+              </div>
+
+              {/* Total combinado */}
+              <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                <span className="text-sm font-semibold text-slate-700">Total del mes</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {formatCurrency((factResumen?.totalHorasExtra || 0) + (factResumen?.totalPenosidad || 0))}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {isAdmin && <FotosPendientesAviso />}
 
