@@ -10,6 +10,7 @@ import {
   Sun,
   AlertCircle,
   Camera,
+  FileText,
   Shirt,
   UserPlus,
   CloudRain,
@@ -121,6 +122,10 @@ const NotificationBell = () => {
         return "/admin/tareas-centro";
       case "tarea_centro_resuelta":
         return "/tareas";
+      case "foto_subida":
+        return "/fotos";
+      case "parte_creado":
+        return data?.enlace || "/work-orders";
       default:
         return null;
     }
@@ -169,6 +174,10 @@ const NotificationBell = () => {
       case "tarea_centro_validar":
       case "tarea_centro_resuelta":
         return <ListChecks className="w-4 h-4 text-indigo-500" />;
+      case "foto_subida":
+        return <Camera className="w-4 h-4 text-sky-500" />;
+      case "parte_creado":
+        return <FileText className="w-4 h-4 text-red-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }
