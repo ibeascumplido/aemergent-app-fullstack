@@ -114,6 +114,8 @@ class NotificationType(str, Enum):
     TAREA_CENTRO_PROPUESTA = "tarea_centro_propuesta"
     TAREA_CENTRO_VALIDAR = "tarea_centro_validar"
     TAREA_CENTRO_RESUELTA = "tarea_centro_resuelta"
+    FOTO_SUBIDA = "foto_subida"
+    PARTE_CREADO = "parte_creado"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -3199,7 +3201,25 @@ async def subir_foto(
         "creado_en": now,
         "clasificado_en": None,
     }
+    # Notificar al admin solo en la PRIMERA foto de cada lote, para no
+    # generar una notificacion por cada foto de una misma tanda.
+    ya_habia = False
+    if payload.lote_id:
+        ya_habia = (
+            await db.fotos.count_documents({"lote_id": payload.lote_id}, limit=1)
+        ) > 0
+
     await db.fotos.insert_one(doc)
+
+    if not ya_habia:
+        usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+        nombre = usuario["name"] if usuario else "Un operario"
+        await notify_admins(
+            notification_type=NotificationType.FOTO_SUBIDA,
+            title="Fotos nuevas",
+            message=f"{nombre} ha subido fotos.",
+            data={"enlace": "/fotos"},
+        )
     return Foto(**doc)
 
 
@@ -4890,6 +4910,21 @@ async def create_work_order(
         "cerrado_en": None,
     }
     await db.work_orders.insert_one(doc)
+
+    # Avisar a los administradores cuando un OPERARIO crea un parte (si lo
+    # crea el propio admin no tiene sentido auto-notificarse).
+    if current_user.get("role") != UserRole.ADMIN:
+        usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+        nombre = usuario["name"] if usuario else "Un operario"
+        cliente_txt = (
+            cliente["nombre"] if cliente else (payload.client_libre or "").strip()
+        )
+        await notify_admins(
+            notification_type=NotificationType.PARTE_CREADO,
+            title="Nuevo parte de trabajo",
+            message=f"{nombre} ha creado un parte en {cliente_txt or 'un cliente'}.",
+            data={"enlace": f"/work-orders/{doc['id']}", "parte_id": doc["id"]},
+        )
     return WorkOrder(**doc)
 
 
