@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Shirt, Plus, Minus, Pencil, Trash2, X, Check, Clock } from "lucide-react";
+import { Shirt, Plus, Minus, Pencil, Trash2, X, Check, Clock, PackagePlus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,15 @@ const RopaPage = () => {
 
   const [editandoCantidad, setEditandoCantidad] = useState(null); // { prendaId, talla }
   const [valorEditado, setValorEditado] = useState("");
+
+  // Pedido a proveedor (genera PDF)
+  const [pedidoOpen, setPedidoOpen] = useState(false);
+  const [pedidoProveedor, setPedidoProveedor] = useState("");
+  const [pedidoContacto, setPedidoContacto] = useState("");
+  const [pedidoFecha, setPedidoFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [pedidoNotas, setPedidoNotas] = useState("");
+  const [pedidoLineas, setPedidoLineas] = useState([{ prenda: "", talla: "", cantidad: "" }]);
+  const [generandoPedido, setGenerandoPedido] = useState(false);
 
   const [aBorrar, setABorrar] = useState(null);
   const [solicitudes, setSolicitudes] = useState([]);
@@ -227,6 +236,72 @@ const RopaPage = () => {
     }
   };
 
+  const abrirPedido = () => {
+    setPedidoProveedor("");
+    setPedidoContacto("");
+    setPedidoFecha(new Date().toISOString().slice(0, 10));
+    setPedidoNotas("");
+    setPedidoLineas([{ prenda: "", talla: "", cantidad: "" }]);
+    setPedidoOpen(true);
+  };
+
+  const actualizarLinea = (idx, campo, valor) => {
+    setPedidoLineas((prev) =>
+      prev.map((l, i) => (i === idx ? { ...l, [campo]: valor } : l))
+    );
+  };
+
+  const anadirLinea = () => {
+    setPedidoLineas((prev) => [...prev, { prenda: "", talla: "", cantidad: "" }]);
+  };
+
+  const quitarLinea = (idx) => {
+    setPedidoLineas((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const generarPedido = async () => {
+    const lineasValidas = pedidoLineas
+      .filter((l) => l.prenda.trim() && Number(l.cantidad) > 0)
+      .map((l) => ({
+        prenda: l.prenda.trim(),
+        talla: l.talla.trim(),
+        cantidad: Number(l.cantidad),
+      }));
+    if (lineasValidas.length === 0) {
+      toast.error("Añade al menos una línea con prenda y cantidad");
+      return;
+    }
+    setGenerandoPedido(true);
+    try {
+      const res = await axios.post(
+        `${API}/ropa/pedido-pdf`,
+        {
+          proveedor_nombre: pedidoProveedor.trim() || null,
+          proveedor_contacto: pedidoContacto.trim() || null,
+          fecha: pedidoFecha || null,
+          notas: pedidoNotas.trim() || null,
+          lineas: lineasValidas,
+        },
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "pedido-ropa.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Pedido generado");
+      setPedidoOpen(false);
+    } catch (err) {
+      console.error("Error generando pedido:", err);
+      toast.error("No se pudo generar el pedido");
+    } finally {
+      setGenerandoPedido(false);
+    }
+  };
+
   if (loading) {
     return <div className="p-8 text-center text-slate-400">Cargando...</div>;
   }
@@ -248,14 +323,24 @@ const RopaPage = () => {
           </div>
         </div>
         {isAdmin && (
-          <Button
-            onClick={abrirNuevo}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white"
-            data-testid="nueva-prenda-btn"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Nueva prenda
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={abrirPedido}
+              data-testid="realizar-pedido-btn"
+            >
+              <PackagePlus className="w-4 h-4 mr-2" />
+              Realizar pedido
+            </Button>
+            <Button
+              onClick={abrirNuevo}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="nueva-prenda-btn"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Nueva prenda
+            </Button>
+          </div>
         )}
       </div>
 
@@ -615,6 +700,125 @@ const RopaPage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Diálogo: realizar pedido a proveedor */}
+      <Dialog open={pedidoOpen} onOpenChange={(v) => !generandoPedido && setPedidoOpen(v)}>
+        <DialogContent className="max-w-2xl max-h-[85dvh] flex flex-col p-0 gap-0">
+          <DialogHeader className="shrink-0 p-6 pb-4 border-b border-slate-100">
+            <DialogTitle>Realizar pedido a proveedor</DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Proveedor</Label>
+                <Input
+                  value={pedidoProveedor}
+                  onChange={(e) => setPedidoProveedor(e.target.value)}
+                  placeholder="Nombre del proveedor"
+                  data-testid="pedido-proveedor"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Contacto</Label>
+                <Input
+                  value={pedidoContacto}
+                  onChange={(e) => setPedidoContacto(e.target.value)}
+                  placeholder="Email o teléfono"
+                  data-testid="pedido-contacto"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Fecha</Label>
+                <Input
+                  type="date"
+                  value={pedidoFecha}
+                  onChange={(e) => setPedidoFecha(e.target.value)}
+                  data-testid="pedido-fecha"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Líneas del pedido</Label>
+              {pedidoLineas.map((linea, idx) => (
+                <div key={idx} className="flex gap-2 items-start">
+                  <div className="flex-1">
+                    <Input
+                      list="prendas-catalogo"
+                      value={linea.prenda}
+                      onChange={(e) => actualizarLinea(idx, "prenda", e.target.value)}
+                      placeholder="Prenda (elige o escribe)"
+                      data-testid={`pedido-prenda-${idx}`}
+                    />
+                  </div>
+                  <div className="w-24">
+                    <Input
+                      value={linea.talla}
+                      onChange={(e) => actualizarLinea(idx, "talla", e.target.value)}
+                      placeholder="Talla"
+                      data-testid={`pedido-talla-${idx}`}
+                    />
+                  </div>
+                  <div className="w-20">
+                    <Input
+                      type="number"
+                      min="1"
+                      value={linea.cantidad}
+                      onChange={(e) => actualizarLinea(idx, "cantidad", e.target.value)}
+                      placeholder="Cant."
+                      data-testid={`pedido-cantidad-${idx}`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => quitarLinea(idx)}
+                    disabled={pedidoLineas.length === 1}
+                    className="p-2 text-slate-400 hover:text-red-600 disabled:opacity-30"
+                    title="Quitar línea"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <datalist id="prendas-catalogo">
+                {prendas.map((p) => (
+                  <option key={p.id} value={p.nombre} />
+                ))}
+              </datalist>
+              <Button variant="outline" size="sm" onClick={anadirLinea} data-testid="pedido-anadir-linea">
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Añadir línea
+              </Button>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Observaciones (opcional)</Label>
+              <Textarea
+                value={pedidoNotas}
+                onChange={(e) => setPedidoNotas(e.target.value)}
+                placeholder="Cualquier indicación para el proveedor"
+                rows={2}
+                data-testid="pedido-notas"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 p-6 pt-4 border-t border-slate-100">
+            <Button variant="ghost" onClick={() => setPedidoOpen(false)} disabled={generandoPedido}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={generarPedido}
+              disabled={generandoPedido}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="pedido-generar-btn"
+            >
+              {generandoPedido ? "Generando..." : "Generar PDF"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
