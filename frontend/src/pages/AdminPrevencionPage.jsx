@@ -79,6 +79,7 @@ const AdminPrevencionPage = () => {
   const [avisos, setAvisos] = useState([]);
   const [solicitudesEpi, setSolicitudesEpi] = useState([]);
   const [justificantes, setJustificantes] = useState([]);
+  const [justificanteABorrar, setJustificanteABorrar] = useState(null);
   const [documentos, setDocumentos] = useState([]);
   const [fitosanitarios, setFitosanitarios] = useState([]);
   const [fotoFitoAmpliada, setFotoFitoAmpliada] = useState(null);
@@ -158,6 +159,20 @@ const AdminPrevencionPage = () => {
   useEffect(() => {
     recargarFitosanitarios();
   }, [recargarFitosanitarios]);
+
+  const confirmarBorrarJustificante = async () => {
+    if (!justificanteABorrar) return;
+    try {
+      await axios.delete(`${API}/justificantes-medicos/${justificanteABorrar.id}`);
+      toast.success("Justificante borrado");
+      setJustificantes((prev) => prev.filter((x) => x.id !== justificanteABorrar.id));
+    } catch (err) {
+      console.error("Error borrando justificante:", err);
+      toast.error("No se pudo borrar el justificante");
+    } finally {
+      setJustificanteABorrar(null);
+    }
+  };
 
   const descargarPdfFitosanitarios = async () => {
     try {
@@ -624,32 +639,45 @@ const AdminPrevencionPage = () => {
             ) : (
               <div className="space-y-2 max-h-80 overflow-y-auto">
                 {justificantes.map((j) => (
-                  <a
+                  <div
                     key={j.id}
-                    href={j.url}
-                    target="_blank"
-                    rel="noreferrer"
                     className="flex items-center gap-3 hover:bg-slate-50 rounded-lg p-1.5 -mx-1.5"
                     data-testid={`admin-justificante-${j.id}`}
                   >
-                    <img
-                      src={j.url}
-                      alt=""
-                      className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-800 flex items-center gap-1">
-                        <Users className="w-3 h-3 text-slate-400" />
-                        {j.operario_nombre}
-                      </p>
-                      <p className="text-xs text-slate-500 truncate">
-                        {j.descripcion || "Sin descripción"}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        {new Date(j.creado_en).toLocaleDateString("es-ES")}
-                      </p>
-                    </div>
-                  </a>
+                    <a
+                      href={j.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 min-w-0 flex-1"
+                    >
+                      <img
+                        src={j.url}
+                        alt=""
+                        className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 flex items-center gap-1">
+                          <Users className="w-3 h-3 text-slate-400" />
+                          {j.operario_nombre}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">
+                          {j.descripcion || "Sin descripción"}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {new Date(j.creado_en).toLocaleDateString("es-ES")}
+                        </p>
+                      </div>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setJustificanteABorrar(j)}
+                      className="shrink-0 p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                      title="Borrar justificante"
+                      data-testid={`borrar-justificante-${j.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -779,6 +807,28 @@ const AdminPrevencionPage = () => {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={!!justificanteABorrar} onOpenChange={(v) => !v && setJustificanteABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Borrar este justificante?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el justificante médico
+              {justificanteABorrar?.operario_nombre ? ` de ${justificanteABorrar.operario_nombre}` : ""}.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmarBorrarJustificante}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Borrar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {fotoFitoAmpliada && (
         <div
