@@ -6968,6 +6968,131 @@ async def establecer_stock_talla(
     return Prenda(**doc)
 
 
+# --- Pedido de ropa a proveedor (genera un PDF, no afecta al stock) -------
+
+class LineaPedidoRopa(BaseModel):
+    prenda: str = Field(..., min_length=1, max_length=200)
+    talla: Optional[str] = Field("", max_length=40)
+    cantidad: int = Field(..., gt=0)
+
+
+class PedidoRopaPayload(BaseModel):
+    proveedor_nombre: Optional[str] = Field("", max_length=200)
+    proveedor_contacto: Optional[str] = Field("", max_length=200)
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    notas: Optional[str] = Field("", max_length=1000)
+    lineas: List[LineaPedidoRopa] = Field(default_factory=list)
+
+
+@api_router.post("/ropa/pedido-pdf")
+async def generar_pedido_ropa_pdf(
+    payload: PedidoRopaPayload, _: dict = Depends(require_admin)
+):
+    """Genera un PDF con el pedido de ropa para enviar al proveedor. No
+    modifica el stock: es solo el documento."""
+    if not payload.lineas:
+        raise HTTPException(status_code=400, detail="El pedido no tiene líneas")
+    pdf_bytes = _generar_pdf_pedido_ropa(payload)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="pedido-ropa.pdf"'},
+    )
+
+
+def _generar_pdf_pedido_ropa(payload: PedidoRopaPayload) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm, title="Pedido de ropa",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    normal = ParagraphStyle("N", parent=styles["Normal"], fontSize=10, leading=14)
+    label = ParagraphStyle(
+        "L", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#64748b")
+    )
+    celda = ParagraphStyle("C", parent=styles["Normal"], fontSize=9.5, leading=12)
+    celda_h = ParagraphStyle(
+        "CH", parent=styles["Normal"], fontSize=9.5, textColor=colors.white,
+        fontName="Helvetica-Bold",
+    )
+
+    story = []
+    logo_img = _logo_inicia_image()
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph("Pedido de ropa de trabajo", titulo_style))
+
+    # Fecha
+    fecha_txt = ""
+    if payload.fecha:
+        try:
+            fecha_txt = datetime.strptime(payload.fecha, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            fecha_txt = payload.fecha
+    else:
+        fecha_txt = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    story.append(Paragraph(f"Fecha: {fecha_txt}", label))
+    story.append(Spacer(1, 12))
+
+    # Datos del proveedor
+    if payload.proveedor_nombre or payload.proveedor_contacto:
+        story.append(Paragraph("Proveedor", label))
+        if payload.proveedor_nombre:
+            story.append(Paragraph(_p(payload.proveedor_nombre), normal))
+        if payload.proveedor_contacto:
+            story.append(Paragraph(_p(payload.proveedor_contacto), normal))
+        story.append(Spacer(1, 14))
+
+    # Tabla de líneas
+    filas = [[
+        Paragraph("Prenda", celda_h),
+        Paragraph("Talla", celda_h),
+        Paragraph("Cantidad", celda_h),
+    ]]
+    total = 0
+    for ln in payload.lineas:
+        total += ln.cantidad
+        filas.append([
+            Paragraph(_p(ln.prenda), celda),
+            Paragraph(_p(ln.talla or "—"), celda),
+            Paragraph(str(ln.cantidad), celda),
+        ])
+    filas.append([
+        Paragraph("", celda),
+        Paragraph("Total", celda_h),
+        Paragraph(str(total), celda_h),
+    ])
+
+    tabla = Table(filas, colWidths=[10.5 * cm, 3.5 * cm, 3.5 * cm], repeatRows=1)
+    tabla.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+            ("BACKGROUND", (1, -1), (-1, -1), _COLOR_MARCA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f8fafc")]),
+        ])
+    )
+    story.append(tabla)
+
+    # Notas
+    if payload.notas and payload.notas.strip():
+        story.append(Spacer(1, 16))
+        story.append(Paragraph("Observaciones", label))
+        story.append(Paragraph(_p(payload.notas.strip()), normal))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 # =====================================================================
 # SOLICITUDES DE ROPA (Fase 9 parte 6)
 # ---------------------------------------------------------------------
