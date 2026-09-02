@@ -288,11 +288,16 @@ const AdminUsersPage = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
-                            style={estiloColorTextura(user.color, user.textura)}
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ring-2 ring-offset-2 ring-offset-white overflow-hidden"
+                            style={{
+                              ...estiloColorTextura(user.color, user.textura),
+                              // El anillo toma el color del usuario para que se
+                              // distinga aunque la foto de Google tape el fondo.
+                              "--tw-ring-color": user.color || "#3B82F6",
+                            }}
                           >
                             {user.picture ? (
-                              <img src={user.picture} alt="" className="w-10 h-10 rounded-full" />
+                              <img src={user.picture} alt="" className="w-10 h-10 rounded-full object-cover" />
                             ) : (
                               user.abreviatura || user.name?.slice(0, 2).toUpperCase()
                             )}
