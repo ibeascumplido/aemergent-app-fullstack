@@ -11,7 +11,6 @@ import {
   ChevronRight,
   Plus,
   MapPin,
-  LayoutGrid,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,11 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import GaleriaFotos from "@/components/GaleriaFotos";
-import TareasCliente from "@/components/TareasCliente";
 import IncidenciasCliente from "@/components/IncidenciasCliente";
-import ContactosCliente from "@/components/ContactosCliente";
-import ComentariosCliente from "@/components/ComentariosCliente";
 import {
   Dialog,
   DialogContent,
@@ -160,17 +155,21 @@ const ClientDetailPage = () => {
   // Ubicaciones (Fase 6 parte 1)
   // ==============================
   const [ubicacionesCount, setUbicacionesCount] = useState(0);
+  const [centrosLista, setCentrosLista] = useState([]);
   const [loadingUbicaciones, setLoadingUbicaciones] = useState(true);
 
   useEffect(() => {
     let cancelado = false;
     (async () => {
       try {
-        const res = await axios.get(`${API}/clients/${slug}/locations`);
-        if (!cancelado) setUbicacionesCount(res.data.length);
+        const res = await axios.get(`${API}/clients/${slug}/centros`);
+        if (!cancelado) {
+          setCentrosLista(res.data || []);
+          setUbicacionesCount((res.data || []).length);
+        }
       } catch (err) {
         if (err?.response?.status !== 404) {
-          console.error("Error cargando ubicaciones:", err);
+          console.error("Error cargando centros:", err);
         }
       } finally {
         if (!cancelado) setLoadingUbicaciones(false);
@@ -336,11 +335,11 @@ const ClientDetailPage = () => {
         </div>
       </div>
 
-      <Tabs defaultValue="resumen" className="w-full">
+      <Tabs defaultValue="incidencias" className="w-full">
         <div className="overflow-x-auto -mx-1 px-1 mb-6 pb-1">
           <TabsList className="inline-flex w-max h-auto p-1 gap-0.5">
-            <TabsTrigger value="resumen" className="gap-1.5" data-testid="tab-resumen">
-              <LayoutGrid className="w-3.5 h-3.5" /> Resumen
+            <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-incidencias">
+              <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
             </TabsTrigger>
             <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-presupuestos">
               <FileText className="w-3.5 h-3.5" /> Presupuestos
@@ -348,58 +347,8 @@ const ClientDetailPage = () => {
             <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-partes">
               <ClipboardList className="w-3.5 h-3.5" /> Partes de trabajo
             </TabsTrigger>
-            <TabsTrigger value="actividad" className="gap-1.5" data-testid="tab-actividad">
-              <Camera className="w-3.5 h-3.5" /> Actividad
-            </TabsTrigger>
-            <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-incidencias">
-              <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
-            </TabsTrigger>
-            <TabsTrigger value="contactos" className="gap-1.5" data-testid="tab-contactos">
-              <Users className="w-3.5 h-3.5" /> Contactos
-            </TabsTrigger>
-            <TabsTrigger value="centros" className="gap-1.5" data-testid="tab-centros">
-              <Building2 className="w-3.5 h-3.5" /> Centros
-            </TabsTrigger>
           </TabsList>
         </div>
-
-        {/* ============== RESUMEN ============== */}
-        <TabsContent value="resumen" className="mt-0">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Card className="border-slate-100">
-              <CardContent className="p-4">
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Partes abiertos</p>
-                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
-                  {loadingPartes ? "…" : partesSummary.abiertos}
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="border-slate-100">
-              <CardContent className="p-4">
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Tareas pendientes</p>
-                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
-                  {loadingResumen ? "…" : tareasPendientesCount}
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="border-slate-100">
-              <CardContent className="p-4">
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Incidencias abiertas</p>
-                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
-                  {loadingResumen ? "…" : incidenciasAbiertasCount}
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="border-slate-100">
-              <CardContent className="p-4">
-                <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Centros</p>
-                <p className="text-2xl font-bold text-slate-900 font-['JetBrains_Mono'] mt-1">
-                  {loadingResumen ? "…" : centrosCount}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
 
         {/* ============== PARTES DE TRABAJO ============== */}
         <TabsContent value="partes" className="mt-0">
@@ -499,69 +448,11 @@ const ClientDetailPage = () => {
           </Card>
         </TabsContent>
 
-        {/* ============== ACTIVIDAD: fotos + comentarios + tareas juntos ============== */}
-        <TabsContent value="actividad" className="mt-0 space-y-6">
-          <GaleriaFotos clientId={cliente.id} titulo="Fotografías" />
-          <Card className="border-slate-100 shadow-sm">
-            <CardContent className="p-6">
-              <ComentariosCliente clientId={cliente.id} />
-            </CardContent>
-          </Card>
-          <Card className="border-slate-100 shadow-sm">
-            <CardContent className="p-6">
-              <TareasCliente clientId={cliente.id} clientSlug={slug} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* ============== INCIDENCIAS ============== */}
         <TabsContent value="incidencias" className="mt-0">
           <Card className="border-slate-100 shadow-sm">
             <CardContent className="p-6">
               <IncidenciasCliente clientId={cliente.id} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============== CONTACTOS ============== */}
-        <TabsContent value="contactos" className="mt-0">
-          <Card className="border-slate-100 shadow-sm">
-            <CardContent className="p-6">
-              <ContactosCliente clientId={cliente.id} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============== CENTROS (antes "Ubicaciones"; unifica el antiguo
-             subgrupo ligero de Centros usado en Planificacion) ============== */}
-        <TabsContent value="centros" className="mt-0">
-          <Card className="border-slate-100 shadow-sm" data-testid="section-centros">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-                    <Building2 className="w-6 h-6 text-indigo-500" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-900">Centros</p>
-                    <p className="text-sm text-slate-500">
-                      {loadingUbicaciones
-                        ? "Cargando..."
-                        : `${ubicacionesCount} ${ubicacionesCount === 1 ? "centro" : "centros"}`}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(`/clients/${slug}/locations`)}
-                  className="border-slate-200"
-                  size="sm"
-                  data-testid="btn-ver-centros"
-                >
-                  <ChevronRight className="w-4 h-4 mr-1" />
-                  {ubicacionesCount > 0 ? "Ver centros" : "Añadir centros"}
-                </Button>
-              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -668,6 +559,77 @@ const ClientDetailPage = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Listado de centros del cliente (siempre visible) */}
+      <Card className="border-slate-100 shadow-sm mt-6" data-testid="section-centros">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-indigo-50 flex items-center justify-center">
+                <Building2 className="w-5 h-5 text-indigo-500" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Centros</p>
+                <p className="text-sm text-slate-500">
+                  {loadingUbicaciones
+                    ? "Cargando..."
+                    : `${ubicacionesCount} ${ubicacionesCount === 1 ? "centro" : "centros"}`}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/clients/${slug}/locations`)}
+              className="border-slate-200"
+              size="sm"
+              data-testid="btn-gestionar-centros"
+            >
+              Gestionar centros
+            </Button>
+          </div>
+
+          {loadingUbicaciones ? (
+            <p className="text-sm text-slate-400">Cargando centros...</p>
+          ) : centrosLista.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-sm text-slate-400 mb-3">Este cliente no tiene centros todavía.</p>
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/clients/${slug}/locations`)}
+                size="sm"
+              >
+                Añadir centros
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {centrosLista.map((centro) => (
+                <button
+                  key={centro.id}
+                  type="button"
+                  onClick={() => navigate(`/centros/${centro.id}`)}
+                  className="w-full flex items-center justify-between gap-3 rounded-lg border border-slate-100 p-3 hover:border-indigo-200 hover:bg-slate-50 transition-colors text-left"
+                  data-testid={`centro-item-${centro.id}`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900">{centro.nombre}</p>
+                    {centro.direccion && (
+                      <p className="text-sm text-slate-500 flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3.5 h-3.5 shrink-0" />
+                        {centro.direccion}
+                      </p>
+                    )}
+                    {centro.contacto && (
+                      <p className="text-sm text-slate-400 mt-0.5">{centro.contacto}</p>
+                    )}
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-300 shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Modal: Nuevo parte de trabajo */}
       <Dialog open={dialogNuevoParte} onOpenChange={setDialogNuevoParte}>
