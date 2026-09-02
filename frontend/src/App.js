@@ -28,6 +28,7 @@ import UserDetailPage from "@/pages/UserDetailPage";
 import ClientsPage from "@/pages/ClientsPage";
 import WorkTasksAdminPage from "@/pages/WorkTasksAdminPage";
 import ClientDetailPage from "@/pages/ClientDetailPage";
+import CentroDetailPage from "@/pages/CentroDetailPage";
 import ClientLocationsPage from "@/pages/ClientLocationsPage";
 import ClientLocationsCalendarPage from "@/pages/ClientLocationsCalendarPage";
 import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
@@ -132,6 +133,11 @@ function App() {
               <Route path="clients/:id" element={
                 <ProtectedRoute requireBudgets>
                   <ClientDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="centros/:centroId" element={
+                <ProtectedRoute requireBudgets>
+                  <CentroDetailPage />
                 </ProtectedRoute>
               } />
               <Route path="clients/:slug/locations" element={
