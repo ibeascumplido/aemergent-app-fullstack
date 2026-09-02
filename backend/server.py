@@ -532,6 +532,7 @@ class BudgetTemplateBase(BaseModel):
     # los presupuestos nuevos deberian traer este campo; los historicos se
     # localizan tambien por el texto de `cliente` (filtro OR en el endpoint).
     client_id: Optional[str] = None
+    centro_id: Optional[str] = None
     lugar_ejecucion: Optional[str] = ""
     provincia: Optional[str] = ""
     servicios_descripcion: Optional[str] = ""
@@ -1693,10 +1694,18 @@ async def get_vacaciones_resumen(request: Request, year: Optional[int] = None):
 # ============ BUDGET TEMPLATE ENDPOINTS ============
 
 @api_router.get("/budget-templates", response_model=List[BudgetTemplate])
-async def get_budget_templates(status: Optional[BudgetStatus] = None):
+async def get_budget_templates(
+    status: Optional[BudgetStatus] = None,
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+):
     query = {}
     if status:
         query["status"] = status.value
+    if client_id:
+        query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
     templates = await db.budget_templates.find(query, {"_id": 0}).to_list(1000)
     for t in templates:
         if isinstance(t.get('created_at'), str):
@@ -3117,6 +3126,7 @@ class FotoCreatePayload(BaseModel):
 
 class FotoClasificarPayload(BaseModel):
     client_id: Optional[str] = None
+    centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
 
 
@@ -3131,6 +3141,7 @@ class ClasificarLotePayload(BaseModel):
     antes_despues: Optional[str] = Field(None, pattern=r"^(antes|despues)$")
     fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     client_id: Optional[str] = None
+    centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
     audio: Optional[str] = Field(None, description="Data-URI base64 de la nota de voz")
 
@@ -3146,6 +3157,7 @@ class Foto(BaseModel):
     audio_url: Optional[str] = None
     audio_public_id: Optional[str] = None
     client_id: Optional[str] = None
+    centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
     creado_en: datetime
     clasificado_en: Optional[datetime] = None
@@ -3350,6 +3362,7 @@ async def list_fotos(
     solo_sin_clasificar: bool = False,
     work_order_id: Optional[str] = None,
     client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
     mias: bool = False,
     lote_id: Optional[str] = None,
     fecha_desde: Optional[str] = None,
@@ -3380,6 +3393,8 @@ async def list_fotos(
         query = {"work_order_id": work_order_id}
     elif client_id:
         query = {"client_id": client_id}
+        if centro_id:
+            query["centro_id"] = centro_id
     elif mias:
         query = {"operario_id": current_user["user_id"]}
     elif solo_sin_clasificar:
@@ -3447,6 +3462,7 @@ async def clasificar_foto(
         )
     updates = {
         "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
         "work_order_id": payload.work_order_id,
         "clasificado_en": datetime.now(timezone.utc) if payload.client_id else None,
     }
@@ -3479,6 +3495,7 @@ async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
 class CentroBase(BaseModel):
     nombre: str = Field(..., min_length=1, max_length=200)
     direccion: Optional[str] = Field(None, max_length=300)
+    contacto: Optional[str] = Field("", max_length=300)
     notas: Optional[str] = Field("", max_length=1000)
 
 
@@ -3489,6 +3506,7 @@ class CentroCreate(CentroBase):
 class CentroUpdate(BaseModel):
     nombre: Optional[str] = Field(None, min_length=1, max_length=200)
     direccion: Optional[str] = Field(None, max_length=300)
+    contacto: Optional[str] = Field(None, max_length=300)
     notas: Optional[str] = Field(None, max_length=1000)
     activo: Optional[bool] = None
 
@@ -4102,6 +4120,7 @@ async def eliminar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin))
 
 class IncidenciaCreate(BaseModel):
     client_id: str
+    centro_id: Optional[str] = None
     titulo: str = Field(..., min_length=1, max_length=200)
     descripcion: Optional[str] = Field("", max_length=2000)
 
@@ -4109,6 +4128,7 @@ class IncidenciaCreate(BaseModel):
 class Incidencia(BaseModel):
     id: str
     client_id: str
+    centro_id: Optional[str] = None
     titulo: str
     descripcion: Optional[str] = ""
     estado: str = "abierta"  # abierta | cerrada
@@ -4121,9 +4141,14 @@ class Incidencia(BaseModel):
 
 @api_router.get("/incidencias", response_model=List[Incidencia])
 async def list_incidencias(
-    client_id: str, solo_abiertas: bool = False, _: dict = Depends(require_approved)
+    client_id: str,
+    centro_id: Optional[str] = None,
+    solo_abiertas: bool = False,
+    _: dict = Depends(require_approved),
 ):
     query = {"client_id": client_id}
+    if centro_id:
+        query["centro_id"] = centro_id
     if solo_abiertas:
         query["estado"] = "abierta"
     cursor = db.incidencias.find(query).sort("creado_en", -1)
@@ -4142,6 +4167,7 @@ async def crear_incidencia(
     doc = {
         "id": str(uuid.uuid4()),
         "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
         "titulo": payload.titulo.strip(),
         "descripcion": (payload.descripcion or "").strip(),
         "estado": "abierta",
