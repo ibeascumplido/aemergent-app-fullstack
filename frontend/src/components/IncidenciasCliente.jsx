@@ -32,7 +32,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
  * para en el futuro conectarse con el correo (cualquier email
  * referenciado a este cliente se archivaria aqui automaticamente).
  */
-const IncidenciasCliente = ({ clientId }) => {
+const IncidenciasCliente = ({ clientId, centroId }) => {
   const { isAdmin } = useAuth();
   const [incidencias, setIncidencias] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +46,9 @@ const IncidenciasCliente = ({ clientId }) => {
 
   const cargar = async () => {
     try {
-      const res = await axios.get(`${API}/incidencias`, { params: { client_id: clientId } });
+      const params = { client_id: clientId };
+      if (centroId) params.centro_id = centroId;
+      const res = await axios.get(`${API}/incidencias`, { params });
       setIncidencias(res.data);
     } catch (err) {
       console.error("Error cargando incidencias:", err);
@@ -58,7 +60,7 @@ const IncidenciasCliente = ({ clientId }) => {
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+  }, [clientId, centroId]);
 
   const abrirNueva = () => {
     setTitulo("");
@@ -75,6 +77,7 @@ const IncidenciasCliente = ({ clientId }) => {
     try {
       await axios.post(`${API}/incidencias`, {
         client_id: clientId,
+        centro_id: centroId || null,
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
       });

@@ -54,7 +54,7 @@ const agruparPorLote = (fotos) => {
  * Si no hay fotos, no renderiza nada (con filtros activos, si muestra el
  * bloque para poder cambiar el filtro).
  */
-const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
+const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const modoArchivo = !!clientId;
@@ -82,6 +82,7 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
   const cargar = async () => {
     try {
       const params = workOrderId ? { work_order_id: workOrderId } : { client_id: clientId };
+      if (centroId) params.centro_id = centroId;
       if (modoArchivo) {
         if (fechaDesde) params.fecha_desde = fechaDesde;
         if (fechaHasta) params.fecha_hasta = fechaHasta;
@@ -100,7 +101,7 @@ const GaleriaFotos = ({ workOrderId, clientId, titulo = "Fotos" }) => {
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workOrderId, clientId, fechaDesde, fechaHasta, antesDespues, operarioId]);
+  }, [workOrderId, clientId, centroId, fechaDesde, fechaHasta, antesDespues, operarioId]);
 
   const eliminarFoto = async (e, fotoId) => {
     e.stopPropagation();
