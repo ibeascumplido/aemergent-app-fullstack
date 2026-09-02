@@ -44,6 +44,14 @@ const formatearRangoSemana = (lunesISO) => {
   return `${fmt(inicio)} - ${fmt(fin)}`;
 };
 
+const formatearRangoQuincena = (lunesISO) => {
+  const inicio = new Date(lunesISO + "T00:00:00");
+  const fin = new Date(inicio);
+  fin.setDate(fin.getDate() + 13); // 14 días (2 semanas)
+  const fmt = (d) => d.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+  return `${fmt(inicio)} - ${fmt(fin)}`;
+};
+
 /**
  * Acceso rapido desde el dashboard (Fase 10) para iniciar un parte de
  * trabajo. Primero se elige el tipo (estandar o rejilla, y si es rejilla
@@ -160,9 +168,13 @@ const ParteRapidoFlow = () => {
   const tituloRapido = () => {
     const hoy = new Date().toLocaleDateString("es-ES", { day: "numeric", month: "short" });
     if (tipoParte === "rejilla") {
-      return rejillaPeriodo === "semanal"
-        ? `Mantenimiento semana ${formatearRangoSemana(lunesDeLaSemana(fechaSemana))}`
-        : `Mantenimiento ${mesRejilla}`;
+      if (rejillaPeriodo === "semanal") {
+        return `Mantenimiento semana ${formatearRangoSemana(lunesDeLaSemana(fechaSemana))}`;
+      }
+      if (rejillaPeriodo === "quincenal") {
+        return `Mantenimiento quincena ${formatearRangoQuincena(lunesDeLaSemana(fechaSemana))}`;
+      }
+      return `Mantenimiento ${mesRejilla}`;
     }
     return `Parte rápido - ${hoy}`;
   };
@@ -207,7 +219,7 @@ const ParteRapidoFlow = () => {
         }
         if (tipoParte === "rejilla") {
           payload.rejilla_tipo = rejillaPeriodo;
-          if (rejillaPeriodo === "semanal") {
+          if (rejillaPeriodo === "semanal" || rejillaPeriodo === "quincenal") {
             payload.semana_inicio = lunesDeLaSemana(fechaSemana);
           } else {
             payload.mes_rejilla = mesRejilla;
@@ -307,6 +319,18 @@ const ParteRapidoFlow = () => {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setRejillaPeriodo("quincenal")}
+                    className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
+                      rejillaPeriodo === "quincenal"
+                        ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                        : "bg-white border-slate-200 text-slate-500"
+                    }`}
+                    data-testid="periodo-quincenal-btn"
+                  >
+                    Quincenal
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setRejillaPeriodo("semanal")}
                     className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
                       rejillaPeriodo === "semanal"
@@ -333,8 +357,9 @@ const ParteRapidoFlow = () => {
                       data-testid="fecha-semana-input"
                     />
                     <p className="text-xs text-slate-400 mt-1">
-                      Semana del {formatearRangoSemana(lunesDeLaSemana(fechaSemana))} (lunes a
-                      domingo). Ideal para trabajos puntuales de varios días.
+                      {rejillaPeriodo === "quincenal"
+                        ? `Quincena de ${formatearRangoQuincena(lunesDeLaSemana(fechaSemana))} (2 semanas desde el lunes).`
+                        : `Semana del ${formatearRangoSemana(lunesDeLaSemana(fechaSemana))} (lunes a domingo). Ideal para trabajos puntuales de varios días.`}
                     </p>
                   </div>
                 )}
