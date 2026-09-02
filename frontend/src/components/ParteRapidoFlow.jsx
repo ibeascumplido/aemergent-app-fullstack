@@ -24,8 +24,19 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const hoyISO = () => new Date().toISOString().slice(0, 10);
-const hoyMes = () => new Date().toISOString().slice(0, 7);
+const hoyISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+const hoyMes = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+};
 
 /** Lunes de la semana que contiene la fecha dada (YYYY-MM-DD) */
 const lunesDeLaSemana = (fechaISO) => {
@@ -33,7 +44,12 @@ const lunesDeLaSemana = (fechaISO) => {
   const dia = d.getDay(); // 0 = domingo
   const offset = dia === 0 ? -6 : 1 - dia;
   d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0, 10);
+  // Formatear en hora LOCAL (no con toISOString, que convierte a UTC y
+  // puede retroceder la fecha un día en husos con desfase positivo).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 };
 
 const formatearRangoSemana = (lunesISO) => {
