@@ -4688,7 +4688,7 @@ class WorkOrderBase(BaseModel):
     )
     rejilla_tipo: Optional[str] = Field(
         None,
-        pattern=r"^(mensual|semanal)$",
+        pattern=r"^(mensual|quincenal|semanal)$",
         description="Solo aplica si usa_zonas=True: si la rejilla cubre un mes completo o "
         "una semana concreta (ideal para trabajos puntuales de varios dias, tipicamente 4-5). "
         "Si no se especifica, se asume 'mensual' (comportamiento historico).",
@@ -4712,7 +4712,7 @@ class WorkOrderUpdate(BaseModel):
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
     mes_rejilla: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
-    rejilla_tipo: Optional[str] = Field(None, pattern=r"^(mensual|semanal)$")
+    rejilla_tipo: Optional[str] = Field(None, pattern=r"^(mensual|quincenal|semanal)$")
     semana_inicio: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     client_id: Optional[str] = Field(
         None, description="Solo para vincular un parte de cliente libre a un cliente real "
@@ -4974,10 +4974,11 @@ async def create_work_order(
                 status_code=400, detail="Ese centro no pertenece al cliente indicado"
             )
 
-    if payload.usa_zonas and payload.rejilla_tipo == "semanal":
+    if payload.usa_zonas and payload.rejilla_tipo in ("semanal", "quincenal"):
         if not payload.semana_inicio:
             raise HTTPException(
-                status_code=400, detail="Falta semana_inicio para la rejilla semanal"
+                status_code=400,
+                detail="Falta semana_inicio para la rejilla semanal/quincenal",
             )
         if date.fromisoformat(payload.semana_inicio).weekday() != 0:
             raise HTTPException(
@@ -5657,6 +5658,12 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
         year = _d_fin.year
         periodo_label = "SEMANA"
         periodo_txt = f"{_d_ini.day} - {_d_fin.day} {_MESES_ES[_d_fin.month - 1]} {_d_fin.year}"
+    elif doc.get("rejilla_tipo") == "quincenal" and doc.get("semana_inicio"):
+        dias = _dias_de_quincena(doc["semana_inicio"])
+        _d_ini, _d_fin = date.fromisoformat(dias[0]), date.fromisoformat(dias[-1])
+        year = _d_fin.year
+        periodo_label = "QUINCENA"
+        periodo_txt = f"{_d_ini.day} {_MESES_ES[_d_ini.month - 1]} - {_d_fin.day} {_MESES_ES[_d_fin.month - 1]} {_d_fin.year}"
     elif doc.get("mes_rejilla"):
         year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
         dias = _dias_del_mes(year, month)
@@ -6056,6 +6063,13 @@ def _dias_de_semana(lunes_iso: str) -> List[str]:
     return [(lunes + timedelta(days=i)).isoformat() for i in range(7)]
 
 
+def _dias_de_quincena(lunes_iso: str) -> List[str]:
+    """Los 14 dias ISO de la quincena (dos semanas) que empieza en el lunes
+    dado. Para mantenimientos con periodicidad quincenal."""
+    lunes = date.fromisoformat(lunes_iso)
+    return [(lunes + timedelta(days=i)).isoformat() for i in range(14)]
+
+
 async def _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id: str) -> None:
     """Compatibilidad con partes creados antes de este cambio: si la
     rejilla usaba sesiones auto-creadas para guardar las zonas, se migran
@@ -6100,6 +6114,8 @@ async def obtener_rejilla_zonas(
 
     if doc.get("rejilla_tipo") == "semanal" and doc.get("semana_inicio"):
         dias = _dias_de_semana(doc["semana_inicio"])
+    elif doc.get("rejilla_tipo") == "quincenal" and doc.get("semana_inicio"):
+        dias = _dias_de_quincena(doc["semana_inicio"])
     elif doc.get("mes_rejilla"):
         year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
         dias = _dias_del_mes(year, month)
