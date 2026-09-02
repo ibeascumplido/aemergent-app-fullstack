@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
-  Calendar,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  X,
-  Lock,
+  Users,
+  UserCheck,
+  UserX,
+  Clock,
+  Search,
+  Shield,
+  Trash2,
   Check,
+  X,
+  AlertTriangle,
+  ChevronRight,
 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -25,6 +25,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,710 +43,538 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { estiloColorTextura } from "@/components/FichaColor";
 import axios from "axios";
-import { useAuth } from "@/contexts/AuthContext";
+import FichaColor, { TEXTURAS, estiloColorTextura } from "@/components/FichaColor";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const MESES_ES = [
-  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+const PRESET_COLORS = [
+  "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
+  "#06B6D4", "#84CC16", "#F97316", "#6366F1", "#14B8A6", "#A855F7",
+  "#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#DB2777",
+  "#0891B2", "#65A30D", "#EA580C", "#4F46E5", "#0D9488", "#9333EA",
+  "#1E40AF", "#991B1B", "#166534", "#92400E", "#5B21B6", "#9D174D",
+  "#155E75", "#3F6212", "#7C2D12", "#3730A3", "#115E59", "#6B21A8",
+  "#0EA5E9", "#F43F5E", "#22C55E", "#EAB308", "#A78BFA", "#F472B6",
+  "#64748B", "#78716C", "#1F2937", "#000000",
 ];
-const DIAS_SEMANA_CORTO = ["L", "M", "X", "J", "V", "S", "D"];
 
-const diaSemanaCorto = (fechaISO) => {
-  const d = new Date(fechaISO + "T00:00:00");
-  return DIAS_SEMANA_CORTO[(d.getDay() + 6) % 7];
+const DIAS_AVISO_PREVIO = 30;
+
+const tieneAlertaRevision = (fechaProxima) => {
+  if (!fechaProxima) return false;
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  const proxima = new Date(fechaProxima + "T00:00:00");
+  const diasRestantes = Math.round((proxima - hoy) / (1000 * 60 * 60 * 24));
+  return diasRestantes <= DIAS_AVISO_PREVIO;
 };
 
-const formatDateString = (date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-
-const PlanificacionPage = () => {
-  const { isAdmin } = useAuth();
-  const panelRef = useRef(null);
-
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [columnas, setColumnas] = useState([]);
-  const [asignaciones, setAsignaciones] = useState([]);
-  const [vacaciones, setVacaciones] = useState([]);
-  const [operarios, setOperarios] = useState([]);
-  const [clientesDisponibles, setClientesDisponibles] = useState([]);
+const AdminUsersPage = () => {
+  const navigate = useNavigate();
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  
+  const [editingUser, setEditingUser] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-  const [panelAbierto, setPanelAbierto] = useState(null); // { fecha, columna, top, left }
-  const [guardando, setGuardando] = useState(false);
-
-  const [dialogColumnaOpen, setDialogColumnaOpen] = useState(false);
-  const [nuevaColumnaTipo, setNuevaColumnaTipo] = useState("cliente");
-  const [nuevaColumnaClienteId, setNuevaColumnaClienteId] = useState("");
-  const [nuevaColumnaCentroClienteId, setNuevaColumnaCentroClienteId] = useState("");
-  const [nuevaColumnaCentroId, setNuevaColumnaCentroId] = useState("");
-  const [centrosDisponibles, setCentrosDisponibles] = useState([]);
-  const [cargandoCentros, setCargandoCentros] = useState(false);
-  const [nuevaColumnaEtiqueta, setNuevaColumnaEtiqueta] = useState("");
-  const [creandoColumna, setCreandoColumna] = useState(false);
-  const [columnaABorrar, setColumnaABorrar] = useState(null);
-
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-
-  const diasDelMes = useMemo(() => {
-    const ultimoDia = new Date(year, month + 1, 0).getDate();
-    return Array.from({ length: ultimoDia }, (_, i) => formatDateString(new Date(year, month, i + 1)));
-  }, [year, month]);
-
-  const cargarBase = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
-      const [opsRes, clientesRes] = await Promise.all([
-        axios.get(`${API}/users/operarios`),
-        axios.get(`${API}/clients`).catch(() => ({ data: [] })),
-      ]);
-      setOperarios(opsRes.data);
-      setClientesDisponibles(clientesRes.data);
-    } catch (err) {
-      console.error("Error cargando operarios/clientes:", err);
-    }
-  };
-
-  const cargarRejilla = async () => {
-    setLoading(true);
-    try {
-      const desde = diasDelMes[0];
-      const hasta = diasDelMes[diasDelMes.length - 1];
-      const [columnasRes, rejillaRes] = await Promise.all([
-        axios.get(`${API}/planificacion/columnas`),
-        axios.get(`${API}/planificacion/rejilla`, { params: { desde, hasta } }),
-      ]);
-      setColumnas(columnasRes.data);
-      setAsignaciones(rejillaRes.data.asignaciones);
-      setVacaciones(rejillaRes.data.vacaciones);
-    } catch (err) {
-      console.error("Error cargando la planificación:", err);
-      toast.error("Error al cargar la planificación");
+      const response = await axios.get(`${API}/admin/users`);
+      setUsers(response.data);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      toast.error("Error al cargar usuarios");
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    cargarBase();
   }, []);
 
   useEffect(() => {
-    cargarRejilla();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month]);
+    fetchUsers();
+  }, [fetchUsers]);
 
-  // Cerrar panel al clicar fuera
-  useEffect(() => {
-    if (!panelAbierto) return undefined;
-    const handleClick = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target)) {
-        setPanelAbierto(null);
-      }
-    };
-    const handleEscape = (e) => {
-      if (e.key === "Escape") setPanelAbierto(null);
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [panelAbierto]);
-
-  const operariosPorId = useMemo(() => {
-    const map = {};
-    operarios.forEach((o) => (map[o.user_id] = o));
-    return map;
-  }, [operarios]);
-
-  const vacacionesSet = useMemo(() => {
-    const set = new Set();
-    vacaciones.forEach((v) => set.add(`${v.user_id}|${v.fecha}`));
-    return set;
-  }, [vacaciones]);
-
-  // { fecha: { columnaId: [asignacion,...] } }
-  const asignacionesPorCelda = useMemo(() => {
-    const map = {};
-    asignaciones.forEach((a) => {
-      const columnaId = a.destino_centro_id
-        ? columnas.find((c) => c.tipo === "centro" && c.centro_id === a.destino_centro_id)?.id
-        : a.destino_cliente_id
-        ? columnas.find((c) => c.tipo === "cliente" && c.cliente_id === a.destino_cliente_id)?.id
-        : columnas.find((c) => c.tipo === "libre" && c.etiqueta === a.destino_libre)?.id;
-      if (!columnaId) return;
-      if (!map[a.fecha]) map[a.fecha] = {};
-      if (!map[a.fecha][columnaId]) map[a.fecha][columnaId] = [];
-      map[a.fecha][columnaId].push(a);
-    });
-    return map;
-  }, [asignaciones, columnas]);
-
-  const irMesAnterior = () => setCurrentDate(new Date(year, month - 1, 1));
-  const irMesSiguiente = () => setCurrentDate(new Date(year, month + 1, 1));
-  const irHoy = () => setCurrentDate(new Date());
-
-  const abrirPanel = (e, fecha, columna) => {
-    if (!isAdmin) return;
-    if (panelAbierto?.fecha === fecha && panelAbierto?.columna?.id === columna.id) {
-      setPanelAbierto(null);
-      return;
-    }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const PANEL_ANCHO = 220;
-    const PANEL_ALTO_ESTIMADO = 280;
-    const MARGEN = 8;
-
-    // IMPORTANTE (Fase 12): el panel es position:fixed (relativo a la
-    // ventana visible), y getBoundingClientRect() YA devuelve
-    // coordenadas relativas a la ventana visible - por eso aqui NO se
-    // suma window.scrollX/scrollY. Sumarlo (como se hacia antes) era el
-    // fallo real: descuadraba el panel cada vez mas cuanto mas bajada
-    // estuviera la pagina, así que fallaba en unos dias si o si segun
-    // cuanto scroll hiciera falta para llegar a esa fila, no solo en
-    // los ultimos dias del mes.
-    let left = rect.left;
-    if (left + PANEL_ANCHO > window.innerWidth) {
-      left = window.innerWidth - PANEL_ANCHO - MARGEN;
-    }
-    if (left < MARGEN) {
-      left = MARGEN;
-    }
-
-    let top = rect.bottom + 4;
-    if (rect.bottom + PANEL_ALTO_ESTIMADO > window.innerHeight) {
-      top = rect.top - PANEL_ALTO_ESTIMADO - 4;
-    }
-    // Clamp definitivo: aunque lo anterior "voltea" el panel de abajo a
-    // arriba de la celda, si tampoco cupiera por arriba (movil con poca
-    // altura disponible) se fuerza a quedarse dentro de la ventana. Si
-    // ni asi cupiera entero, el propio panel ya hace scroll interno
-    // (max-h-[280px] overflow-y-auto mas abajo).
-    const minTop = MARGEN;
-    const maxTop = Math.max(minTop, window.innerHeight - PANEL_ALTO_ESTIMADO - MARGEN);
-    top = Math.min(Math.max(top, minTop), maxTop);
-
-    setPanelAbierto({ fecha, columna, top, left });
-  };
-
-  const toggleOperarioCelda = async (operarioId) => {
-    if (!panelAbierto) return;
-    const { fecha, columna } = panelAbierto;
-    const enVacaciones = vacacionesSet.has(`${operarioId}|${fecha}`);
-    if (enVacaciones) {
-      toast.warning("Este operario tiene vacaciones o día libre aprobado ese día");
-      return;
-    }
-    setGuardando(true);
+  const handleApprove = async (userId) => {
     try {
-      const payload = {
-        operario_id: operarioId,
-        fecha,
-        destino_cliente_id: columna.tipo === "cliente" ? columna.cliente_id : null,
-        destino_centro_id: columna.tipo === "centro" ? columna.centro_id : null,
-        destino_libre: columna.tipo === "libre" ? columna.etiqueta : null,
-      };
-      const res = await axios.post(`${API}/planificacion/celda/toggle`, payload);
-      if (res.data.accion === "added") {
-        setAsignaciones((prev) => [
-          ...prev,
-          { id: `temp-${Date.now()}`, ...payload },
-        ]);
-      } else {
-        setAsignaciones((prev) =>
-          prev.filter(
-            (a) =>
-              !(
-                a.operario_id === operarioId &&
-                a.fecha === fecha &&
-                a.destino_cliente_id === payload.destino_cliente_id &&
-                a.destino_centro_id === payload.destino_centro_id &&
-                a.destino_libre === payload.destino_libre
-              )
-          )
-        );
-      }
-    } catch (err) {
-      console.error("Error asignando operario:", err);
-      const detail = err?.response?.data?.detail;
-      toast.error(detail || "No se pudo guardar la asignación");
-      await cargarRejilla();
-    } finally {
-      setGuardando(false);
+      await axios.put(`${API}/admin/users/${userId}`, { status: "approved" });
+      toast.success("Usuario aprobado");
+      fetchUsers();
+    } catch (error) {
+      toast.error("Error al aprobar usuario");
     }
   };
 
-  const abrirNuevaColumna = () => {
-    setNuevaColumnaTipo("cliente");
-    setNuevaColumnaClienteId("");
-    setNuevaColumnaCentroClienteId("");
-    setNuevaColumnaCentroId("");
-    setCentrosDisponibles([]);
-    setNuevaColumnaEtiqueta("");
-    setDialogColumnaOpen(true);
-  };
-
-  useEffect(() => {
-    if (!nuevaColumnaCentroClienteId) {
-      setCentrosDisponibles([]);
-      return;
-    }
-    const cliente = clientesDisponibles.find((c) => c.id === nuevaColumnaCentroClienteId);
-    if (!cliente) return;
-    setCargandoCentros(true);
-    axios
-      .get(`${API}/clients/${cliente.slug}/centros`)
-      .then((res) => setCentrosDisponibles(res.data))
-      .catch(() => setCentrosDisponibles([]))
-      .finally(() => setCargandoCentros(false));
-  }, [nuevaColumnaCentroClienteId, clientesDisponibles]);
-
-  const crearColumna = async () => {
-    if (nuevaColumnaTipo === "cliente" && !nuevaColumnaClienteId) {
-      toast.error("Selecciona un cliente");
-      return;
-    }
-    if (nuevaColumnaTipo === "centro" && !nuevaColumnaCentroId) {
-      toast.error("Selecciona un centro");
-      return;
-    }
-    if (nuevaColumnaTipo === "libre" && !nuevaColumnaEtiqueta.trim()) {
-      toast.error("Escribe una etiqueta");
-      return;
-    }
-    setCreandoColumna(true);
+  const handleReject = async (userId) => {
     try {
-      await axios.post(`${API}/planificacion/columnas`, {
-        tipo: nuevaColumnaTipo,
-        cliente_id: nuevaColumnaTipo === "cliente" ? nuevaColumnaClienteId : null,
-        centro_id: nuevaColumnaTipo === "centro" ? nuevaColumnaCentroId : null,
-        etiqueta_libre: nuevaColumnaTipo === "libre" ? nuevaColumnaEtiqueta.trim() : null,
+      await axios.put(`${API}/admin/users/${userId}`, { status: "rejected" });
+      toast.success("Usuario rechazado");
+      fetchUsers();
+    } catch (error) {
+      toast.error("Error al rechazar usuario");
+    }
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editingUser) return;
+    
+    try {
+      await axios.put(`${API}/admin/users/${editingUser.user_id}`, {
+        name: editingUser.name,
+        role: editingUser.role,
+        status: editingUser.status,
+        dias_vacaciones: editingUser.dias_vacaciones,
+        dias_libres: editingUser.dias_libres,
+        color: editingUser.color,
+        textura: editingUser.textura || "solido",
+        abreviatura: editingUser.abreviatura,
+        puesto: editingUser.puesto || "",
       });
-      toast.success("Columna añadida");
-      setDialogColumnaOpen(false);
-      await cargarRejilla();
-    } catch (err) {
-      console.error("Error creando columna:", err);
-      toast.error("Error al crear la columna");
-    } finally {
-      setCreandoColumna(false);
+      toast.success("Usuario actualizado");
+      setShowEditModal(false);
+      setEditingUser(null);
+      fetchUsers();
+    } catch (error) {
+      toast.error("Error al actualizar usuario");
     }
   };
 
-  const eliminarColumna = async () => {
-    if (!columnaABorrar) return;
+  const handleDeleteUser = async () => {
+    if (!deleteConfirm) return;
+    
     try {
-      await axios.delete(`${API}/planificacion/columnas/${columnaABorrar.id}`);
-      toast.success("Columna eliminada");
-      setColumnaABorrar(null);
-      await cargarRejilla();
-    } catch (err) {
-      console.error("Error eliminando columna:", err);
-      toast.error("Error al eliminar la columna");
+      await axios.delete(`${API}/admin/users/${deleteConfirm.user_id}`);
+      toast.success("Usuario eliminado");
+      setDeleteConfirm(null);
+      fetchUsers();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Error al eliminar usuario");
     }
   };
 
-  const operariosDelPanel = panelAbierto
-    ? asignacionesPorCelda[panelAbierto.fecha]?.[panelAbierto.columna.id] || []
-    : [];
-  const idsAsignadosPanel = new Set(operariosDelPanel.map((a) => a.operario_id));
+  const filteredUsers = users.filter(user => {
+    const matchesSearch = user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          user.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = filterStatus === "all" || user.status === filterStatus;
+    return matchesSearch && matchesStatus;
+  });
+
+  const pendingCount = users.filter(u => u.status === "pending").length;
+  const approvedCount = users.filter(u => u.status === "approved").length;
+  const adminCount = users.filter(u => u.role === "admin").length;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-pulse text-slate-400">Cargando...</div>
+      </div>
+    );
+  }
 
   return (
-    <div data-testid="planificacion-page">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-            <Calendar className="w-6 h-6 text-indigo-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight font-['Manrope']">
-              Planificación
-            </h1>
-            <p className="text-sm text-slate-500">Quién va a cada sitio, día a día</p>
-          </div>
+    <div data-testid="admin-users-page">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
+            Gestión de Usuarios
+          </h1>
+          <p className="text-slate-500 mt-1">Administra los accesos y permisos</p>
         </div>
-        {isAdmin && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={abrirNuevaColumna}
-            className="border-slate-200"
-            data-testid="nueva-columna-btn"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Añadir columna
-          </Button>
-        )}
       </div>
 
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={irMesAnterior} className="h-8 w-8 p-0">
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <span className="font-semibold text-slate-900 min-w-[160px] text-center">
-            {MESES_ES[month]} {year}
-          </span>
-          <Button variant="ghost" size="sm" onClick={irMesSiguiente} className="h-8 w-8 p-0">
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-        <Button variant="outline" size="sm" onClick={irHoy} className="border-slate-200">
-          Hoy
-        </Button>
-      </div>
-
-      {!isAdmin && (
-        <p className="text-xs text-slate-400 bg-slate-50 rounded-lg px-3 py-2 mb-3">
-          Vista de solo lectura. Solo un administrador puede asignar operarios.
-        </p>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-slate-400 text-center py-8">Cargando...</p>
-      ) : (
-        <div className="border border-slate-200 rounded-lg overflow-auto max-w-full">
-          <table className="border-collapse text-xs min-w-max">
-            <thead>
-              <tr>
-                <th className="sticky left-0 top-0 z-20 bg-slate-50 border-b-2 border-r-2 border-slate-300 px-2 py-2 text-center font-medium text-slate-600 w-12">
-                  Día
-                </th>
-                {columnas.map((c) => (
-                  <th
-                    key={c.id}
-                    className="sticky top-0 z-10 border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group"
-                    style={{ backgroundColor: c.color_fondo || "#f8fafc" }}
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      <div className="min-w-0">
-                        {c.tipo === "centro" && c.cliente_nombre && (
-                          <p className="text-[9px] text-slate-400 leading-tight truncate">
-                            {c.cliente_nombre}
-                          </p>
-                        )}
-                        <span className="truncate block">{c.etiqueta}</span>
-                      </div>
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => setColumnaABorrar(c)}
-                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity shrink-0"
-                          data-testid={`borrar-columna-${c.id}`}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  </th>
-                ))}
-                {isAdmin && (
-                  <th className="sticky top-0 z-10 border-b border-l border-slate-200 bg-white px-2 py-2 min-w-[90px]">
-                    <button
-                      type="button"
-                      onClick={abrirNuevaColumna}
-                      className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium"
-                      data-testid="anadir-columna-en-tabla-btn"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Columna
-                    </button>
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {diasDelMes.map((fecha) => {
-                const numero = Number(fecha.split("-")[2]);
-                const esHoy = fecha === formatDateString(new Date());
-                const diaSem = new Date(fecha + "T00:00:00").getDay(); // 0=dom,6=sab
-                const esFinde = diaSem === 0 || diaSem === 6;
-                return (
-                  <tr
-                    key={fecha}
-                    className={`border-b border-slate-200 ${
-                      esHoy ? "bg-indigo-50/40" : esFinde ? "bg-slate-100/60" : "odd:bg-white even:bg-slate-50/40"
-                    }`}
-                  >
-                    <td
-                      className={`sticky left-0 z-10 bg-inherit border-r-2 border-slate-300 px-2 py-1 text-center ${
-                        esHoy ? "font-bold text-indigo-600" : esFinde ? "text-slate-400" : "text-slate-500"
-                      }`}
-                    >
-                      {numero}
-                      <span className="text-[9px] text-slate-400 ml-1">
-                        {diaSemanaCorto(fecha)}
-                      </span>
-                    </td>
-                    {columnas.map((c) => {
-                      const asignados = asignacionesPorCelda[fecha]?.[c.id] || [];
-                      const activa =
-                        panelAbierto?.fecha === fecha && panelAbierto?.columna?.id === c.id;
-                      return (
-                        <td key={c.id} className="border-l border-slate-200 p-0">
-                          <button
-                            type="button"
-                            onClick={(e) => abrirPanel(e, fecha, c)}
-                            disabled={!isAdmin}
-                            className={`w-full min-h-[30px] flex flex-wrap items-center justify-center gap-0.5 px-1 py-1 cursor-pointer disabled:cursor-default ${
-                              activa ? "bg-indigo-100 ring-2 ring-inset ring-indigo-300" : "hover:bg-indigo-50/50"
-                            }`}
-                            data-testid={`celda-${c.id}-${fecha}`}
-                          >
-                            {asignados.map((a) => {
-                              const op = operariosPorId[a.operario_id];
-                              if (!op) return null;
-                              return (
-                                <span
-                                  key={a.operario_id}
-                                  className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
-                                  style={estiloColorTextura(op.color || "#3B82F6", op.textura)}
-                                  title={op.name}
-                                >
-                                  {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
-                                </span>
-                              );
-                            })}
-                          </button>
-                        </td>
-                      );
-                    })}
-                    {isAdmin && <td className="border-l border-slate-200 bg-white" />}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {!loading && columnas.length === 0 && (
-        <p className="text-xs text-slate-400 text-center mt-3">
-          Todavía no hay columnas.{" "}
-          {isAdmin ? 'Usa el botón "Columna" al final de la cabecera para añadir la primera.' : ""}
-        </p>
-      )}
-
-      {/* Panel flotante rapido: elegir operarios para una celda */}
-      {panelAbierto && (
-        <div
-          ref={panelRef}
-          className="fixed z-50 bg-white border border-slate-200 rounded-lg shadow-lg p-2 w-[220px] max-h-[280px] overflow-y-auto"
-          style={{ top: panelAbierto.top, left: panelAbierto.left }}
-          data-testid="panel-operarios-rapido"
-        >
-          <p className="text-[10px] text-slate-400 truncate mb-1.5 px-0.5">
-            {panelAbierto.columna.etiqueta} ·{" "}
-            {new Date(panelAbierto.fecha + "T00:00:00").toLocaleDateString("es-ES", {
-              day: "numeric",
-              month: "short",
-            })}
-          </p>
-          <div className="space-y-0.5">
-            {operarios.map((op) => {
-              const asignado = idsAsignadosPanel.has(op.user_id);
-              const enVacaciones = vacacionesSet.has(`${op.user_id}|${panelAbierto.fecha}`);
-              return (
-                <button
-                  type="button"
-                  key={op.user_id}
-                  onClick={() => !enVacaciones && toggleOperarioCelda(op.user_id)}
-                  disabled={guardando || enVacaciones}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-colors ${
-                    enVacaciones
-                      ? "opacity-40 cursor-not-allowed"
-                      : asignado
-                      ? "bg-indigo-50"
-                      : "hover:bg-slate-50"
-                  }`}
-                  data-testid={`panel-operario-${op.user_id}`}
-                >
-                  <span
-                    className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
-                    style={{ backgroundColor: op.color || "#3B82F6" }}
-                  >
-                    {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="truncate flex-1">{op.name}</span>
-                  {enVacaciones && <Lock className="w-3 h-3 text-slate-400 shrink-0" />}
-                  {asignado && !enVacaciones && (
-                    <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Dialogo: nueva columna */}
-      <Dialog open={dialogColumnaOpen} onOpenChange={setDialogColumnaOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Nueva columna</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setNuevaColumnaTipo("cliente")}
-                className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
-                  nuevaColumnaTipo === "cliente"
-                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                    : "bg-white border-slate-200 text-slate-500"
-                }`}
-              >
-                Cliente
-              </button>
-              <button
-                type="button"
-                onClick={() => setNuevaColumnaTipo("centro")}
-                className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
-                  nuevaColumnaTipo === "centro"
-                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                    : "bg-white border-slate-200 text-slate-500"
-                }`}
-                data-testid="tipo-columna-centro-btn"
-              >
-                Centro
-              </button>
-              <button
-                type="button"
-                onClick={() => setNuevaColumnaTipo("libre")}
-                className={`flex-1 py-1.5 rounded-lg text-sm border transition-colors ${
-                  nuevaColumnaTipo === "libre"
-                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                    : "bg-white border-slate-200 text-slate-500"
-                }`}
-              >
-                Categoría libre
-              </button>
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <Card className="border-slate-100">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Users className="w-6 h-6 text-slate-600" />
             </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-900">{users.length}</p>
+              <p className="text-sm text-slate-500">Total usuarios</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-orange-200 bg-orange-50">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-orange-100 flex items-center justify-center">
+              <Clock className="w-6 h-6 text-orange-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-orange-900">{pendingCount}</p>
+              <p className="text-sm text-orange-700">Pendientes</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-green-200 bg-green-50">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
+              <UserCheck className="w-6 h-6 text-green-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-green-900">{approvedCount}</p>
+              <p className="text-sm text-green-700">Aprobados</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-purple-200 bg-purple-50">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center">
+              <Shield className="w-6 h-6 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-purple-900">{adminCount}</p>
+              <p className="text-sm text-purple-700">Administradores</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-            {nuevaColumnaTipo === "cliente" && (
-              <div className="space-y-1.5">
-                <Label>Cliente</Label>
-                <Select value={nuevaColumnaClienteId} onValueChange={setNuevaColumnaClienteId}>
-                  <SelectTrigger data-testid="nueva-columna-cliente-select">
-                    <SelectValue placeholder="Selecciona..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clientesDisponibles.map((cl) => (
-                      <SelectItem key={cl.id} value={cl.id}>
-                        {cl.nombre}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+      {/* Filters */}
+      <Card className="border-slate-100 shadow-sm mb-6">
+        <CardContent className="p-4">
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                placeholder="Buscar por nombre o email..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Filtrar por estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="pending">Pendientes</SelectItem>
+                <SelectItem value="approved">Aprobados</SelectItem>
+                <SelectItem value="rejected">Rechazados</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Users List */}
+      <Card className="border-slate-100 shadow-sm">
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Usuario</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">Estado</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">Rol</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">Vacaciones</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">Días Libres</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="px-4 py-8 text-center text-slate-400">
+                      No se encontraron usuarios
+                    </td>
+                  </tr>
+                ) : (
+                  filteredUsers.map((user) => (
+                    <tr key={user.user_id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ring-2 ring-offset-2 ring-offset-white overflow-hidden"
+                            style={{
+                              ...estiloColorTextura(user.color, user.textura),
+                              // El anillo toma el color del usuario para que se
+                              // distinga aunque la foto de Google tape el fondo.
+                              "--tw-ring-color": user.color || "#3B82F6",
+                            }}
+                          >
+                            {user.picture ? (
+                              <img src={user.picture} alt="" className="w-10 h-10 rounded-full object-cover" />
+                            ) : (
+                              user.abreviatura || user.name?.slice(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900 inline-flex items-center gap-1.5">
+                              {user.name}
+                              {tieneAlertaRevision(user.fecha_proxima_revision_medica) && (
+                                <AlertTriangle
+                                  className="w-3.5 h-3.5 text-amber-500"
+                                  title="Revisión médica próxima o vencida"
+                                />
+                              )}
+                            </p>
+                            <p className="text-sm text-slate-500">{user.email}</p>
+                            {user.puesto && (
+                              <p className="text-xs text-slate-400">{user.puesto}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          user.status === "approved" ? "bg-green-100 text-green-700" :
+                          user.status === "pending" ? "bg-orange-100 text-orange-700" :
+                          "bg-red-100 text-red-700"
+                        }`}>
+                          {user.status === "approved" ? "Aprobado" :
+                           user.status === "pending" ? "Pendiente" : "Rechazado"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          user.role === "admin" ? "bg-purple-100 text-purple-700" :
+                          user.role === "facturacion" ? "bg-sky-100 text-sky-700" :
+                          "bg-slate-100 text-slate-700"
+                        }`}>
+                          {user.role === "admin" ? "Admin" : user.role === "facturacion" ? "Facturación" : "Usuario"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center font-mono text-sm">
+                        {user.dias_vacaciones || 32}
+                      </td>
+                      <td className="px-4 py-3 text-center font-mono text-sm">
+                        {user.dias_libres || 6}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          {user.status === "pending" && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={() => handleApprove(user.user_id)}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleReject(user.user_id)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigate(`/admin/users/${user.user_id}`)}
+                            data-testid={`ver-ficha-${user.user_id}`}
+                          >
+                            Ficha
+                            <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingUser({ ...user });
+                              setShowEditModal(true);
+                            }}
+                          >
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-700"
+                            onClick={() => setDeleteConfirm(user)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Edit User Modal */}
+      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Usuario</DialogTitle>
+          </DialogHeader>
+          
+          {editingUser && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nombre</Label>
+                <Input
+                  value={editingUser.name || ""}
+                  onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+                />
               </div>
-            )}
+              
+              <div className="space-y-2">
+                <Label>Puesto</Label>
+                <Input
+                  value={editingUser.puesto || ""}
+                  onChange={(e) => setEditingUser({ ...editingUser, puesto: e.target.value })}
+                  placeholder="Ej. Operario, Encargado, Gerente..."
+                  data-testid="edit-puesto-input"
+                />
+              </div>
 
-            {nuevaColumnaTipo === "centro" && (
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label>Cliente</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Abreviatura</Label>
+                  <Input
+                    value={editingUser.abreviatura || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, abreviatura: e.target.value.slice(0, 3).toUpperCase() })}
+                    maxLength={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Rol</Label>
                   <Select
-                    value={nuevaColumnaCentroClienteId}
-                    onValueChange={(v) => {
-                      setNuevaColumnaCentroClienteId(v);
-                      setNuevaColumnaCentroId("");
-                    }}
+                    value={editingUser.role}
+                    onValueChange={(v) => setEditingUser({ ...editingUser, role: v })}
                   >
-                    <SelectTrigger data-testid="nueva-columna-centro-cliente-select">
-                      <SelectValue placeholder="Selecciona un cliente..." />
+                    <SelectTrigger>
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {clientesDisponibles.map((cl) => (
-                        <SelectItem key={cl.id} value={cl.id}>
-                          {cl.nombre}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="user">Usuario</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="facturacion">Facturación</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                {nuevaColumnaCentroClienteId && (
-                  <div className="space-y-1.5">
-                    <Label>Centro</Label>
-                    <Select value={nuevaColumnaCentroId} onValueChange={setNuevaColumnaCentroId}>
-                      <SelectTrigger data-testid="nueva-columna-centro-select">
-                        <SelectValue
-                          placeholder={cargandoCentros ? "Cargando..." : "Selecciona un centro..."}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {centrosDisponibles.length === 0 && !cargandoCentros ? (
-                          <p className="px-3 py-2 text-xs text-slate-400">
-                            Este cliente no tiene centros. Añádelos desde su ficha.
-                          </p>
-                        ) : (
-                          centrosDisponibles.map((ce) => (
-                            <SelectItem key={ce.id} value={ce.id}>
-                              {ce.nombre}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
               </div>
-            )}
 
-            {nuevaColumnaTipo === "libre" && (
-              <div className="space-y-1.5">
-                <Label htmlFor="nueva-columna-etiqueta">Etiqueta</Label>
-                <Input
-                  id="nueva-columna-etiqueta"
-                  value={nuevaColumnaEtiqueta}
-                  onChange={(e) => setNuevaColumnaEtiqueta(e.target.value)}
-                  placeholder="Ej. Ruta, Oficina, Formación..."
-                  data-testid="nueva-columna-etiqueta-input"
-                />
+              <div className="space-y-2">
+                <Label>Estado</Label>
+                <Select
+                  value={editingUser.status}
+                  onValueChange={(v) => setEditingUser({ ...editingUser, status: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pendiente</SelectItem>
+                    <SelectItem value="approved">Aprobado</SelectItem>
+                    <SelectItem value="rejected">Rechazado</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-          </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Días vacaciones</Label>
+                  <Input
+                    type="number"
+                    value={editingUser.dias_vacaciones || 32}
+                    onChange={(e) => setEditingUser({ ...editingUser, dias_vacaciones: parseInt(e.target.value) || 0 })}
+                    min="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Días libres</Label>
+                  <Input
+                    type="number"
+                    value={editingUser.dias_libres || 6}
+                    onChange={(e) => setEditingUser({ ...editingUser, dias_libres: parseInt(e.target.value) || 0 })}
+                    min="0"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Color</Label>
+                <div className="flex flex-wrap gap-2">
+                  {PRESET_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setEditingUser({ ...editingUser, color })}
+                      className={`w-8 h-8 rounded-lg border-2 transition-all ${
+                        editingUser.color === color ? "border-slate-900 scale-110" : "border-transparent"
+                      }`}
+                      style={estiloColorTextura(color, editingUser.textura || "solido")}
+                      title={color}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Textura</Label>
+                <div className="flex flex-wrap gap-2">
+                  {TEXTURAS.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setEditingUser({ ...editingUser, textura: t.id })}
+                      className={`flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border-2 text-xs transition-all ${
+                        (editingUser.textura || "solido") === t.id
+                          ? "border-slate-900"
+                          : "border-slate-200 hover:border-slate-300"
+                      }`}
+                      title={t.label}
+                    >
+                      <span
+                        className="w-5 h-5 rounded border border-slate-300"
+                        style={estiloColorTextura(editingUser.color || "#3B82F6", t.id)}
+                      />
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-slate-400">Vista previa:</span>
+                  <FichaColor
+                    color={editingUser.color || "#3B82F6"}
+                    textura={editingUser.textura || "solido"}
+                    className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-white text-[9px] font-bold"
+                  >
+                    {editingUser.abreviatura || ""}
+                  </FichaColor>
+                </div>
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogColumnaOpen(false)} disabled={creandoColumna}>
+            <Button variant="outline" onClick={() => setShowEditModal(false)}>
               Cancelar
             </Button>
-            <Button
-              onClick={crearColumna}
-              disabled={creandoColumna}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              data-testid="crear-columna-btn"
-            >
-              {creandoColumna ? "Creando..." : "Crear columna"}
+            <Button onClick={handleUpdateUser} className="bg-red-500 hover:bg-red-600">
+              Guardar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!columnaABorrar} onOpenChange={(open) => !open && setColumnaABorrar(null)}>
+      {/* Delete Confirm */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar esta columna?</AlertDialogTitle>
+            <AlertDialogTitle>¿Eliminar usuario?</AlertDialogTitle>
             <AlertDialogDescription>
-              Vas a eliminar{" "}
-              <span className="font-semibold">
-                {columnaABorrar?.etiqueta}
-                {columnaABorrar?.tipo === "centro" &&
-                  columnaABorrar?.cliente_nombre &&
-                  ` (${columnaABorrar.cliente_nombre})`}
-              </span>
-              .
-              Las asignaciones ya guardadas para esta columna dejarán de mostrarse.
+              Se eliminará "{deleteConfirm?.name}" y todos sus datos. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={eliminarColumna} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              className="bg-red-600 hover:bg-red-700"
+            >
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -749,4 +584,4 @@ const PlanificacionPage = () => {
   );
 };
 
-export default PlanificacionPage;
+export default AdminUsersPage;
