@@ -1518,6 +1518,80 @@ async def admin_delete_vacacion(vacacion_id: str, request: Request):
     await db.vacaciones.delete_one({"id": vacacion_id})
     return {"message": "Vacation deleted successfully"}
 
+
+class AsignarVacacionesPayload(BaseModel):
+    operario_id: str
+    tipo: str = "vacacion"  # "vacacion" o "libre"
+    desde: Optional[str] = None  # YYYY-MM-DD (rango)
+    hasta: Optional[str] = None  # YYYY-MM-DD (rango)
+    fechas: Optional[List[str]] = None  # o lista de fechas sueltas
+
+
+@api_router.post("/admin/vacaciones/asignar")
+async def asignar_vacaciones_admin(payload: AsignarVacacionesPayload, request: Request):
+    """El admin asigna vacaciones/días libres directamente (ya aprobadas),
+    sin que el operario tenga que solicitarlas. Acepta un rango (desde/hasta)
+    o una lista de fechas sueltas. Los fines de semana se omiten en el rango
+    para vacaciones (se cuentan solo días laborables); para días sueltos se
+    respeta lo que envíe el admin."""
+    admin = await require_admin(request)
+
+    operario = await db.users.find_one({"user_id": payload.operario_id}, {"_id": 0})
+    if not operario:
+        raise HTTPException(status_code=404, detail="Operario no encontrado")
+
+    # Construir la lista de fechas a asignar
+    fechas = set(payload.fechas or [])
+    if payload.desde and payload.hasta:
+        try:
+            d = datetime.strptime(payload.desde, "%Y-%m-%d").date()
+            h = datetime.strptime(payload.hasta, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Fechas de rango no válidas")
+        if h < d:
+            raise HTTPException(status_code=400, detail="La fecha final es anterior a la inicial")
+        actual = d
+        while actual <= h:
+            # En el rango, omitir sábados (5) y domingos (6)
+            if actual.weekday() < 5:
+                fechas.add(actual.isoformat())
+            actual += timedelta(days=1)
+
+    if not fechas:
+        raise HTTPException(status_code=400, detail="No se han indicado fechas")
+
+    now = datetime.now(timezone.utc).isoformat()
+    creadas = 0
+    for fecha in sorted(fechas):
+        # Si ya existe una vacación ese día para ese operario, se pisa
+        # (se elimina y se crea la nueva aprobada).
+        await db.vacaciones.delete_one({"user_id": payload.operario_id, "fecha": fecha})
+        await db.vacaciones.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": payload.operario_id,
+            "fecha": fecha,
+            "tipo": payload.tipo,
+            "status": VacationStatus.APPROVED,
+            "created_at": now,
+            "reviewed_at": now,
+            "reviewed_by": admin["user_id"],
+            "rejection_comment": None,
+            "asignada_por_admin": True,
+        })
+        creadas += 1
+
+    # Avisar al operario de que se le han asignado
+    tipo_text = "vacaciones" if payload.tipo == "vacacion" else "días libres"
+    await create_notification(
+        user_id=payload.operario_id,
+        notification_type=NotificationType.VACATION_APPROVED,
+        title="Vacaciones asignadas",
+        message=f"El administrador te ha asignado {creadas} día(s) de {tipo_text}.",
+        data={"enlace": "/my-calendar"},
+    )
+
+    return {"message": "Vacaciones asignadas", "dias_asignados": creadas}
+
 @api_router.get("/admin/vacaciones/resumen")
 async def get_all_resumen(request: Request, year: Optional[int] = None):
     """Get all users' vacation summary (admin only)"""
