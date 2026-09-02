@@ -5374,7 +5374,7 @@ def _logo_inicia_image(max_width_cm: float = 4.2, max_height_cm: float = 1.4):
         return None
 
 
-def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
+async def _generar_pdf_parte(vista: WorkOrderPublicView, work_order_id: Optional[str] = None) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -5613,11 +5613,19 @@ def _generar_pdf_parte(vista: WorkOrderPublicView) -> bytes:
             ]
         )
     )
+    # Sección de fotografías del parte (si tiene fotos), antes del pie.
+    try:
+        if work_order_id:
+            elementos_fotos = await _seccion_fotos_pdf(work_order_id, styles)
+            for el in elementos_fotos:
+                story.append(el)
+    except Exception:
+        logger.warning("No se pudieron añadir fotos al PDF del parte", exc_info=True)
+
     story.append(pie)
 
     doc.build(story)
     return buffer.getvalue()
-
 
 async def _descargar_imagen_pdf(
     url: Optional[str], max_width_cm: float = 16.0, max_height_cm: float = 16.0
@@ -5643,6 +5651,50 @@ async def _descargar_imagen_pdf(
     except Exception:
         logger.warning("No se pudo descargar la imagen del mapa de zonas", exc_info=True)
         return None
+
+
+async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -> list:
+    """Genera los elementos (flowables) de una seccion 'Fotografias' con las
+    fotos del parte, en una cuadricula de 3 columnas. Devuelve [] si no hay
+    fotos. Limita a max_fotos para que el PDF no sea enorme."""
+    fotos_docs = [
+        f
+        async for f in db.fotos.find({"work_order_id": work_order_id}).sort("creado_en", 1)
+    ]
+    if not fotos_docs:
+        return []
+    fotos_docs = fotos_docs[:max_fotos]
+
+    titulo_style = ParagraphStyle(
+        "TituloFotos", parent=estilos["Normal"], fontSize=11,
+        textColor=_COLOR_MARCA, fontName="Helvetica-Bold", spaceAfter=8,
+    )
+
+    # Descargar cada imagen escalada a un tamaño de miniatura homogéneo.
+    celdas = []
+    for f in fotos_docs:
+        img = await _descargar_imagen_pdf(f.get("url"), max_width_cm=5.2, max_height_cm=5.2)
+        celdas.append(img if img else Paragraph("(imagen no disponible)", estilos["Normal"]))
+
+    # Organizar en filas de 3 columnas
+    filas = []
+    for i in range(0, len(celdas), 3):
+        fila = celdas[i:i + 3]
+        while len(fila) < 3:
+            fila.append("")  # rellenar la última fila
+        filas.append(fila)
+
+    tabla = Table(filas, colWidths=[5.7 * cm, 5.7 * cm, 5.7 * cm])
+    tabla.setStyle(
+        TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ])
+    )
+
+    return [Spacer(1, 16), Paragraph("Fotografías", titulo_style), tabla]
 
 
 async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
@@ -5896,6 +5948,14 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     )
     story.append(layout_dos_columnas)
 
+    # Sección de fotografías del parte (si tiene fotos).
+    try:
+        elementos_fotos = await _seccion_fotos_pdf(doc["id"], styles)
+        for el in elementos_fotos:
+            story.append(el)
+    except Exception:
+        logger.warning("No se pudieron añadir fotos al PDF de rejilla", exc_info=True)
+
     pdf_doc.build(story)
     return buffer.getvalue()
 
@@ -5910,7 +5970,7 @@ async def descargar_pdf_parte(
         pdf_bytes = await _generar_pdf_rejilla_zonas(doc, cliente)
     else:
         vista = await _construir_vista_publica(doc)
-        pdf_bytes = _generar_pdf_parte(vista)
+        pdf_bytes = await _generar_pdf_parte(vista, work_order_id=doc["id"])
     filename = f"{(doc.get('numero') or doc['id'][:8])}.pdf"
     return Response(
         content=pdf_bytes,
