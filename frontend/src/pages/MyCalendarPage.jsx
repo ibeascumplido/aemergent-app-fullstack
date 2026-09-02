@@ -12,6 +12,7 @@ import {
   CheckCircle,
   XCircle,
   MapPin,
+  X,
   Stethoscope,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,6 +52,23 @@ const MyCalendarPage = () => {
   const [misDestinos, setMisDestinos] = useState({}); // { fecha: [nombreDestino,...] }
   const [loading, setLoading] = useState(true);
   const [markMode, setMarkMode] = useState("vacacion");
+  const [galpDia, setGalpDia] = useState(null); // fecha seleccionada para ver estaciones
+  const [galpEstaciones, setGalpEstaciones] = useState([]);
+  const [cargandoGalp, setCargandoGalp] = useState(false);
+
+  const abrirEstacionesGalp = useCallback(async (fecha) => {
+    setGalpDia(fecha);
+    setCargandoGalp(true);
+    setGalpEstaciones([]);
+    try {
+      const res = await axios.get(`${API}/mis-estaciones-dia`, { params: { fecha } });
+      setGalpEstaciones(res.data || []);
+    } catch (err) {
+      console.error("Error cargando estaciones Galp:", err);
+    } finally {
+      setCargandoGalp(false);
+    }
+  }, []);
 
   const fetchMisDestinos = useCallback(async () => {
     if (!user?.user_id) return;
@@ -334,15 +352,33 @@ const MyCalendarPage = () => {
 
                 {destinosHoy.length > 0 ? (
                   <div className="space-y-1">
-                    {destinosHoy.map((nombre, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center gap-1.5 text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
-                      >
-                        <MapPin className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate font-medium">{nombre}</span>
-                      </div>
-                    ))}
+                    {destinosHoy.map((nombre, idx) => {
+                      const esGalp = (nombre || "").toUpperCase() === "GALP";
+                      if (esGalp) {
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => abrirEstacionesGalp(dateStr)}
+                            className="w-full flex items-center gap-1.5 text-sm text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-lg px-2 py-1.5 transition-colors"
+                            data-testid={`galp-dia-${dateStr}`}
+                          >
+                            <MapPin className="w-3.5 h-3.5 shrink-0" />
+                            <span className="truncate font-medium">GALP</span>
+                            <span className="text-xs text-amber-600 ml-auto">ver estaciones ›</span>
+                          </button>
+                        );
+                      }
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-1.5 text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
+                        >
+                          <MapPin className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate font-medium">{nombre}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400 px-1">Sin destino asignado</p>
@@ -736,6 +772,71 @@ const MyCalendarPage = () => {
           <span>Día libre (mismo color + borde negro)</span>
         </div>
       </div>
+
+      {/* Detalle de estaciones GALP del día seleccionado */}
+      {galpDia && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setGalpDia(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900">
+                Estaciones GALP
+              </h3>
+              <button
+                type="button"
+                onClick={() => setGalpDia(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {cargandoGalp ? (
+              <p className="text-sm text-slate-400 text-center py-6">Cargando...</p>
+            ) : galpEstaciones.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-6">
+                No hay estaciones asignadas ese día.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {galpEstaciones.map((est) => (
+                  <div
+                    key={est.centro_id}
+                    className="rounded-xl border border-slate-100 p-3"
+                  >
+                    <p className="font-medium text-slate-900">{est.nombre}</p>
+                    {est.direccion && (
+                      <p className="text-sm text-slate-500 mt-0.5">{est.direccion}</p>
+                    )}
+                    {est.contacto && (
+                      <p className="text-sm text-slate-400 mt-0.5">{est.contacto}</p>
+                    )}
+                    {est.notas && (
+                      <p className="text-xs text-slate-400 mt-1 italic">{est.notas}</p>
+                    )}
+                    {est.maps_url && (
+                      <a
+                        href={est.maps_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium"
+                      >
+                        <MapPin className="w-4 h-4" />
+                        Ver ubicación
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
