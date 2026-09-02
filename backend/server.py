@@ -2796,6 +2796,78 @@ async def list_client_visits(
     return resultado
 
 
+# Etiqueta de la columna genérica de planificación donde caen todas las
+# visitas del apartado Galp (en vez de una columna por estación).
+_COLUMNA_GALP_ETIQUETA = "GALP"
+
+
+async def _asegurar_columna_galp() -> None:
+    """Crea la columna libre 'GALP' en la planificacion si no existe, para
+    que las visitas de estaciones Galp tengan donde mostrarse."""
+    existe = await db.planificacion_columnas.find_one(
+        {"tipo": "libre", "etiqueta_libre": _COLUMNA_GALP_ETIQUETA}
+    )
+    if existe:
+        return
+    ultima = await db.planificacion_columnas.find_one(sort=[("orden", -1)])
+    orden = (ultima["orden"] + 1) if ultima else 0
+    await db.planificacion_columnas.insert_one({
+        "id": str(uuid.uuid4()),
+        "tipo": "libre",
+        "cliente_id": None,
+        "centro_id": None,
+        "etiqueta_libre": _COLUMNA_GALP_ETIQUETA,
+        "color_fondo": "#FEF3C7",  # ámbar suave
+        "orden": orden,
+        "creado_en": datetime.now(timezone.utc),
+    })
+
+
+async def _sincronizar_asignaciones_visita(
+    visita_id: str, fecha: str, operarios_ids: list, creado_por: str
+):
+    """Conecta el apartado Galp con la Planificacion de operarios: por cada
+    operario asignado a una visita (estacion + fecha), lo coloca en la
+    columna generica 'GALP' de la cuadricula ese dia (no una columna por
+    estacion). En su calendario el operario ve la estacion concreta a
+    traves de la propia visita; en la cuadricula solo se agrupa en GALP.
+
+    Idempotente: primero borra las asignaciones que generó ESTA visita y
+    luego crea las que correspondan al estado actual."""
+    await db.asignaciones.delete_many({"visita_id": visita_id})
+
+    if not operarios_ids:
+        return
+
+    await _asegurar_columna_galp()
+
+    now = datetime.now(timezone.utc)
+    for op_id in operarios_ids:
+        # No duplicar si ya existe una asignacion a GALP ese dia
+        ya = await db.asignaciones.find_one({
+            "operario_id": op_id,
+            "fecha": fecha,
+            "destino_libre": _COLUMNA_GALP_ETIQUETA,
+        })
+        if ya:
+            await db.asignaciones.update_one(
+                {"id": ya["id"]}, {"$set": {"visita_id": visita_id}}
+            )
+            continue
+        await db.asignaciones.insert_one({
+            "id": str(uuid.uuid4()),
+            "operario_id": op_id,
+            "fecha": fecha,
+            "destino_cliente_id": None,
+            "destino_centro_id": None,
+            "destino_libre": _COLUMNA_GALP_ETIQUETA,
+            "visita_id": visita_id,
+            "creado_por": creado_por,
+            "creado_en": now,
+            "actualizado_en": now,
+        })
+
+
 @api_router.post("/locations/{location_id}/visits", response_model=ClientLocationVisit)
 async def create_location_visit(
     location_id: str,
@@ -2817,6 +2889,9 @@ async def create_location_visit(
         "actualizado_en": now,
     }
     await db.client_location_visits.insert_one(doc)
+    await _sincronizar_asignaciones_visita(
+        doc["id"], doc.get("fecha"), doc.get("operarios_ids") or [], doc["creado_por"],
+    )
     return ClientLocationVisit(**doc)
 
 
@@ -2833,6 +2908,9 @@ async def update_location_visit(
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.client_location_visits.update_one({"id": visit_id}, {"$set": updates})
     doc = await db.client_location_visits.find_one({"id": visit_id})
+    await _sincronizar_asignaciones_visita(
+        doc["id"], doc.get("fecha"), doc.get("operarios_ids") or [], doc.get("creado_por") or "?",
+    )
     return ClientLocationVisit(**doc)
 
 
@@ -2842,7 +2920,49 @@ async def delete_location_visit(visit_id: str, _: dict = Depends(require_approve
     if not doc:
         raise HTTPException(status_code=404, detail="Visita no encontrada")
     await db.client_location_visits.delete_one({"id": visit_id})
+    await db.asignaciones.delete_many({"visita_id": visit_id})
     return {"ok": True}
+
+
+class EstacionAsignadaDia(BaseModel):
+    centro_id: str
+    nombre: str
+    direccion: Optional[str] = None
+    contacto: Optional[str] = None
+    maps_url: Optional[str] = None
+    notas: Optional[str] = None
+
+
+@api_router.get("/mis-estaciones-dia", response_model=List[EstacionAsignadaDia])
+async def mis_estaciones_dia(fecha: str, current_user: dict = Depends(require_approved)):
+    """Estaciones (centros) donde el operario tiene visita asignada en una
+    fecha, con sus datos de ubicacion y contacto. Alimenta el detalle de
+    'GALP' en el calendario del operario."""
+    uid = current_user["user_id"]
+    visitas = [
+        v async for v in db.client_location_visits.find(
+            {"fecha": fecha, "operarios_ids": uid}
+        )
+    ]
+    salida = []
+    vistos = set()
+    for v in visitas:
+        loc_id = v.get("client_location_id")
+        if not loc_id or loc_id in vistos:
+            continue
+        vistos.add(loc_id)
+        centro = await db.client_locations.find_one({"id": loc_id})
+        if not centro:
+            continue
+        salida.append(EstacionAsignadaDia(
+            centro_id=loc_id,
+            nombre=centro.get("nombre", "?"),
+            direccion=centro.get("direccion"),
+            contacto=centro.get("contacto"),
+            maps_url=centro.get("maps_url"),
+            notas=v.get("notas") or None,
+        ))
+    return salida
 
 
 
