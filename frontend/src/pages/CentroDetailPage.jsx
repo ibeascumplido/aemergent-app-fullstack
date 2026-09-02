@@ -110,6 +110,19 @@ const CentroDetailPage = () => {
             )}
           </div>
         </div>
+
+        {centro.maps_url && (
+          <a
+            href={centro.maps_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors"
+            data-testid="ver-ubicacion-btn"
+          >
+            <MapPin className="w-4 h-4" />
+            Ver ubicación en Google Maps
+          </a>
+        )}
       </div>
 
       <Tabs defaultValue="presupuestos" className="w-full">
