@@ -3496,6 +3496,7 @@ class CentroBase(BaseModel):
     nombre: str = Field(..., min_length=1, max_length=200)
     direccion: Optional[str] = Field(None, max_length=300)
     contacto: Optional[str] = Field("", max_length=300)
+    maps_url: Optional[str] = Field("", max_length=600)
     notas: Optional[str] = Field("", max_length=1000)
 
 
@@ -3507,6 +3508,7 @@ class CentroUpdate(BaseModel):
     nombre: Optional[str] = Field(None, min_length=1, max_length=200)
     direccion: Optional[str] = Field(None, max_length=300)
     contacto: Optional[str] = Field(None, max_length=300)
+    maps_url: Optional[str] = Field(None, max_length=600)
     notas: Optional[str] = Field(None, max_length=1000)
     activo: Optional[bool] = None
 
@@ -3581,6 +3583,73 @@ async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
         {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
     )
     return {"ok": True}
+
+
+def _normalizar_nombre_centro(txt: str) -> str:
+    """Normaliza un nombre de centro para poder emparejar el Excel con la
+    base de datos aunque cambien mayusculas, acentos o espacios."""
+    import unicodedata
+    if not txt:
+        return ""
+    t = unicodedata.normalize("NFKD", txt)
+    t = "".join(c for c in t if not unicodedata.combining(c))  # quitar acentos
+    t = t.lower()
+    # Colapsar cualquier separador/espacio y quitar puntuacion comun
+    for ch in [".", ",", "-", "_", "/", "\\", "(", ")", "\n", "\t"]:
+        t = t.replace(ch, " ")
+    t = " ".join(t.split())  # colapsar espacios
+    return t
+
+
+class UbicacionGalpItem(BaseModel):
+    nombre: str
+    maps_url: Optional[str] = ""
+    contacto: Optional[str] = ""
+
+
+class CargarUbicacionesPayload(BaseModel):
+    estaciones: List[UbicacionGalpItem]
+    sobrescribir_contacto: bool = False
+
+
+@api_router.post("/admin/centros/cargar-ubicaciones")
+async def cargar_ubicaciones_centros(
+    payload: CargarUbicacionesPayload, _: dict = Depends(require_admin)
+):
+    """TEMPORAL. Rellena el enlace de Google Maps (y opcionalmente el
+    contacto) de los centros, emparejando por NOMBRE normalizado. Devuelve
+    qué se emparejó y qué estaciones no encontraron centro."""
+    # Cargar todos los centros activos y hacer un índice por nombre normalizado
+    centros = [c async for c in db.client_locations.find({"activo": True})]
+    indice = {}
+    for c in centros:
+        indice.setdefault(_normalizar_nombre_centro(c.get("nombre", "")), []).append(c)
+
+    actualizados = []
+    no_encontrados = []
+    ambiguos = []
+    for est in payload.estaciones:
+        clave = _normalizar_nombre_centro(est.nombre)
+        candidatos = indice.get(clave, [])
+        if not candidatos:
+            no_encontrados.append(est.nombre)
+            continue
+        if len(candidatos) > 1:
+            ambiguos.append(est.nombre)
+            continue
+        centro = candidatos[0]
+        updates = {"maps_url": est.maps_url or "", "actualizado_en": datetime.now(timezone.utc)}
+        if est.contacto and (payload.sobrescribir_contacto or not centro.get("contacto")):
+            updates["contacto"] = est.contacto
+        await db.client_locations.update_one({"id": centro["id"]}, {"$set": updates})
+        actualizados.append(est.nombre)
+
+    return {
+        "actualizados": len(actualizados),
+        "no_encontrados": no_encontrados,
+        "ambiguos": ambiguos,
+        "detalle_actualizados": actualizados,
+    }
 
 
 # =====================================================================
