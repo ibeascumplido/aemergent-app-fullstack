@@ -408,13 +408,13 @@ const PlanificacionPage = () => {
           <table className="border-collapse text-xs min-w-max">
             <thead>
               <tr>
-                <th className="sticky left-0 top-0 z-20 bg-slate-50 border-b border-r border-slate-200 px-2 py-2 text-center font-medium text-slate-600 w-12">
+                <th className="sticky left-0 top-0 z-20 bg-slate-50 border-b-2 border-r-2 border-slate-300 px-2 py-2 text-center font-medium text-slate-600 w-12">
                   Día
                 </th>
                 {columnas.map((c) => (
                   <th
                     key={c.id}
-                    className="sticky top-0 z-10 border-b border-l border-slate-200 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group"
+                    className="sticky top-0 z-10 border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group"
                     style={{ backgroundColor: c.color_fondo || "#f8fafc" }}
                   >
                     <div className="flex items-center justify-center gap-1">
@@ -458,11 +458,18 @@ const PlanificacionPage = () => {
               {diasDelMes.map((fecha) => {
                 const numero = Number(fecha.split("-")[2]);
                 const esHoy = fecha === formatDateString(new Date());
+                const diaSem = new Date(fecha + "T00:00:00").getDay(); // 0=dom,6=sab
+                const esFinde = diaSem === 0 || diaSem === 6;
                 return (
-                  <tr key={fecha} className="odd:bg-white even:bg-slate-50/50">
+                  <tr
+                    key={fecha}
+                    className={`border-b border-slate-200 ${
+                      esHoy ? "bg-indigo-50/40" : esFinde ? "bg-slate-100/60" : "odd:bg-white even:bg-slate-50/40"
+                    }`}
+                  >
                     <td
-                      className={`sticky left-0 z-10 bg-inherit border-r border-slate-200 px-2 py-1 text-center ${
-                        esHoy ? "font-bold text-indigo-600" : "text-slate-500"
+                      className={`sticky left-0 z-10 bg-inherit border-r-2 border-slate-300 px-2 py-1 text-center ${
+                        esHoy ? "font-bold text-indigo-600" : esFinde ? "text-slate-400" : "text-slate-500"
                       }`}
                     >
                       {numero}
@@ -475,13 +482,13 @@ const PlanificacionPage = () => {
                       const activa =
                         panelAbierto?.fecha === fecha && panelAbierto?.columna?.id === c.id;
                       return (
-                        <td key={c.id} className="border-l border-slate-100 p-0">
+                        <td key={c.id} className="border-l border-slate-200 p-0">
                           <button
                             type="button"
                             onClick={(e) => abrirPanel(e, fecha, c)}
                             disabled={!isAdmin}
                             className={`w-full min-h-[30px] flex flex-wrap items-center justify-center gap-0.5 px-1 py-1 cursor-pointer disabled:cursor-default ${
-                              activa ? "bg-indigo-50" : "hover:bg-slate-50"
+                              activa ? "bg-indigo-100 ring-2 ring-inset ring-indigo-300" : "hover:bg-indigo-50/50"
                             }`}
                             data-testid={`celda-${c.id}-${fecha}`}
                           >
@@ -503,7 +510,7 @@ const PlanificacionPage = () => {
                         </td>
                       );
                     })}
-                    {isAdmin && <td className="border-l border-slate-100 bg-white" />}
+                    {isAdmin && <td className="border-l border-slate-200 bg-white" />}
                   </tr>
                 );
               })}
