@@ -304,7 +304,7 @@ const RejillaZonasPage = () => {
                 <span className="ml-2 text-slate-400">
                   ·{" "}
                   {(() => {
-                    if (parte.rejilla_tipo === "semanal") {
+                    if (parte.rejilla_tipo === "semanal" || parte.rejilla_tipo === "quincenal") {
                       const fmt = (iso) => {
                         const [y, m, d] = iso.split("-");
                         return `${Number(d)} ${MESES_ES[Number(m) - 1].slice(0, 3)}`;
