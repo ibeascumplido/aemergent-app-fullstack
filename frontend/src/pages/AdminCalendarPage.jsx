@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { estiloColorTextura, patronTextura } from "@/components/FichaColor";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -324,6 +325,9 @@ const AdminCalendarPage = () => {
                 }`}
                 style={{
                   backgroundColor: bgColor,
+                  ...(!isPendingV && !isRejectedV && v.user_textura && v.user_textura !== "solido"
+                    ? { backgroundImage: patronTextura(v.user_textura) }
+                    : {}),
                   ...(v.tipo === "libre" ? { outline: "2px solid #0f172a", outlineOffset: "1px" } : {}),
                 }}
                 title={`${v.user_name} - ${v.tipo === "vacacion" ? "Vacaciones" : "Día Libre"} (${v.status})`}
@@ -397,7 +401,7 @@ const AdminCalendarPage = () => {
                     <div className="flex items-center gap-2">
                       <div 
                         className="w-4 h-4 rounded"
-                        style={{ backgroundColor: u.color || "#3B82F6" }}
+                        style={estiloColorTextura(u.color, u.textura)}
                       />
                       {u.name}
                     </div>
@@ -453,7 +457,7 @@ const AdminCalendarPage = () => {
                 <div key={u.user_id} className="flex items-center gap-1.5">
                   <div
                     className="w-3 h-3 rounded-sm"
-                    style={{ backgroundColor: u.color || "#3B82F6" }}
+                    style={estiloColorTextura(u.color, u.textura)}
                   />
                   <span>{u.abreviatura || u.name?.slice(0, 3)} - {u.name}</span>
                 </div>
@@ -667,7 +671,7 @@ const AdminCalendarPage = () => {
                 <div className="flex items-center gap-3 mb-3">
                   <div
                     className="w-10 h-10 rounded flex items-center justify-center text-white font-bold"
-                    style={{ backgroundColor: selectedVacacion.user_color || "#3B82F6" }}
+                    style={estiloColorTextura(selectedVacacion.user_color, selectedVacacion.user_textura)}
                   >
                     {selectedVacacion.user_abreviatura || selectedVacacion.user_name?.slice(0, 2)}
                   </div>

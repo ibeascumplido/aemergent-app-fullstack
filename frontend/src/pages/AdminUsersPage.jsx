@@ -44,12 +44,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import axios from "axios";
+import FichaColor, { TEXTURAS, estiloColorTextura } from "@/components/FichaColor";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const PRESET_COLORS = [
   "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
   "#06B6D4", "#84CC16", "#F97316", "#6366F1", "#14B8A6", "#A855F7",
+  "#2563EB", "#DC2626", "#059669", "#D97706", "#7C3AED", "#DB2777",
+  "#0891B2", "#65A30D", "#EA580C", "#4F46E5", "#0D9488", "#9333EA",
+  "#1E40AF", "#991B1B", "#166534", "#92400E", "#5B21B6", "#9D174D",
+  "#155E75", "#3F6212", "#7C2D12", "#3730A3", "#115E59", "#6B21A8",
+  "#0EA5E9", "#F43F5E", "#22C55E", "#EAB308", "#A78BFA", "#F472B6",
+  "#64748B", "#78716C", "#1F2937", "#000000",
 ];
 
 const DIAS_AVISO_PREVIO = 30;
@@ -121,6 +128,7 @@ const AdminUsersPage = () => {
         dias_vacaciones: editingUser.dias_vacaciones,
         dias_libres: editingUser.dias_libres,
         color: editingUser.color,
+        textura: editingUser.textura || "solido",
         abreviatura: editingUser.abreviatura,
         puesto: editingUser.puesto || "",
       });
@@ -281,7 +289,7 @@ const AdminUsersPage = () => {
                         <div className="flex items-center gap-3">
                           <div
                             className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
-                            style={{ backgroundColor: user.color || "#3B82F6" }}
+                            style={estiloColorTextura(user.color, user.textura)}
                           >
                             {user.picture ? (
                               <img src={user.picture} alt="" className="w-10 h-10 rounded-full" />
@@ -493,9 +501,44 @@ const AdminUsersPage = () => {
                       className={`w-8 h-8 rounded-lg border-2 transition-all ${
                         editingUser.color === color ? "border-slate-900 scale-110" : "border-transparent"
                       }`}
-                      style={{ backgroundColor: color }}
+                      style={estiloColorTextura(color, editingUser.textura || "solido")}
+                      title={color}
                     />
                   ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Textura</Label>
+                <div className="flex flex-wrap gap-2">
+                  {TEXTURAS.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setEditingUser({ ...editingUser, textura: t.id })}
+                      className={`flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border-2 text-xs transition-all ${
+                        (editingUser.textura || "solido") === t.id
+                          ? "border-slate-900"
+                          : "border-slate-200 hover:border-slate-300"
+                      }`}
+                      title={t.label}
+                    >
+                      <span
+                        className="w-5 h-5 rounded border border-slate-300"
+                        style={estiloColorTextura(editingUser.color || "#3B82F6", t.id)}
+                      />
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-slate-400">Vista previa:</span>
+                  <FichaColor
+                    color={editingUser.color || "#3B82F6"}
+                    textura={editingUser.textura || "solido"}
+                    className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-white text-[9px] font-bold"
+                  >
+                    {editingUser.abreviatura || ""}
+                  </FichaColor>
                 </div>
               </div>
             </div>

@@ -36,6 +36,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { estiloColorTextura } from "@/components/FichaColor";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -499,7 +500,7 @@ const PlanificacionPage = () => {
                                 <span
                                   key={a.operario_id}
                                   className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
-                                  style={{ backgroundColor: op.color || "#3B82F6" }}
+                                  style={estiloColorTextura(op.color || "#3B82F6", op.textura)}
                                   title={op.name}
                                 >
                                   {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
