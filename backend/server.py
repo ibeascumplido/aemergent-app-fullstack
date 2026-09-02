@@ -266,6 +266,7 @@ class UserResponse(BaseModel):
     dias_vacaciones: int = 32
     dias_libres: int = 6
     color: str = "#3B82F6"
+    textura: str = "solido"  # solido | lunares | rayas | rayas_horiz | cuadros | diagonal_inv | puntos_grandes
     abreviatura: str = ""
     puesto: Optional[str] = Field(
         None, description="Cargo descriptivo (operario, encargado, gerente...), "
@@ -289,6 +290,7 @@ class UserUpdate(BaseModel):
     dias_vacaciones: Optional[int] = None
     dias_libres: Optional[int] = None
     color: Optional[str] = None
+    textura: Optional[str] = None
     abreviatura: Optional[str] = None
     puesto: Optional[str] = None
     fecha_ultima_revision_medica: Optional[str] = None
@@ -1215,6 +1217,7 @@ async def create_my_vacacion(request: Request, fecha: str, tipo: str = "vacacion
     # Add user info for response
     vacacion["user_name"] = user.get("name", "")
     vacacion["user_color"] = user.get("color", "#3B82F6")
+    vacacion["user_textura"] = user.get("textura", "solido")
     vacacion["user_abreviatura"] = user.get("abreviatura", "")
     
     return {"message": "Request created", "action": "created", "vacacion": vacacion}
@@ -1325,6 +1328,7 @@ async def get_all_vacaciones(request: Request, month: Optional[str] = None, year
         if user:
             v["user_name"] = user.get("name", "")
             v["user_color"] = user.get("color", "#3B82F6")
+            v["user_textura"] = user.get("textura", "solido")
             v["user_abreviatura"] = user.get("abreviatura", "")
             v["user_email"] = user.get("email", "")
     
@@ -1349,6 +1353,7 @@ async def get_pending_vacaciones(request: Request):
         if user:
             v["user_name"] = user.get("name", "")
             v["user_color"] = user.get("color", "#3B82F6")
+            v["user_textura"] = user.get("textura", "solido")
             v["user_abreviatura"] = user.get("abreviatura", "")
             v["user_email"] = user.get("email", "")
     
@@ -1562,6 +1567,7 @@ async def get_all_resumen(request: Request, year: Optional[int] = None):
             "email": user.get("email", ""),
             "abreviatura": user.get("abreviatura", ""),
             "color": user.get("color", "#3B82F6"),
+            "textura": user.get("textura", "solido"),
             # Vacaciones
             "dias_disponibles": dias_vacaciones_disponibles,
             "dias_aprobados": vacaciones_approved,
@@ -3011,7 +3017,7 @@ async def list_operarios(_: dict = Depends(require_approved)):
     y hay que poder asignarlo (ej. en la Planificacion de equipo)."""
     cursor = db.users.find(
         {"role": {"$in": [UserRole.USER, UserRole.ADMIN]}, "status": UserStatus.APPROVED},
-        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "color": 1, "abreviatura": 1},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "color": 1, "textura": 1, "abreviatura": 1},
     ).sort("name", 1)
     return await cursor.to_list(1000)
 
