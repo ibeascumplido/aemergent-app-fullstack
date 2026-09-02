@@ -3602,6 +3602,7 @@ class TareaCentroCreate(BaseModel):
     )
     descripcion: str = Field(..., min_length=1, max_length=500)
     prioridad: int = Field(3, ge=1, le=5, description="1 (baja) a 5 (maxima)")
+    foto: Optional[str] = Field(None, description="Data-URI base64 opcional al proponer")
 
 
 class TareaCentroUpdate(BaseModel):
@@ -3834,6 +3835,15 @@ async def crear_tarea_centro(
     es_admin = current_user.get("role") == UserRole.ADMIN
     now = datetime.now(timezone.utc)
     estado = "activa" if es_admin else "pendiente_aprobacion"
+
+    # Foto opcional adjunta al proponer la tarea
+    foto_url = None
+    foto_public_id = None
+    if payload.foto:
+        if not _es_logo_base64(payload.foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        foto_url, foto_public_id = await _subir_logo_cloudinary(payload.foto)
+
     doc = {
         "id": str(uuid.uuid4()),
         "client_id": payload.client_id,
@@ -3848,8 +3858,8 @@ async def crear_tarea_centro(
         "marcada_por": None,
         "marcada_por_nombre": None,
         "marcada_en": None,
-        "foto_url": None,
-        "foto_public_id": None,
+        "foto_url": foto_url,
+        "foto_public_id": foto_public_id,
         "creado_por": current_user["user_id"],
         "creado_por_nombre": usuario["name"] if usuario else "?",
         "creado_en": now,
