@@ -11,6 +11,7 @@ import {
   Calendar as CalendarIcon,
   Filter,
   Trash2,
+  Plus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,16 @@ const AdminCalendarPage = () => {
   const [showActionModal, setShowActionModal] = useState(false);
   const [rejectComment, setRejectComment] = useState("");
   const [pendingCount, setPendingCount] = useState(0);
+
+  // Asignar vacaciones directamente (admin)
+  const [asignarOpen, setAsignarOpen] = useState(false);
+  const [asignarOperario, setAsignarOperario] = useState("");
+  const [asignarTipo, setAsignarTipo] = useState("vacacion");
+  const [asignarModo, setAsignarModo] = useState("rango"); // "rango" o "sueltos"
+  const [asignarDesde, setAsignarDesde] = useState("");
+  const [asignarHasta, setAsignarHasta] = useState("");
+  const [asignarFechasSueltas, setAsignarFechasSueltas] = useState("");
+  const [asignando, setAsignando] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [borrando, setBorrando] = useState(false);
 
@@ -349,6 +360,49 @@ const AdminCalendarPage = () => {
     );
   }
 
+  const asignarVacaciones = async () => {
+    if (!asignarOperario) {
+      toast.error("Elige un operario");
+      return;
+    }
+    const payload = { operario_id: asignarOperario, tipo: asignarTipo };
+    if (asignarModo === "rango") {
+      if (!asignarDesde || !asignarHasta) {
+        toast.error("Indica las fechas de inicio y fin");
+        return;
+      }
+      payload.desde = asignarDesde;
+      payload.hasta = asignarHasta;
+    } else {
+      const fechas = asignarFechasSueltas
+        .split(/[\s,]+/)
+        .map((f) => f.trim())
+        .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f));
+      if (fechas.length === 0) {
+        toast.error("Escribe al menos una fecha válida (AAAA-MM-DD)");
+        return;
+      }
+      payload.fechas = fechas;
+    }
+    setAsignando(true);
+    try {
+      const res = await axios.post(`${API}/admin/vacaciones/asignar`, payload);
+      toast.success(`${res.data.dias_asignados} día(s) asignado(s)`);
+      setAsignarOpen(false);
+      setAsignarOperario("");
+      setAsignarDesde("");
+      setAsignarHasta("");
+      setAsignarFechasSueltas("");
+      fetchVacaciones();
+      fetchResumen();
+    } catch (err) {
+      console.error("Error asignando vacaciones:", err);
+      toast.error(err?.response?.data?.detail || "No se pudieron asignar");
+    } finally {
+      setAsignando(false);
+    }
+  };
+
   return (
     <div data-testid="admin-calendar-page">
       <div className="flex items-center justify-between mb-6">
@@ -357,6 +411,14 @@ const AdminCalendarPage = () => {
           <p className="text-slate-500 mt-1">Gestiona las solicitudes de vacaciones</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button
+            onClick={() => setAsignarOpen(true)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            data-testid="asignar-vacaciones-btn"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Asignar vacaciones
+          </Button>
           {pendingCount > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-100 text-amber-800 rounded-lg">
               <Clock className="w-4 h-4" />
@@ -812,6 +874,139 @@ const AdminCalendarPage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Diálogo: asignar vacaciones directamente */}
+      <Dialog open={asignarOpen} onOpenChange={(v) => !asignando && setAsignarOpen(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Asignar vacaciones o días libres</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Operario</Label>
+              <select
+                value={asignarOperario}
+                onChange={(e) => setAsignarOperario(e.target.value)}
+                className="w-full h-10 rounded-md border border-slate-200 px-3 text-sm bg-white"
+                data-testid="asignar-operario-select"
+              >
+                <option value="">Elige un operario...</option>
+                {users.map((u) => (
+                  <option key={u.user_id} value={u.user_id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Tipo</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAsignarTipo("vacacion")}
+                  className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                    asignarTipo === "vacacion"
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                      : "bg-white border-slate-200 text-slate-500"
+                  }`}
+                >
+                  Vacaciones
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAsignarTipo("libre")}
+                  className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                    asignarTipo === "libre"
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                      : "bg-white border-slate-200 text-slate-500"
+                  }`}
+                >
+                  Día libre
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>¿Cómo?</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAsignarModo("rango")}
+                  className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                    asignarModo === "rango"
+                      ? "bg-slate-800 border-slate-800 text-white"
+                      : "bg-white border-slate-200 text-slate-500"
+                  }`}
+                >
+                  Rango de fechas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAsignarModo("sueltos")}
+                  className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${
+                    asignarModo === "sueltos"
+                      ? "bg-slate-800 border-slate-800 text-white"
+                      : "bg-white border-slate-200 text-slate-500"
+                  }`}
+                >
+                  Días sueltos
+                </button>
+              </div>
+            </div>
+
+            {asignarModo === "rango" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Desde</Label>
+                  <Input
+                    type="date"
+                    value={asignarDesde}
+                    onChange={(e) => setAsignarDesde(e.target.value)}
+                    data-testid="asignar-desde"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Hasta</Label>
+                  <Input
+                    type="date"
+                    value={asignarHasta}
+                    onChange={(e) => setAsignarHasta(e.target.value)}
+                    data-testid="asignar-hasta"
+                  />
+                </div>
+                <p className="col-span-2 text-xs text-slate-400">
+                  En un rango se omiten los fines de semana automáticamente.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Fechas (AAAA-MM-DD, separadas por coma o espacio)</Label>
+                <Textarea
+                  value={asignarFechasSueltas}
+                  onChange={(e) => setAsignarFechasSueltas(e.target.value)}
+                  placeholder="2026-08-15, 2026-08-22, 2026-09-01"
+                  rows={2}
+                  data-testid="asignar-fechas-sueltas"
+                />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAsignarOpen(false)} disabled={asignando}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={asignarVacaciones}
+              disabled={asignando}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="asignar-confirmar-btn"
+            >
+              {asignando ? "Asignando..." : "Asignar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
