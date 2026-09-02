@@ -57,6 +57,7 @@ const TareasHoyWidget = () => {
   const [catalogo, setCatalogo] = useState([]);
   const [tareaCatalogoSel, setTareaCatalogoSel] = useState("libre");
   const [zonaTexto, setZonaTexto] = useState("");
+  const [fotoPropuesta, setFotoPropuesta] = useState(null);
 
   const [dialogFotoTareaId, setDialogFotoTareaId] = useState(null);
   const [fotoDataUrl, setFotoDataUrl] = useState(null);
@@ -108,7 +109,21 @@ const TareasHoyWidget = () => {
     setCentros([]);
     setTareaCatalogoSel("libre");
     setZonaTexto("");
+    setFotoPropuesta(null);
     setDialogOpen(true);
+  };
+
+  const onFotoPropuesta = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Sube una imagen");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setFotoPropuesta(reader.result);
+    reader.readAsDataURL(file);
   };
 
   const crear = async () => {
@@ -138,6 +153,7 @@ const TareasHoyWidget = () => {
         centro_id: centroSel || null,
         descripcion: texto,
         prioridad: Number(prioridad),
+        foto: fotoPropuesta || null,
       });
       toast.success("Tarea propuesta. El administrador la revisará.");
       setDialogOpen(false);
@@ -369,6 +385,32 @@ const TareasHoyWidget = () => {
                 placeholder="Ej. junto a los cipreses de la entrada"
                 data-testid="zona-tarea-hoy-input"
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Foto (opcional)</Label>
+              {fotoPropuesta ? (
+                <div className="relative inline-block">
+                  <img
+                    src={fotoPropuesta}
+                    alt=""
+                    className="w-24 h-24 rounded-lg object-cover border border-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFotoPropuesta(null)}
+                    className="absolute -top-2 -right-2 bg-white rounded-full border border-slate-200 p-0.5 text-slate-500"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                  <Camera className="w-4 h-4" />
+                  Añadir foto
+                  <input type="file" accept="image/*" onChange={onFotoPropuesta} className="hidden" />
+                </label>
+              )}
             </div>
 
             <div className="space-y-1.5">
