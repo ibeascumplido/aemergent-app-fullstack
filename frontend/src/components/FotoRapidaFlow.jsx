@@ -54,6 +54,8 @@ const FotoRapidaFlow = () => {
   const [antesDespues, setAntesDespues] = useState("none");
   const [fecha, setFecha] = useState(hoyISO());
   const [clienteId, setClienteId] = useState("none");
+  const [centros, setCentros] = useState([]);
+  const [centroId, setCentroId] = useState("none");
   const [enviando, setEnviando] = useState(false);
 
   // Grabacion de audio
@@ -73,6 +75,22 @@ const FotoRapidaFlow = () => {
       .then((res) => setClientes(res.data))
       .catch(() => setClientes([]));
   }, [paso]);
+
+  // Al elegir cliente, cargar sus centros
+  useEffect(() => {
+    if (!clienteId || clienteId === "none") {
+      setCentros([]);
+      setCentroId("none");
+      return;
+    }
+    const cliente = clientes.find((c) => c.id === clienteId);
+    if (!cliente?.slug) return;
+    axios
+      .get(`${API}/clients/${cliente.slug}/centros`)
+      .then((res) => setCentros(res.data || []))
+      .catch(() => setCentros([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clienteId]);
 
   const iniciarSesion = () => {
     const nuevo = generarLoteId();
@@ -181,6 +199,7 @@ const FotoRapidaFlow = () => {
         antes_despues: antesDespues === "none" ? null : antesDespues,
         fecha: fecha || null,
         client_id: clienteId === "none" ? null : clienteId,
+        centro_id: centroId === "none" ? null : centroId,
         audio: audioDataUrl,
       };
       await axios.put(`${API}/fotos/lote/${loteId}/clasificar`, payload);
@@ -356,6 +375,25 @@ const FotoRapidaFlow = () => {
               </SelectContent>
             </Select>
           </div>
+
+          {clienteId !== "none" && centros.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Centro (opcional)</Label>
+              <Select value={centroId} onValueChange={setCentroId}>
+                <SelectTrigger data-testid="foto-centro-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin centro concreto</SelectItem>
+                  {centros.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Nota de voz (opcional)</Label>
