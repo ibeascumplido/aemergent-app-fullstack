@@ -328,12 +328,14 @@ const FotoLoteDetallePage = () => {
         )
       )}
 
-      <div>
-        <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
-          Conversación
-        </p>
-        <ComentariosLote loteId={loteId} />
-      </div>
+      {isAdmin && (
+        <div>
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-2">
+            Conversación
+          </p>
+          <ComentariosLote loteId={loteId} />
+        </div>
+      )}
     </div>
   );
 };
