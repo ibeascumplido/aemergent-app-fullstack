@@ -3707,6 +3707,128 @@ async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# --- Guia de trabajo del centro ------------------------------------------
+# Elementos (foto o PDF) con titulo de zona y descripcion de como trabajar
+# en ella. Los ven todos los operarios; solo el admin los gestiona.
+
+class GuiaTrabajoItem(BaseModel):
+    id: str
+    centro_id: str
+    tipo: str  # "imagen" | "pdf"
+    url: str
+    public_id: Optional[str] = None
+    zona: Optional[str] = None
+    descripcion: Optional[str] = None
+    orden: int = 0
+    creado_en: datetime
+
+
+class GuiaTrabajoCrear(BaseModel):
+    zona: Optional[str] = Field("", max_length=200)
+    descripcion: Optional[str] = Field("", max_length=2000)
+    archivo: Optional[str] = None  # data-URI base64 (imagen o PDF)
+    foto_id: Optional[str] = None  # o reutilizar una foto ya existente
+
+
+class GuiaTrabajoEditar(BaseModel):
+    zona: Optional[str] = Field(None, max_length=200)
+    descripcion: Optional[str] = Field(None, max_length=2000)
+
+
+@api_router.get("/centros/{centro_id}/guia", response_model=List[GuiaTrabajoItem])
+async def list_guia_trabajo(centro_id: str, _: dict = Depends(require_approved)):
+    cursor = db.guia_trabajo.find({"centro_id": centro_id, "activo": {"$ne": False}}).sort(
+        [("orden", 1), ("creado_en", 1)]
+    )
+    return [GuiaTrabajoItem(**g) async for g in cursor]
+
+
+@api_router.post("/centros/{centro_id}/guia", response_model=GuiaTrabajoItem)
+async def crear_guia_trabajo(
+    centro_id: str, payload: GuiaTrabajoCrear, _: dict = Depends(require_admin)
+):
+    centro = await db.client_locations.find_one({"id": centro_id})
+    if not centro:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+
+    tipo = "imagen"
+    url = None
+    public_id = None
+
+    if payload.foto_id:
+        # Reutilizar una foto existente del archivo
+        foto = await db.fotos.find_one({"id": payload.foto_id})
+        if not foto:
+            raise HTTPException(status_code=404, detail="Foto no encontrada")
+        url = foto.get("url")
+        public_id = None  # la foto original conserva su public_id; no lo tocamos
+        tipo = "imagen"
+    elif payload.archivo:
+        # Subir imagen o PDF nuevo
+        base_tipo = _tipo_documento_base64(payload.archivo)
+        if base_tipo == "pdf":
+            tipo = "pdf"
+        else:
+            tipo = "imagen"
+        url, public_id = await _subir_documento_cloudinary(payload.archivo, "inicia-gestion/guias")
+    else:
+        raise HTTPException(status_code=400, detail="Falta el archivo o la foto")
+
+    # Orden: al final
+    ultimo = await db.guia_trabajo.find_one(
+        {"centro_id": centro_id}, sort=[("orden", -1)]
+    )
+    orden = (ultimo["orden"] + 1) if ultimo else 0
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "centro_id": centro_id,
+        "tipo": tipo,
+        "url": url,
+        "public_id": public_id,
+        "zona": (payload.zona or "").strip(),
+        "descripcion": (payload.descripcion or "").strip(),
+        "orden": orden,
+        "activo": True,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    await db.guia_trabajo.insert_one(doc)
+    return GuiaTrabajoItem(**doc)
+
+
+@api_router.put("/centros/{centro_id}/guia/{item_id}", response_model=GuiaTrabajoItem)
+async def editar_guia_trabajo(
+    centro_id: str, item_id: str, payload: GuiaTrabajoEditar, _: dict = Depends(require_admin)
+):
+    doc = await db.guia_trabajo.find_one({"id": item_id, "centro_id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Elemento no encontrado")
+    updates = {}
+    if payload.zona is not None:
+        updates["zona"] = payload.zona.strip()
+    if payload.descripcion is not None:
+        updates["descripcion"] = payload.descripcion.strip()
+    if updates:
+        await db.guia_trabajo.update_one({"id": item_id}, {"$set": updates})
+    doc = await db.guia_trabajo.find_one({"id": item_id})
+    return GuiaTrabajoItem(**doc)
+
+
+@api_router.delete("/centros/{centro_id}/guia/{item_id}")
+async def borrar_guia_trabajo(
+    centro_id: str, item_id: str, _: dict = Depends(require_admin)
+):
+    doc = await db.guia_trabajo.find_one({"id": item_id, "centro_id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Elemento no encontrado")
+    # Si tiene archivo propio en Cloudinary (no una foto reutilizada), borrarlo
+    if doc.get("public_id"):
+        resource = "raw" if doc.get("tipo") == "pdf" else "image"
+        await _borrar_documento_cloudinary(doc["public_id"], resource)
+    await db.guia_trabajo.delete_one({"id": item_id})
+    return {"ok": True}
+
+
 def _normalizar_nombre_centro(txt: str) -> str:
     """Normaliza un nombre de centro para poder emparejar por nombre aunque
     cambien mayusculas, acentos o espacios."""
