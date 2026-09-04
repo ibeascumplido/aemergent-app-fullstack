@@ -3647,6 +3647,26 @@ async def marcar_foto_revisada(foto_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+class AnotacionFotoPayload(BaseModel):
+    anotacion: str = Field("", max_length=2000)
+
+
+@api_router.put("/fotos/{foto_id}/anotacion", response_model=Foto)
+async def editar_anotacion_foto(
+    foto_id: str, payload: AnotacionFotoPayload, _: dict = Depends(require_admin)
+):
+    """Edita (o borra, con texto vacío) la anotación de una foto ya
+    archivada, sin tocar el resto de su clasificación."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await db.fotos.update_one(
+        {"id": foto_id}, {"$set": {"anotacion": payload.anotacion.strip()}}
+    )
+    doc = await db.fotos.find_one({"id": foto_id})
+    return Foto(**doc)
+
+
 # =====================================================================
 # CENTROS DE TRABAJO (Fase 9 parte 5)
 # ---------------------------------------------------------------------
