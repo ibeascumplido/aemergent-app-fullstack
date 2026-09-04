@@ -3459,6 +3459,8 @@ async def clasificar_lote(
     if payload.client_id is not None:
         updates["client_id"] = payload.client_id
         updates["clasificado_en"] = datetime.now(timezone.utc)
+    if payload.centro_id is not None:
+        updates["centro_id"] = payload.centro_id
     if payload.work_order_id is not None:
         if current_user.get("role") != UserRole.ADMIN:
             raise HTTPException(
