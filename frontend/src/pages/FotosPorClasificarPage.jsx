@@ -32,24 +32,32 @@ const FotosPorClasificarPage = () => {
   const [fotos, setFotos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pestana, setPestana] = useState("pendientes"); // "pendientes" | "clasificadas"
 
   const [fotoActiva, setFotoActiva] = useState(null);
   const [clienteSel, setClienteSel] = useState("");
+  const [centros, setCentros] = useState([]);
+  const [centroSel, setCentroSel] = useState("none");
   const [workOrders, setWorkOrders] = useState([]);
   const [woSel, setWoSel] = useState("none");
   const [gruposExpandidos, setGruposExpandidos] = useState(new Set());
   const [guardando, setGuardando] = useState(false);
 
   const cargar = async () => {
+    setLoading(true);
     try {
+      const params =
+        pestana === "clasificadas"
+          ? { clasificadas_por_operario: true }
+          : { solo_sin_clasificar: true };
       const [fotosRes, clientesRes] = await Promise.all([
-        axios.get(`${API}/fotos`, { params: { solo_sin_clasificar: true } }),
+        axios.get(`${API}/fotos`, { params }),
         axios.get(`${API}/clients`),
       ]);
       setFotos(fotosRes.data);
       setClientes(clientesRes.data);
     } catch (err) {
-      console.error("Error cargando fotos sin clasificar:", err);
+      console.error("Error cargando fotos:", err);
     } finally {
       setLoading(false);
     }
@@ -57,11 +65,13 @@ const FotosPorClasificarPage = () => {
 
   useEffect(() => {
     cargar();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pestana]);
 
   const abrirClasificar = (foto) => {
     setFotoActiva(foto);
     setClienteSel(foto.client_id || "");
+    setCentroSel(foto.centro_id || "none");
     setWoSel("none");
     setWorkOrders([]);
   };
@@ -69,6 +79,7 @@ const FotosPorClasificarPage = () => {
   useEffect(() => {
     if (!clienteSel) {
       setWorkOrders([]);
+      setCentros([]);
       return;
     }
     const cliente = clientes.find((c) => c.id === clienteSel);
@@ -77,6 +88,10 @@ const FotosPorClasificarPage = () => {
       .get(`${API}/clients/${cliente.slug}/work-orders`)
       .then((res) => setWorkOrders(res.data))
       .catch(() => setWorkOrders([]));
+    axios
+      .get(`${API}/clients/${cliente.slug}/centros`)
+      .then((res) => setCentros(res.data || []))
+      .catch(() => setCentros([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clienteSel]);
 
@@ -89,6 +104,7 @@ const FotosPorClasificarPage = () => {
     try {
       await axios.put(`${API}/fotos/${fotoActiva.id}/clasificar`, {
         client_id: clienteSel,
+        centro_id: centroSel === "none" ? null : centroSel,
         work_order_id: woSel === "none" ? null : woSel,
       });
       toast.success("Foto clasificada");
@@ -99,6 +115,18 @@ const FotosPorClasificarPage = () => {
       toast.error("Error al clasificar la foto");
     } finally {
       setGuardando(false);
+    }
+  };
+
+  const marcarRevisada = async (e, fotoId) => {
+    e.stopPropagation();
+    try {
+      await axios.put(`${API}/fotos/${fotoId}/marcar-revisada`);
+      toast.success("Revisada. Sigue archivada en su centro.");
+      setFotos((prev) => prev.filter((f) => f.id !== fotoId));
+    } catch (err) {
+      console.error("Error marcando revisada:", err);
+      toast.error("No se pudo marcar");
     }
   };
 
@@ -139,9 +167,36 @@ const FotosPorClasificarPage = () => {
             Fotos por clasificar
           </h1>
           <p className="text-sm text-slate-500">
-            {loading ? "Cargando..." : `${fotos.length} ${fotos.length === 1 ? "foto" : "fotos"} pendientes`}
+            {loading ? "Cargando..." : `${fotos.length} ${fotos.length === 1 ? "foto" : "fotos"}`}
           </p>
         </div>
+      </div>
+
+      <div className="flex gap-2 mb-5">
+        <button
+          type="button"
+          onClick={() => setPestana("pendientes")}
+          className={`px-4 py-2 rounded-lg text-sm border transition-colors ${
+            pestana === "pendientes"
+              ? "bg-slate-800 text-white border-slate-800"
+              : "bg-white text-slate-500 border-slate-200"
+          }`}
+          data-testid="tab-pendientes"
+        >
+          Pendientes
+        </button>
+        <button
+          type="button"
+          onClick={() => setPestana("clasificadas")}
+          className={`px-4 py-2 rounded-lg text-sm border transition-colors ${
+            pestana === "clasificadas"
+              ? "bg-slate-800 text-white border-slate-800"
+              : "bg-white text-slate-500 border-slate-200"
+          }`}
+          data-testid="tab-clasificadas"
+        >
+          Clasificadas por operarios
+        </button>
       </div>
 
       {loading ? (
@@ -149,7 +204,9 @@ const FotosPorClasificarPage = () => {
       ) : fotos.length === 0 ? (
         <Card className="border-slate-100">
           <CardContent className="p-8 text-center text-slate-400">
-            No hay fotos pendientes de clasificar. 🎉
+            {pestana === "pendientes"
+              ? "No hay fotos pendientes de clasificar. 🎉"
+              : "No hay fotos clasificadas por operarios pendientes de revisar."}
           </CardContent>
         </Card>
       ) : (
@@ -180,6 +237,23 @@ const FotosPorClasificarPage = () => {
                     </p>
                   )}
                 </div>
+                {pestana === "clasificadas" && (
+                  <div className="flex items-center justify-between gap-2 mb-2 bg-emerald-50 rounded-lg px-2 py-1.5">
+                    <p className="text-xs text-emerald-700 min-w-0 truncate">
+                      Clasificada por el operario
+                      {primera.client_nombre ? ` · ${primera.client_nombre}` : ""}
+                      {primera.centro_nombre ? ` · ${primera.centro_nombre}` : ""}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => marcarRevisada(e, primera.id)}
+                      className="text-xs font-medium text-emerald-700 hover:text-emerald-900 shrink-0"
+                      data-testid={`revisar-${primera.id}`}
+                    >
+                      Vista ✓
+                    </button>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1.5">
                   {visibles.map((f) => (
                     <div key={f.id} className="group">
@@ -263,7 +337,7 @@ const FotosPorClasificarPage = () => {
               )}
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-500">Cliente</label>
-                <Select value={clienteSel} onValueChange={setClienteSel}>
+                <Select value={clienteSel} onValueChange={(v) => { setClienteSel(v); setCentroSel("none"); }}>
                   <SelectTrigger data-testid="foto-cliente-select">
                     <SelectValue placeholder="Selecciona..." />
                   </SelectTrigger>
@@ -276,6 +350,24 @@ const FotosPorClasificarPage = () => {
                   </SelectContent>
                 </Select>
               </div>
+              {clienteSel && centros.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-500">Centro (opcional)</label>
+                  <Select value={centroSel} onValueChange={setCentroSel}>
+                    <SelectTrigger data-testid="foto-centro-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin centro concreto</SelectItem>
+                      {centros.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {clienteSel && (
                 <div className="space-y-1.5">
                   <label className="text-xs text-slate-500">Parte de trabajo (opcional)</label>
