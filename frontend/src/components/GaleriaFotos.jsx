@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Camera, Trash2, X } from "lucide-react";
+import { Camera, Trash2, X, FileText } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -141,6 +141,14 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
         data-testid={`foto-${f.id}`}
       >
         <img src={f.url} alt="" className="w-full h-full object-cover" />
+        {f.anotacion && (
+          <span
+            className="absolute top-1 left-1 bg-indigo-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px]"
+            title="Tiene anotación"
+          >
+            <FileText className="w-3 h-3" />
+          </span>
+        )}
         <div className="absolute bottom-1 left-1 right-1 flex items-center gap-1 flex-wrap">
           {f.antes_despues && (
             <span
@@ -342,6 +350,11 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
                 </span>
               )}
             </div>
+            {fotoAmpliada.anotacion && (
+              <p className="text-sm text-white bg-white/10 rounded-lg px-3 py-2 max-w-lg text-center whitespace-pre-wrap">
+                {fotoAmpliada.anotacion}
+              </p>
+            )}
           </div>
         </div>
       )}

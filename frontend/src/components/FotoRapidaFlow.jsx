@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import DashboardTileVisual from "@/components/DashboardTileVisual";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -56,6 +57,7 @@ const FotoRapidaFlow = () => {
   const [clienteId, setClienteId] = useState("none");
   const [centros, setCentros] = useState([]);
   const [centroId, setCentroId] = useState("none");
+  const [anotacion, setAnotacion] = useState("");
   const [enviando, setEnviando] = useState(false);
 
   // Grabacion de audio
@@ -200,6 +202,7 @@ const FotoRapidaFlow = () => {
         fecha: fecha || null,
         client_id: clienteId === "none" ? null : clienteId,
         centro_id: centroId === "none" ? null : centroId,
+        anotacion: anotacion.trim() || null,
         audio: audioDataUrl,
       };
       await axios.put(`${API}/fotos/lote/${loteId}/clasificar`, payload);
@@ -394,6 +397,17 @@ const FotoRapidaFlow = () => {
               </Select>
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <Label>Anotación (opcional)</Label>
+            <Textarea
+              value={anotacion}
+              onChange={(e) => setAnotacion(e.target.value)}
+              rows={2}
+              placeholder="Ej. Jardinera sin drenaje, regar poco"
+              data-testid="foto-anotacion-input"
+            />
+          </div>
 
           <div className="space-y-1.5">
             <Label>Nota de voz (opcional)</Label>
