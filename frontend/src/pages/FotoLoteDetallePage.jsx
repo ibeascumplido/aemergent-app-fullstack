@@ -153,7 +153,7 @@ const FotoLoteDetallePage = () => {
     <div data-testid="foto-lote-detalle-page">
       <Button
         variant="ghost"
-        onClick={() => navigate(isAdmin ? "/fotos-por-clasificar" : "/mis-fotos")}
+        onClick={() => navigate(-1)}
         className="mb-4 -ml-3"
         size="sm"
       >
