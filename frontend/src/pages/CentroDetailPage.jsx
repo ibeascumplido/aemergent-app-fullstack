@@ -10,12 +10,14 @@ import {
   AlertTriangle,
   ClipboardList,
   Camera,
+  BookOpen,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import IncidenciasCliente from "@/components/IncidenciasCliente";
+import GuiaTrabajo from "@/components/GuiaTrabajo";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -140,6 +142,9 @@ const CentroDetailPage = () => {
             <TabsTrigger value="fotos" className="gap-1.5" data-testid="tab-c-fotos">
               <Camera className="w-3.5 h-3.5" /> Fotos
             </TabsTrigger>
+            <TabsTrigger value="guia" className="gap-1.5" data-testid="tab-c-guia">
+              <BookOpen className="w-3.5 h-3.5" /> Guía de trabajo
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -224,6 +229,14 @@ const CentroDetailPage = () => {
         {/* Fotos */}
         <TabsContent value="fotos" className="mt-0">
           <GaleriaFotos clientId={centro.client_id} centroId={centroId} titulo="Fotografías" />
+        </TabsContent>
+
+        <TabsContent value="guia" className="mt-0">
+          <Card className="border-slate-100 shadow-sm">
+            <CardContent className="p-6">
+              <GuiaTrabajo centroId={centroId} />
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
