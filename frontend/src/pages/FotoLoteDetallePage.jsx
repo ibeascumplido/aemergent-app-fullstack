@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { ArrowLeft, Camera } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -38,6 +40,24 @@ const FotoLoteDetallePage = () => {
   const [centroSel, setCentroSel] = useState("none");
   const [woSel, setWoSel] = useState("none");
   const [guardando, setGuardando] = useState(false);
+  const [anotaciones, setAnotaciones] = useState({}); // { fotoId: texto } ediciones en curso
+  const [guardandoAnot, setGuardandoAnot] = useState(null); // fotoId que se guarda
+  const [fotoAmpliada, setFotoAmpliada] = useState(null);
+
+  const guardarAnotacionFoto = async (fotoId) => {
+    setGuardandoAnot(fotoId);
+    try {
+      const texto = anotaciones[fotoId] ?? (fotos.find((f) => f.id === fotoId)?.anotacion ?? "");
+      await axios.put(`${API}/fotos/${fotoId}/anotacion`, { anotacion: texto });
+      setFotos((prev) => prev.map((f) => (f.id === fotoId ? { ...f, anotacion: texto.trim() } : f)));
+      toast.success("Anotación guardada");
+    } catch (err) {
+      console.error("Error guardando anotación:", err);
+      toast.error("No se pudo guardar");
+    } finally {
+      setGuardandoAnot(null);
+    }
+  };
 
   const cargar = async () => {
     try {
@@ -153,26 +173,74 @@ const FotoLoteDetallePage = () => {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="space-y-3 mb-4">
         {fotos.map((f) => (
-          <div key={f.id} className="relative">
-            <img
-              src={f.url}
-              alt=""
-              className="w-24 h-24 rounded-lg object-cover border border-slate-200"
-            />
-            {f.antes_despues && (
-              <span
-                className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
-                  f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-                }`}
+          <div key={f.id} className="rounded-xl border border-slate-100 p-3">
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setFotoAmpliada(f.url)}
+                className="relative shrink-0"
               >
-                {f.antes_despues === "antes" ? "Antes" : "Después"}
-              </span>
-            )}
+                <img
+                  src={f.url}
+                  alt=""
+                  className="w-28 h-28 rounded-lg object-cover border border-slate-200"
+                />
+                {f.antes_despues && (
+                  <span
+                    className={`absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded text-white ${
+                      f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
+                    }`}
+                  >
+                    {f.antes_despues === "antes" ? "Antes" : "Después"}
+                  </span>
+                )}
+              </button>
+              <div className="flex-1 min-w-0">
+                <Label className="text-xs text-slate-500">Anotación</Label>
+                <Textarea
+                  value={anotaciones[f.id] ?? f.anotacion ?? ""}
+                  onChange={(e) =>
+                    setAnotaciones((prev) => ({ ...prev, [f.id]: e.target.value }))
+                  }
+                  rows={2}
+                  placeholder="Escribe una anotación para esta foto..."
+                  className="mt-1"
+                  data-testid={`anotacion-foto-${f.id}`}
+                />
+                {isAdmin && (
+                  <div className="flex justify-end mt-1.5">
+                    <Button
+                      size="sm"
+                      onClick={() => guardarAnotacionFoto(f.id)}
+                      disabled={guardandoAnot === f.id}
+                      className="h-8 bg-indigo-600 hover:bg-indigo-700 text-white"
+                      data-testid={`guardar-anotacion-${f.id}`}
+                    >
+                      {guardandoAnot === f.id ? "Guardando..." : "Guardar anotación"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         ))}
       </div>
+
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setFotoAmpliada(null)}
+        >
+          <img
+            src={fotoAmpliada}
+            alt=""
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
 
       {primera.fecha && (
         <p className="text-xs text-slate-400 mb-4">
