@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Trash2 } from "lucide-react";
 import ComentariosLote from "@/components/ComentariosLote";
@@ -38,6 +39,7 @@ const FotosPorClasificarPage = () => {
   const [clienteSel, setClienteSel] = useState("");
   const [centros, setCentros] = useState([]);
   const [centroSel, setCentroSel] = useState("none");
+  const [anotacion, setAnotacion] = useState("");
   const [workOrders, setWorkOrders] = useState([]);
   const [woSel, setWoSel] = useState("none");
   const [gruposExpandidos, setGruposExpandidos] = useState(new Set());
@@ -72,6 +74,7 @@ const FotosPorClasificarPage = () => {
     setFotoActiva(foto);
     setClienteSel(foto.client_id || "");
     setCentroSel(foto.centro_id || "none");
+    setAnotacion(foto.anotacion || "");
     setWoSel("none");
     setWorkOrders([]);
   };
@@ -105,6 +108,7 @@ const FotosPorClasificarPage = () => {
       await axios.put(`${API}/fotos/${fotoActiva.id}/clasificar`, {
         client_id: clienteSel,
         centro_id: centroSel === "none" ? null : centroSel,
+        anotacion: anotacion,
         work_order_id: woSel === "none" ? null : woSel,
       });
       toast.success("Foto clasificada");
@@ -118,12 +122,17 @@ const FotosPorClasificarPage = () => {
     }
   };
 
-  const marcarRevisada = async (e, fotoId) => {
+  const marcarRevisada = async (e, foto) => {
     e.stopPropagation();
     try {
-      await axios.put(`${API}/fotos/${fotoId}/marcar-revisada`);
+      await axios.put(`${API}/fotos/${foto.id}/marcar-revisada`);
       toast.success("Revisada. Sigue archivada en su centro.");
-      setFotos((prev) => prev.filter((f) => f.id !== fotoId));
+      // Quitar del listado toda la tanda (mismo lote), no solo esta foto
+      setFotos((prev) =>
+        prev.filter((f) =>
+          foto.lote_id ? f.lote_id !== foto.lote_id : f.id !== foto.id
+        )
+      );
     } catch (err) {
       console.error("Error marcando revisada:", err);
       toast.error("No se pudo marcar");
@@ -246,7 +255,7 @@ const FotosPorClasificarPage = () => {
                     </p>
                     <button
                       type="button"
-                      onClick={(e) => marcarRevisada(e, primera.id)}
+                      onClick={(e) => marcarRevisada(e, primera)}
                       className="text-xs font-medium text-emerald-700 hover:text-emerald-900 shrink-0"
                       data-testid={`revisar-${primera.id}`}
                     >
@@ -386,6 +395,17 @@ const FotosPorClasificarPage = () => {
                   </Select>
                 </div>
               )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-slate-500">Anotación (se verá junto a la foto)</label>
+                <Textarea
+                  value={anotacion}
+                  onChange={(e) => setAnotacion(e.target.value)}
+                  rows={2}
+                  placeholder="Ej. Jardinera sin drenaje, regar poco"
+                  data-testid="anotacion-input"
+                />
+              </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-500">Preguntar al operario</label>
