@@ -3834,7 +3834,7 @@ async def crear_guia_trabajo(
             tipo = "pdf"
         else:
             tipo = "imagen"
-        url, public_id = await _subir_documento_cloudinary(payload.archivo, "inicia-gestion/guias")
+        url, public_id, _rt = await _subir_documento_cloudinary(payload.archivo, "inicia-gestion/guias")
     else:
         raise HTTPException(status_code=400, detail="Falta el archivo o la foto")
 
@@ -8134,7 +8134,7 @@ async def subir_justificante_medico(
     # Detectar si es PDF o imagen
     base_tipo = _tipo_documento_base64(archivo)
     tipo = "pdf" if base_tipo == "pdf" else "imagen"
-    url, public_id = await _subir_documento_cloudinary(archivo, "inicia-gestion/justificantes")
+    url, public_id, _rt = await _subir_documento_cloudinary(archivo, "inicia-gestion/justificantes")
     now = datetime.now(timezone.utc)
     doc = {
         "id": str(uuid.uuid4()),
