@@ -8077,7 +8077,10 @@ async def actualizar_configuracion_prevencion(
 # generico de subida a Cloudinary que usan logos/fotos de perfil.
 
 class JustificanteMedicoCreate(BaseModel):
-    imagen: str = Field(..., description="Data-URI base64 de la foto del justificante")
+    # Acepta imagen o PDF (data-URI base64). 'imagen' se mantiene por
+    # compatibilidad; 'archivo' es el nombre nuevo. Vale cualquiera de los dos.
+    imagen: Optional[str] = Field(None, description="Data-URI base64 (imagen o PDF)")
+    archivo: Optional[str] = Field(None, description="Data-URI base64 (imagen o PDF)")
     descripcion: Optional[str] = Field("", max_length=300)
 
 
@@ -8086,6 +8089,7 @@ class JustificanteMedico(BaseModel):
     operario_id: str
     url: str
     public_id: Optional[str] = None
+    tipo: Optional[str] = "imagen"  # "imagen" | "pdf"
     descripcion: Optional[str] = ""
     creado_en: datetime
 
@@ -8124,15 +8128,20 @@ async def list_justificantes_medicos(mias: bool = False, current_user: dict = De
 async def subir_justificante_medico(
     payload: JustificanteMedicoCreate, current_user: dict = Depends(require_approved)
 ):
-    if not _es_logo_base64(payload.imagen):
-        raise HTTPException(status_code=400, detail="Formato de imagen no válido")
-    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    archivo = payload.archivo or payload.imagen
+    if not archivo:
+        raise HTTPException(status_code=400, detail="Falta el archivo")
+    # Detectar si es PDF o imagen
+    base_tipo = _tipo_documento_base64(archivo)
+    tipo = "pdf" if base_tipo == "pdf" else "imagen"
+    url, public_id = await _subir_documento_cloudinary(archivo, "inicia-gestion/justificantes")
     now = datetime.now(timezone.utc)
     doc = {
         "id": str(uuid.uuid4()),
         "operario_id": current_user["user_id"],
         "url": url,
         "public_id": public_id,
+        "tipo": tipo,
         "descripcion": payload.descripcion,
         "creado_en": now,
     }
@@ -8157,7 +8166,9 @@ async def eliminar_justificante_medico(justificante_id: str, current_user: dict 
     es_admin = current_user.get("role") == UserRole.ADMIN
     if not es_propio and not es_admin:
         raise HTTPException(status_code=403, detail="No puedes borrar este justificante")
-    await _borrar_logo_cloudinary(doc.get("public_id"))
+    if doc.get("public_id"):
+        resource = "raw" if doc.get("tipo") == "pdf" else "image"
+        await _borrar_documento_cloudinary(doc["public_id"], resource)
     await db.justificantes_medicos.delete_one({"id": justificante_id})
     return {"ok": True}
 
