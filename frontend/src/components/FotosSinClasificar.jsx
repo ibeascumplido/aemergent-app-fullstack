@@ -34,6 +34,8 @@ const FotosSinClasificar = () => {
 
   const [fotoActiva, setFotoActiva] = useState(null);
   const [clienteSel, setClienteSel] = useState("");
+  const [centros, setCentros] = useState([]);
+  const [centroSel, setCentroSel] = useState("none");
   const [workOrders, setWorkOrders] = useState([]);
   const [woSel, setWoSel] = useState("none");
   const [guardando, setGuardando] = useState(false);
@@ -60,6 +62,7 @@ const FotosSinClasificar = () => {
   const abrirClasificar = (foto) => {
     setFotoActiva(foto);
     setClienteSel(foto.client_id || "");
+    setCentroSel(foto.centro_id || "none");
     setWoSel("none");
     setWorkOrders([]);
   };
@@ -67,6 +70,7 @@ const FotosSinClasificar = () => {
   useEffect(() => {
     if (!clienteSel) {
       setWorkOrders([]);
+      setCentros([]);
       return;
     }
     const cliente = clientes.find((c) => c.id === clienteSel);
@@ -75,6 +79,10 @@ const FotosSinClasificar = () => {
       .get(`${API}/clients/${cliente.slug}/work-orders`)
       .then((res) => setWorkOrders(res.data))
       .catch(() => setWorkOrders([]));
+    axios
+      .get(`${API}/clients/${cliente.slug}/centros`)
+      .then((res) => setCentros(res.data || []))
+      .catch(() => setCentros([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clienteSel]);
 
@@ -87,6 +95,7 @@ const FotosSinClasificar = () => {
     try {
       await axios.put(`${API}/fotos/${fotoActiva.id}/clasificar`, {
         client_id: clienteSel,
+        centro_id: centroSel === "none" ? null : centroSel,
         work_order_id: woSel === "none" ? null : woSel,
       });
       toast.success("Foto clasificada");
@@ -230,7 +239,7 @@ const FotosSinClasificar = () => {
               )}
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-500">Cliente</label>
-                <Select value={clienteSel} onValueChange={setClienteSel}>
+                <Select value={clienteSel} onValueChange={(v) => { setClienteSel(v); setCentroSel("none"); }}>
                   <SelectTrigger data-testid="foto-cliente-select">
                     <SelectValue placeholder="Selecciona..." />
                   </SelectTrigger>
@@ -243,6 +252,24 @@ const FotosSinClasificar = () => {
                   </SelectContent>
                 </Select>
               </div>
+              {clienteSel && centros.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-500">Centro (opcional)</label>
+                  <Select value={centroSel} onValueChange={setCentroSel}>
+                    <SelectTrigger data-testid="foto-centro-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin centro concreto</SelectItem>
+                      {centros.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {clienteSel && (
                 <div className="space-y-1.5">
                   <label className="text-xs text-slate-500">Parte de trabajo (opcional)</label>
