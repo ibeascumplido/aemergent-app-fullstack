@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import axios from "axios";
+import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -47,6 +48,7 @@ const colorDe = (nombre) => {
 };
 
 const ClientDetailPage = () => {
+  const { isAdmin } = useAuth();
   // El parámetro de ruta es el slug del cliente (URL-friendly, estable).
   const { id: slug } = useParams();
   const navigate = useNavigate();
@@ -335,6 +337,7 @@ const ClientDetailPage = () => {
         </div>
       </div>
 
+      {isAdmin && (
       <Tabs defaultValue="incidencias" className="w-full">
         <div className="overflow-x-auto -mx-1 px-1 mb-6 pb-1">
           <TabsList className="inline-flex w-max h-auto p-1 gap-0.5">
@@ -559,6 +562,7 @@ const ClientDetailPage = () => {
           </Card>
         </TabsContent>
       </Tabs>
+      )}
 
       {/* Listado de centros del cliente (siempre visible) */}
       <Card className="border-slate-100 shadow-sm mt-6" data-testid="section-centros">
@@ -577,6 +581,7 @@ const ClientDetailPage = () => {
                 </p>
               </div>
             </div>
+            {isAdmin && (
             <Button
               variant="outline"
               onClick={() => navigate(`/clients/${slug}/locations`)}
@@ -586,6 +591,7 @@ const ClientDetailPage = () => {
             >
               Gestionar centros
             </Button>
+            )}
           </div>
 
           {loadingUbicaciones ? (
@@ -593,13 +599,15 @@ const ClientDetailPage = () => {
           ) : centrosLista.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-sm text-slate-400 mb-3">Este cliente no tiene centros todavía.</p>
-              <Button
-                variant="outline"
-                onClick={() => navigate(`/clients/${slug}/locations`)}
-                size="sm"
-              >
-                Añadir centros
-              </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/clients/${slug}/locations`)}
+                  size="sm"
+                >
+                  Añadir centros
+                </Button>
+              )}
             </div>
           ) : (
             <div className="space-y-2">

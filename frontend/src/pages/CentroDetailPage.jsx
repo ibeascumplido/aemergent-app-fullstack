@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import IncidenciasCliente from "@/components/IncidenciasCliente";
 import GuiaTrabajo from "@/components/GuiaTrabajo";
+import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -27,6 +28,7 @@ const ESTADO_PARTE_PILL = {
 };
 
 const CentroDetailPage = () => {
+  const { isAdmin } = useAuth();
   const { centroId } = useParams();
   const navigate = useNavigate();
 
@@ -127,18 +129,24 @@ const CentroDetailPage = () => {
         )}
       </div>
 
-      <Tabs defaultValue="presupuestos" className="w-full">
+      <Tabs defaultValue={isAdmin ? "presupuestos" : "fotos"} className="w-full">
         <div className="overflow-x-auto -mx-1 px-1 mb-6 pb-1">
           <TabsList className="inline-flex w-max h-auto p-1 gap-0.5">
-            <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-c-presupuestos">
-              <FileText className="w-3.5 h-3.5" /> Presupuestos
-            </TabsTrigger>
-            <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-c-incidencias">
-              <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
-            </TabsTrigger>
-            <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-c-partes">
-              <ClipboardList className="w-3.5 h-3.5" /> Partes
-            </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="presupuestos" className="gap-1.5" data-testid="tab-c-presupuestos">
+                <FileText className="w-3.5 h-3.5" /> Presupuestos
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-c-incidencias">
+                <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
+              </TabsTrigger>
+            )}
+            {isAdmin && (
+              <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-c-partes">
+                <ClipboardList className="w-3.5 h-3.5" /> Partes
+              </TabsTrigger>
+            )}
             <TabsTrigger value="fotos" className="gap-1.5" data-testid="tab-c-fotos">
               <Camera className="w-3.5 h-3.5" /> Fotos
             </TabsTrigger>
