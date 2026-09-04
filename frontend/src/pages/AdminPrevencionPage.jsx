@@ -650,11 +650,17 @@ const AdminPrevencionPage = () => {
                       rel="noreferrer"
                       className="flex items-center gap-3 min-w-0 flex-1"
                     >
-                      <img
-                        src={j.url}
-                        alt=""
-                        className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
-                      />
+                      {j.tipo === "pdf" ? (
+                        <div className="w-12 h-12 rounded-lg border border-slate-200 bg-red-50 flex items-center justify-center shrink-0">
+                          <FileText className="w-6 h-6 text-red-500" />
+                        </div>
+                      ) : (
+                        <img
+                          src={j.url}
+                          alt=""
+                          className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
+                        />
+                      )}
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-800 flex items-center gap-1">
                           <Users className="w-3 h-3 text-slate-400" />

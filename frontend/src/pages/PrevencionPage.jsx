@@ -163,12 +163,18 @@ const PrevencionPage = () => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const okImg = file.type.startsWith("image/");
+    const okPdf = file.type === "application/pdf";
+    if (!okImg && !okPdf) {
+      toast.error("Sube una imagen o un PDF");
+      return;
+    }
     setSubiendoJustificante(true);
     const reader = new FileReader();
     reader.onload = async () => {
       try {
         await axios.post(`${API}/justificantes-medicos`, {
-          imagen: reader.result,
+          archivo: reader.result,
           descripcion: descripcionJustificante.trim(),
         });
         toast.success("Justificante subido");
@@ -523,7 +529,7 @@ const PrevencionPage = () => {
               >
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf"
                   onChange={subirJustificante}
                   disabled={subiendoJustificante}
                   className="hidden"
@@ -531,7 +537,7 @@ const PrevencionPage = () => {
                 />
                 <Camera className="w-4 h-4 text-slate-500" />
                 <span className="text-sm text-slate-600">
-                  {subiendoJustificante ? "Subiendo..." : "Subir foto del justificante"}
+                  {subiendoJustificante ? "Subiendo..." : "Subir foto o documento (PDF)"}
                 </span>
               </label>
             </div>
@@ -541,11 +547,18 @@ const PrevencionPage = () => {
                 {justificantes.map((j) => (
                   <div key={j.id} className="relative group" data-testid={`justificante-${j.id}`}>
                     <a href={j.url} target="_blank" rel="noreferrer">
-                      <img
-                        src={j.url}
-                        alt={j.descripcion || "Justificante"}
-                        className="w-16 h-16 rounded-lg object-cover border border-slate-200"
-                      />
+                      {j.tipo === "pdf" ? (
+                        <div className="w-16 h-16 rounded-lg border border-slate-200 bg-red-50 flex flex-col items-center justify-center">
+                          <FileText className="w-6 h-6 text-red-500" />
+                          <span className="text-[9px] text-slate-500 mt-0.5">PDF</span>
+                        </div>
+                      ) : (
+                        <img
+                          src={j.url}
+                          alt={j.descripcion || "Justificante"}
+                          className="w-16 h-16 rounded-lg object-cover border border-slate-200"
+                        />
+                      )}
                     </a>
                     <button
                       type="button"
