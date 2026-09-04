@@ -177,9 +177,11 @@ const Layout = () => {
 
           {itemsAdmin.length > 0 && (
             <div className="pt-3 mt-2 border-t border-slate-100">
-              <p className="px-4 pb-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Administración
-              </p>
+              {(isAdmin || isFacturacion) && (
+                <p className="px-4 pb-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Administración
+                </p>
+              )}
               <div className="space-y-1">
                 {itemsAdmin.map((item) =>
                   item.dropdown ? renderDropdown(item) : renderNavLink(item, true)
