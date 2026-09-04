@@ -1967,12 +1967,16 @@ def _tipo_documento_base64(valor: Optional[str]) -> Optional[str]:
 
 async def _subir_documento_cloudinary(data_uri: str, carpeta: str) -> tuple:
     """Sube un documento (data-URI base64: imagen o PDF) a Cloudinary.
-    Las imagenes van como 'image' y los PDF como 'raw'. Devuelve
+    Tanto imagenes como PDF se suben con resource_type='image': Cloudinary
+    trata los PDF como documentos de imagen, lo que les conserva la
+    extension .pdf y permite visualizarlos en el navegador (con 'raw' el
+    navegador los descarga como archivo generico sin extension). Devuelve
     (url, public_id, resource_type)."""
     tipo = _tipo_documento_base64(data_uri)
     if tipo is None:
         raise HTTPException(status_code=400, detail="Formato no valido (solo PDF o imagen)")
-    resource_type = "image" if tipo == "image" else "raw"
+    # Los PDF también se suben como 'image' para que se puedan ver online.
+    resource_type = "image"
     try:
         resultado = await asyncio.to_thread(
             cloudinary.uploader.upload,
@@ -3887,7 +3891,7 @@ async def borrar_guia_trabajo(
         raise HTTPException(status_code=404, detail="Elemento no encontrado")
     # Si tiene archivo propio en Cloudinary (no una foto reutilizada), borrarlo
     if doc.get("public_id"):
-        resource = "raw" if doc.get("tipo") == "pdf" else "image"
+        resource = "image"  # los documentos (incl. PDF) se suben como image
         await _borrar_documento_cloudinary(doc["public_id"], resource)
     await db.guia_trabajo.delete_one({"id": item_id})
     return {"ok": True}
@@ -8167,7 +8171,7 @@ async def eliminar_justificante_medico(justificante_id: str, current_user: dict 
     if not es_propio and not es_admin:
         raise HTTPException(status_code=403, detail="No puedes borrar este justificante")
     if doc.get("public_id"):
-        resource = "raw" if doc.get("tipo") == "pdf" else "image"
+        resource = "image"  # los documentos (incl. PDF) se suben como image
         await _borrar_documento_cloudinary(doc["public_id"], resource)
     await db.justificantes_medicos.delete_one({"id": justificante_id})
     return {"ok": True}
