@@ -131,12 +131,12 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="clients/:id" element={
-                <ProtectedRoute requireBudgets>
+                <ProtectedRoute>
                   <ClientDetailPage />
                 </ProtectedRoute>
               } />
               <Route path="centros/:centroId" element={
-                <ProtectedRoute requireBudgets>
+                <ProtectedRoute>
                   <CentroDetailPage />
                 </ProtectedRoute>
               } />
@@ -151,7 +151,7 @@ function App() {
                 </ProtectedRoute>
               } />
               <Route path="clients" element={
-                <ProtectedRoute requireBudgets>
+                <ProtectedRoute>
                   <ClientsPage />
                 </ProtectedRoute>
               } />
