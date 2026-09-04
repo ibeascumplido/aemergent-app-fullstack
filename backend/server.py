@@ -3248,6 +3248,7 @@ class FotoClasificarPayload(BaseModel):
     client_id: Optional[str] = None
     centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
+    anotacion: Optional[str] = Field(None, max_length=2000)
 
 
 class ClasificarLotePayload(BaseModel):
@@ -3264,6 +3265,7 @@ class ClasificarLotePayload(BaseModel):
     centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
     audio: Optional[str] = Field(None, description="Data-URI base64 de la nota de voz")
+    anotacion: Optional[str] = Field(None, max_length=2000)
 
 
 class Foto(BaseModel):
@@ -3276,6 +3278,7 @@ class Foto(BaseModel):
     fecha: Optional[str] = None
     audio_url: Optional[str] = None
     audio_public_id: Optional[str] = None
+    anotacion: Optional[str] = None
     client_id: Optional[str] = None
     centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
@@ -3462,6 +3465,8 @@ async def clasificar_lote(
         updates["clasificado_en"] = datetime.now(timezone.utc)
     if payload.centro_id is not None:
         updates["centro_id"] = payload.centro_id
+    if payload.anotacion is not None:
+        updates["anotacion"] = payload.anotacion.strip()
     if payload.work_order_id is not None:
         if current_user.get("role") != UserRole.ADMIN:
             raise HTTPException(
@@ -3603,6 +3608,8 @@ async def clasificar_foto(
         "work_order_id": payload.work_order_id,
         "clasificado_en": datetime.now(timezone.utc) if payload.client_id else None,
     }
+    if payload.anotacion is not None:
+        updates["anotacion"] = payload.anotacion.strip()
     await db.fotos.update_one({"id": foto_id}, {"$set": updates})
     doc = await db.fotos.find_one({"id": foto_id})
     return Foto(**doc)
@@ -3620,15 +3627,23 @@ async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
 
 @api_router.put("/fotos/{foto_id}/marcar-revisada")
 async def marcar_foto_revisada(foto_id: str, _: dict = Depends(require_admin)):
-    """Marca una foto ya clasificada por un operario como revisada por el
-    admin: desaparece de la bandeja de 'clasificadas por operarios' pero la
-    foto SIGUE archivada en su cliente/centro (no se borra)."""
+    """Marca una foto (y todas las de su mismo lote) ya clasificadas por un
+    operario como revisadas por el admin: desaparecen de la bandeja de
+    'clasificadas por operarios' pero SIGUEN archivadas en su cliente/centro
+    (no se borran)."""
     doc = await db.fotos.find_one({"id": foto_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Foto no encontrada")
-    await db.fotos.update_one(
-        {"id": foto_id}, {"$set": {"revisada_admin": True}}
-    )
+    lote_id = doc.get("lote_id")
+    if lote_id:
+        # Marcar todas las fotos de esa tanda a la vez
+        await db.fotos.update_many(
+            {"lote_id": lote_id}, {"$set": {"revisada_admin": True}}
+        )
+    else:
+        await db.fotos.update_one(
+            {"id": foto_id}, {"$set": {"revisada_admin": True}}
+        )
     return {"ok": True}
 
 
