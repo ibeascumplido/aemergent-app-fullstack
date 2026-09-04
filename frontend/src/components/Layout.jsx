@@ -38,7 +38,7 @@ const Layout = () => {
     },
     { to: "/fotos-por-clasificar", icon: Camera, label: "Fotos", show: isAdmin, section: "admin" },
     { to: "/budgets", icon: FileText, label: "Presupuestos", show: canBudgets, section: "admin" },
-    { to: "/clients", icon: Building2, label: "Clientes", show: isAdmin, section: "admin" },
+    { to: "/clients", icon: Building2, label: "Clientes", show: !isFacturacion, section: "admin" },
     { to: "/vehiculos", icon: Truck, label: "Vehículos", show: isAdmin, section: "admin" },
     { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: isAdmin, section: "admin" },
     { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
