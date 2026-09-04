@@ -3288,6 +3288,7 @@ class FotoConNombres(Foto):
 
     operario_nombre: str
     client_nombre: Optional[str] = None
+    centro_nombre: Optional[str] = None
     work_order_titulo: Optional[str] = None
 
 
@@ -3482,6 +3483,7 @@ async def clasificar_lote(
 @api_router.get("/fotos", response_model=List[FotoConNombres])
 async def list_fotos(
     solo_sin_clasificar: bool = False,
+    clasificadas_por_operario: bool = False,
     work_order_id: Optional[str] = None,
     client_id: Optional[str] = None,
     centro_id: Optional[str] = None,
@@ -3520,7 +3522,12 @@ async def list_fotos(
     elif mias:
         query = {"operario_id": current_user["user_id"]}
     elif solo_sin_clasificar:
-        query = {"work_order_id": None}
+        # Pendientes DE VERDAD: sin cliente asignado (nadie las ha clasificado).
+        query = {"client_id": None}
+    elif clasificadas_por_operario:
+        # Las que un operario ya asignó a un cliente pero el admin aún no ha
+        # revisado (para poder corregir el centro o darlas por buenas).
+        query = {"client_id": {"$ne": None}, "revisada_admin": {"$ne": True}}
     else:
         query = {}
 
@@ -3555,6 +3562,13 @@ async def list_fotos(
         async for cl in db.clients.find({"id": {"$in": list(client_ids)}}):
             clientes_map[cl["id"]] = cl["nombre"]
 
+    # Nombres de centro (client_locations)
+    centro_ids = {f.get("centro_id") for f in fotos if f.get("centro_id")}
+    centros_map = {}
+    if centro_ids:
+        async for c in db.client_locations.find({"id": {"$in": list(centro_ids)}}):
+            centros_map[c["id"]] = c.get("nombre")
+
     wo_map = {}
     if wo_ids:
         async for wo in db.work_orders.find({"id": {"$in": list(wo_ids)}}):
@@ -3565,6 +3579,7 @@ async def list_fotos(
             **f,
             operario_nombre=operarios_map.get(f["operario_id"], "Operario"),
             client_nombre=clientes_map.get(f.get("client_id")),
+            centro_nombre=centros_map.get(f.get("centro_id")),
             work_order_titulo=wo_map.get(f.get("work_order_id")),
         )
         for f in fotos
@@ -3600,6 +3615,20 @@ async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Foto no encontrada")
     await _borrar_logo_cloudinary(doc.get("public_id"))
     await db.fotos.delete_one({"id": foto_id})
+    return {"ok": True}
+
+
+@api_router.put("/fotos/{foto_id}/marcar-revisada")
+async def marcar_foto_revisada(foto_id: str, _: dict = Depends(require_admin)):
+    """Marca una foto ya clasificada por un operario como revisada por el
+    admin: desaparece de la bandeja de 'clasificadas por operarios' pero la
+    foto SIGUE archivada en su cliente/centro (no se borra)."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await db.fotos.update_one(
+        {"id": foto_id}, {"$set": {"revisada_admin": True}}
+    )
     return {"ok": True}
 
 
