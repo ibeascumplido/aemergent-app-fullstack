@@ -1,0 +1,9073 @@
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import io
+import base64
+import logging
+from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
+from typing import List, Optional, Dict
+import uuid
+from datetime import datetime, timezone, timedelta, date
+from enum import Enum
+import hashlib
+import secrets
+import httpx
+import asyncio
+import resend
+import cloudinary
+import cloudinary.uploader
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.utils import ImageReader
+from pypdf import PdfReader, PdfWriter
+from PIL import Image as PILImage
+try:
+    import pypdfium2 as pdfium
+    _PYPDFIUM2_DISPONIBLE = True
+except Exception:
+    # CRITICO: pypdfium2 incluye un binario precompilado (PDFium) que
+    # puede no ser compatible con el entorno concreto donde corre el
+    # servidor. Si fallara al importarse, NUNCA debe tumbar todo el
+    # backend - solo la vista previa de paginas de un PDF queda
+    # inhabilitada (ver obtener_pagina_documento mas abajo), el resto de
+    # la aplicacion sigue funcionando con total normalidad.
+    pdfium = None
+    _PYPDFIUM2_DISPONIBLE = False
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Image as RLImage,
+    HRFlowable,
+    Table,
+    TableStyle,
+)
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+# Resend configuration
+resend.api_key = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+
+# Cloudinary configuration (Fase 5B: almacenamiento de logos/fotos)
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', ''),
+    api_key=os.environ.get('CLOUDINARY_API_KEY', ''),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET', ''),
+    secure=True,
+)
+
+# Create the main app without a prefix
+app = FastAPI()
+
+# Create a router with the /api prefix
+api_router = APIRouter(prefix="/api")
+
+# ============ USER ROLE ENUM ============
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
+    FACTURACION = "facturacion"
+
+class UserStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+# ============ VACATION REQUEST STATUS ============
+class VacationStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+# ============ NOTIFICATION TYPE ============
+class NotificationType(str, Enum):
+    VACATION_APPROVED = "vacation_approved"
+    VACATION_REJECTED = "vacation_rejected"
+    USER_APPROVED = "user_approved"
+    USER_REJECTED = "user_rejected"
+    NEW_USER_REQUEST = "new_user_request"
+    VACATION_REQUEST = "vacation_request"
+    FOTO_COMENTARIO = "foto_comentario"
+    SOLICITUD_ROPA = "solicitud_ropa"
+    SOLICITUD_ROPA_RESUELTA = "solicitud_ropa_resuelta"
+    AVISO_CLIMATOLOGICO = "aviso_climatologico"
+    SOLICITUD_EPI = "solicitud_epi"
+    SOLICITUD_EPI_RESUELTA = "solicitud_epi_resuelta"
+    JUSTIFICANTE_MEDICO = "justificante_medico"
+    PAGO_EXTRA = "pago_extra"
+    PAGO_EXTRA_RESUELTO = "pago_extra_resuelto"
+    TAREA_CENTRO_PROPUESTA = "tarea_centro_propuesta"
+    TAREA_CENTRO_VALIDAR = "tarea_centro_validar"
+    TAREA_CENTRO_RESUELTA = "tarea_centro_resuelta"
+    FOTO_SUBIDA = "foto_subida"
+    PARTE_CREADO = "parte_creado"
+
+# ============ EMAIL HELPER FUNCTIONS ============
+async def send_notification_email(to_email: str, subject: str, html_content: str):
+    """Send email notification using Resend"""
+    if not resend.api_key or resend.api_key == 're_demo_key':
+        logging.warning(f"Email not sent (demo mode): {subject} to {to_email}")
+        return None
+    
+    try:
+        params = {
+            "from": SENDER_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content
+        }
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        logging.info(f"Email sent to {to_email}: {subject}")
+        return result
+    except Exception as e:
+        logging.error(f"Failed to send email: {str(e)}")
+        return None
+
+def create_vacation_email_html(user_name: str, fecha: str, tipo: str, status: str, comment: str = None):
+    """Create HTML email for vacation notification"""
+    tipo_text = "vacaciones" if tipo == "vacacion" else "día libre"
+    status_text = "aprobada" if status == "approved" else "rechazada"
+    status_color = "#10B981" if status == "approved" else "#EF4444"
+    status_emoji = "✅" if status == "approved" else "❌"
+    
+    fecha_formatted = datetime.strptime(fecha, "%Y-%m-%d").strftime("%d de %B de %Y")
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">INICIA</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Gestión de Vacaciones</p>
+        </div>
+        
+        <div style="background: #f8fafc; padding: 30px; border: 1px solid #e2e8f0; border-top: none;">
+            <h2 style="color: #1e293b; margin-top: 0;">Hola {user_name},</h2>
+            
+            <p style="color: #475569; font-size: 16px; line-height: 1.6;">
+                Tu solicitud de <strong>{tipo_text}</strong> para el día <strong>{fecha_formatted}</strong> ha sido:
+            </p>
+            
+            <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; border: 2px solid {status_color};">
+                <span style="font-size: 36px;">{status_emoji}</span>
+                <p style="font-size: 20px; font-weight: bold; color: {status_color}; margin: 10px 0 0 0; text-transform: uppercase;">
+                    {status_text}
+                </p>
+            </div>
+    """
+    
+    if comment:
+        html += f"""
+            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0; color: #92400e;"><strong>Comentario del administrador:</strong></p>
+                <p style="margin: 10px 0 0 0; color: #78350f;">{comment}</p>
+            </div>
+        """
+    
+    html += """
+            <p style="color: #64748b; font-size: 14px; margin-top: 30px;">
+                Puedes ver el estado de todas tus solicitudes en tu calendario personal.
+            </p>
+        </div>
+        
+        <div style="background: #1e293b; padding: 20px; border-radius: 0 0 10px 10px; text-align: center;">
+            <p style="color: #94a3b8; margin: 0; font-size: 12px;">
+                Este es un mensaje automático del sistema de gestión INICIA.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+async def create_notification(user_id: str, notification_type: str, title: str, message: str, data: dict = None):
+    """Create in-app notification"""
+    notification = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "type": notification_type,
+        "title": title,
+        "message": message,
+        "data": data or {},
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.notifications.insert_one(notification.copy())
+    return notification
+
+async def notify_admins(notification_type: str, title: str, message: str, data: dict = None):
+    """Send an in-app notification to every admin user."""
+    admins = await db.users.find({"role": UserRole.ADMIN}, {"_id": 0, "user_id": 1}).to_list(1000)
+    for admin in admins:
+        await create_notification(
+            user_id=admin["user_id"],
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            data=data or {}
+        )
+
+async def notify_all_approved(notification_type: str, title: str, message: str, data: dict = None):
+    """Envia una notificacion a todos los usuarios aprobados (ej. un aviso
+    climatologico que debe llegarle a toda la plantilla, no solo a admins)."""
+    usuarios = await db.users.find(
+        {"status": UserStatus.APPROVED}, {"_id": 0, "user_id": 1}
+    ).to_list(1000)
+    for u in usuarios:
+        await create_notification(
+            user_id=u["user_id"],
+            notification_type=notification_type,
+            title=title,
+            message=message,
+            data=data or {}
+        )
+
+# ============ AUTH MODELS ============
+class UserBase(BaseModel):
+    email: str
+    name: str
+    picture: Optional[str] = ""
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    name: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    email: str
+    name: str
+    picture: Optional[str] = ""
+    role: UserRole = UserRole.USER
+    status: UserStatus = UserStatus.PENDING
+    dias_vacaciones: int = 32
+    dias_libres: int = 6
+    color: str = "#3B82F6"
+    textura: str = "solido"  # solido | lunares | rayas | rayas_horiz | cuadros | diagonal_inv | puntos_grandes
+    abreviatura: str = ""
+    puesto: Optional[str] = Field(
+        None, description="Cargo descriptivo (operario, encargado, gerente...), "
+        "independiente del 'role' que controla permisos."
+    )
+    fecha_ultima_revision_medica: Optional[str] = None
+    fecha_proxima_revision_medica: Optional[str] = None
+    hora_proxima_revision_medica: Optional[str] = None
+    lugar_proxima_revision_medica: Optional[str] = None
+    telefono: Optional[str] = None
+    dni: Optional[str] = None
+    direccion: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    contacto_emergencia_nombre: Optional[str] = None
+    contacto_emergencia_telefono: Optional[str] = None
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[UserRole] = None
+    status: Optional[UserStatus] = None
+    dias_vacaciones: Optional[int] = None
+    dias_libres: Optional[int] = None
+    color: Optional[str] = None
+    textura: Optional[str] = None
+    abreviatura: Optional[str] = None
+    puesto: Optional[str] = None
+    fecha_ultima_revision_medica: Optional[str] = None
+    fecha_proxima_revision_medica: Optional[str] = None
+    hora_proxima_revision_medica: Optional[str] = None
+    lugar_proxima_revision_medica: Optional[str] = None
+    telefono: Optional[str] = None
+    dni: Optional[str] = None
+    direccion: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    contacto_emergencia_nombre: Optional[str] = None
+    contacto_emergencia_telefono: Optional[str] = None
+
+# Helper function to hash passwords
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+async def _buscar_usuario_por_email(email: str) -> Optional[dict]:
+    """Busca un usuario por email sin distinguir mayusculas/minusculas ni
+    espacios sobrantes. En moviles (sobre todo iPad) el teclado pone la
+    primera letra en mayuscula automaticamente, y si el registro guardo
+    el email como lo escribio el usuario, una busqueda exacta y sensible
+    a mayusculas puede no encontrar la cuenta -> 'contraseña incorrecta'
+    cuando en realidad el problema es el email, no la contraseña."""
+    email_limpio = email.strip()
+    return await db.users.find_one(
+        {"email": {"$regex": f"^{re.escape(email_limpio)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+
+# Helper to get current user from session
+async def get_current_user(request: Request) -> dict:
+    # La cabecera Authorization (Bearer) es el mecanismo fiable: el
+    # interceptor de axios la manda en TODAS las peticiones mientras haya
+    # token en localStorage, sin depender de politicas del navegador. Se
+    # comprueba primero por eso. La cookie queda como alternativa (por si
+    # algun dia hay una peticion sin JS de por medio), pero nunca debe
+    # poder invalidar una cabecera valida: las cookies entre dominios
+    # distintos (frontend en Vercel, API en Railway) son justo el tipo de
+    # cookie que Safari/iOS purga de forma agresiva e impredecible,
+    # sobre todo en apps instaladas como PWA, y si quedaba una cookie
+    # caducada o invalida se comprobaba ANTES que la cabecera, rechazando
+    # peticiones perfectamente validas.
+    session_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        session_token = auth_header.split(" ")[1]
+
+    if not session_token:
+        session_token = request.cookies.get("session_token")
+    
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Find session in database
+    session = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    
+    # Check expiry with timezone awareness
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Session expired")
+    
+    # Get user
+    user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    return user
+
+# Helper to require admin role
+async def require_admin(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+# Helper to require approved user
+async def require_approved(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("status") != UserStatus.APPROVED and user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Account pending approval")
+    return user
+
+# Helper to require budgets access (admin or facturacion)
+async def require_budgets(request: Request) -> dict:
+    user = await get_current_user(request)
+    if user.get("role") not in (UserRole.ADMIN, "facturacion"):
+        raise HTTPException(status_code=403, detail="Budgets access required")
+    return user
+
+# Budget Status Enum
+class BudgetStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+# Estado del trabajo (control de trabajos jardineria)
+class EstadoTrabajo(str, Enum):
+    PENDIENTE_EJECUTAR = "pendiente_ejecutar"
+    EJECUTADO = "ejecutado"
+    FACTURADO = "facturado"
+    ENVIADO = "enviado"
+    MANTENIMIENTO = "mantenimiento"
+
+# Estado del pedido a proveedor / parte (columna facturacion)
+class PedidoPar(str, Enum):
+    NINGUNO = "ninguno"
+    ENVIADO = "enviado"
+    PENDIENTE = "pendiente"
+
+# Models
+class BudgetBase(BaseModel):
+    title: str
+    client_name: str
+    amount: float
+    description: Optional[str] = ""
+    status: BudgetStatus = BudgetStatus.PENDING
+
+class BudgetCreate(BudgetBase):
+    pass
+
+class BudgetUpdate(BaseModel):
+    title: Optional[str] = None
+    client_name: Optional[str] = None
+    amount: Optional[float] = None
+    description: Optional[str] = None
+    status: Optional[BudgetStatus] = None
+
+class Budget(BudgetBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class EventBase(BaseModel):
+    title: str
+    date: str  # YYYY-MM-DD format
+    start_time: Optional[str] = ""  # HH:MM format
+    end_time: Optional[str] = ""  # HH:MM format
+    description: Optional[str] = ""
+
+class EventCreate(EventBase):
+    pass
+
+class EventUpdate(BaseModel):
+    title: Optional[str] = None
+    date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    description: Optional[str] = None
+
+class Event(EventBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# Operario Model
+class OperarioBase(BaseModel):
+    nombre: str
+    abreviatura: str  # Max 2-3 caracteres
+    color: str  # Color hex como #FF0000
+    dias_vacaciones: int = 22  # Días disponibles de vacaciones
+    dias_libres: int = 6  # Días libres disponibles
+
+class OperarioCreate(OperarioBase):
+    pass
+
+class OperarioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    abreviatura: Optional[str] = None
+    color: Optional[str] = None
+    dias_vacaciones: Optional[int] = None
+    dias_libres: Optional[int] = None
+
+class Operario(OperarioBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    orden: int = 0  # Para ordenar los slots
+
+# Vacaciones Model
+class VacacionBase(BaseModel):
+    operario_id: str
+    fecha: str  # YYYY-MM-DD
+    tipo: str = "vacacion"  # "vacacion" o "libre"
+
+class VacacionCreate(VacacionBase):
+    pass
+
+class Vacacion(VacacionBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+# Budget Template Models
+class MaterialItem(BaseModel):
+    nombre: str = ""
+    ud: str = ""
+    precio: str = ""
+    iva: str = "21"
+    precio_coste: str = ""
+    margen: str = "30"
+    horas: str = ""
+    litros: str = ""
+    altura: str = ""
+    notas: str = ""
+
+class CostItem(BaseModel):
+    ud: str = "1"
+    precio: str = ""
+    iva: str = "21"
+
+# Modelo para cálculo de mano de obra
+class CalculoManoObra(BaseModel):
+    precioHora: str = ""
+    numOperarios: str = ""
+    horasJornada: str = ""
+    numDias: str = ""
+    dietasDia: str = ""
+    alojamientoDia: str = ""
+    extraDia: str = ""
+
+# Modelo para porte con coste
+class PorteItem(BaseModel):
+    ud: str = "1"
+    precio: str = ""
+    iva: str = "21"
+    precio_coste: str = ""
+    margen: str = "30"
+
+class BudgetTemplateBase(BaseModel):
+    budget_number: str
+    budget_date: str
+    cliente: str
+    # ID del cliente en la coleccion Client (opcional). Vinculacion Fase 4:
+    # los presupuestos nuevos deberian traer este campo; los historicos se
+    # localizan tambien por el texto de `cliente` (filtro OR en el endpoint).
+    client_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    lugar_ejecucion: Optional[str] = ""
+    provincia: Optional[str] = ""
+    servicios_descripcion: Optional[str] = ""
+    # ===== Campos Control de Trabajos (Excel) =====
+    anio: Optional[int] = None
+    num_orden: Optional[int] = None
+    titulo: Optional[str] = ""
+    centro: Optional[str] = ""
+    solicitud_trabajo: Optional[str] = ""
+    fecha_ejecucion: Optional[str] = ""
+    estado_trabajo: EstadoTrabajo = EstadoTrabajo.PENDIENTE_EJECUTAR
+    # ----- Columnas Facturacion -----
+    pedido_cliente: Optional[str] = ""
+    factura_inicio: Optional[str] = ""
+    factura_proveedor: Optional[str] = ""
+    importe_proveedor: Optional[float] = 0
+    facturado: Optional[bool] = False
+    pedido_par: PedidoPar = PedidoPar.NINGUNO
+    anotaciones_facturacion: Optional[str] = ""
+    materiales: List[MaterialItem] = []
+    porte: Optional[PorteItem] = None
+    mano_obra: Optional[CostItem] = None
+    calculo_mano_obra: Optional[CalculoManoObra] = None
+    observaciones: Optional[str] = ""
+    total_base: float = 0
+    total_iva: float = 0
+    total_con_iva: float = 0
+    status: BudgetStatus = BudgetStatus.PENDING
+
+class BudgetTemplateCreate(BudgetTemplateBase):
+    pass
+
+class BudgetTemplateUpdate(BaseModel):
+    budget_number: Optional[str] = None
+    budget_date: Optional[str] = None
+    cliente: Optional[str] = None
+    client_id: Optional[str] = None
+    lugar_ejecucion: Optional[str] = None
+    provincia: Optional[str] = None
+    servicios_descripcion: Optional[str] = None
+    # ===== Campos Control de Trabajos (Excel) =====
+    anio: Optional[int] = None
+    num_orden: Optional[int] = None
+    titulo: Optional[str] = None
+    centro: Optional[str] = None
+    solicitud_trabajo: Optional[str] = None
+    fecha_ejecucion: Optional[str] = None
+    estado_trabajo: Optional[EstadoTrabajo] = None
+    pedido_cliente: Optional[str] = None
+    factura_inicio: Optional[str] = None
+    factura_proveedor: Optional[str] = None
+    importe_proveedor: Optional[float] = None
+    facturado: Optional[bool] = None
+    pedido_par: Optional[PedidoPar] = None
+    anotaciones_facturacion: Optional[str] = None
+    materiales: Optional[List[MaterialItem]] = None
+    porte: Optional[PorteItem] = None
+    mano_obra: Optional[CostItem] = None
+    calculo_mano_obra: Optional[CalculoManoObra] = None
+    observaciones: Optional[str] = None
+    total_base: Optional[float] = None
+    total_iva: Optional[float] = None
+    total_con_iva: Optional[float] = None
+    status: Optional[BudgetStatus] = None
+
+class BudgetTemplate(BudgetTemplateBase):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# ============ AUTH ENDPOINTS ============
+
+# Google OAuth session exchange
+@api_router.post("/auth/session")
+async def exchange_session(request: Request, response: Response):
+    """Exchange Google OAuth session_id for our session"""
+    data = await request.json()
+    session_id = data.get("session_id")
+    
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    
+    # Call Emergent Auth to get user data
+    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    async with httpx.AsyncClient() as client_http:
+        try:
+            auth_response = await client_http.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": session_id}
+            )
+            if auth_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid session_id")
+            
+            user_data = auth_response.json()
+        except Exception as e:
+            logging.error(f"Auth error: {e}")
+            raise HTTPException(status_code=401, detail="Authentication failed")
+    
+    email = user_data.get("email")
+    name = user_data.get("name", "")
+    picture = user_data.get("picture", "")
+    google_session_token = user_data.get("session_token")
+    
+    # Check if user exists
+    existing_user = await _buscar_usuario_por_email(email)
+    
+    if existing_user:
+        user_id = existing_user["user_id"]
+        # Update user info
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": name, "picture": picture}}
+        )
+        user = existing_user
+    else:
+        # Create new user (pending approval)
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        abreviatura = name[:3].upper() if name else email[:3].upper()
+        user = {
+            "user_id": user_id,
+            "email": email.strip().lower() if email else email,
+            "name": name,
+            "picture": picture,
+            "role": UserRole.USER,
+            "status": UserStatus.PENDING,
+            "dias_vacaciones": 32,
+            "dias_libres": 6,
+            "color": "#3B82F6",
+            "abreviatura": abreviatura,
+            "auth_type": "google",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.users.insert_one(user.copy())
+        await notify_admins(
+            notification_type=NotificationType.NEW_USER_REQUEST,
+            title="Nueva solicitud de acceso 🔔",
+            message=f"{name} ({email}) se ha registrado y espera tu aprobación.",
+            data={"user_id": user_id}
+        )
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60  # 7 days
+    )
+    
+    # Get fresh user data
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Email/Password Registration
+@api_router.post("/auth/register")
+async def register(user_data: UserCreate, response: Response):
+    """Register new user with email/password"""
+    # Check if email exists
+    existing = await _buscar_usuario_por_email(user_data.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Create user
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    email_normalizado = user_data.email.strip().lower()
+    abreviatura = user_data.name[:3].upper() if user_data.name else user_data.email[:3].upper()
+    
+    user = {
+        "user_id": user_id,
+        "email": email_normalizado,
+        "name": user_data.name,
+        "password_hash": hash_password(user_data.password),
+        "picture": "",
+        "role": UserRole.USER,
+        "status": UserStatus.PENDING,
+        "dias_vacaciones": 32,
+        "dias_libres": 6,
+        "color": "#3B82F6",
+        "abreviatura": abreviatura,
+        "auth_type": "email",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.users.insert_one(user.copy())
+    await notify_admins(
+        notification_type=NotificationType.NEW_USER_REQUEST,
+        title="Nueva solicitud de acceso 🔔",
+        message=f"{user_data.name} ({user_data.email}) se ha registrado y espera tu aprobación.",
+        data={"user_id": user_id}
+    )
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60
+    )
+    
+    # Remove password hash from response
+    user.pop("password_hash", None)
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Email/Password Login
+@api_router.post("/auth/login")
+async def login(user_data: UserLogin, response: Response):
+    """Login with email/password"""
+    user = await _buscar_usuario_por_email(user_data.email)
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Check if user registered with Google
+    if user.get("auth_type") == "google":
+        raise HTTPException(status_code=400, detail="Please use Google login for this account")
+    
+    # Verify password
+    if user.get("password_hash") != hash_password(user_data.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Create session
+    session_token = f"session_{uuid.uuid4().hex}"
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await db.user_sessions.insert_one({
+        "user_id": user["user_id"],
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Set cookie
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7*24*60*60
+    )
+    
+    # Remove password hash from response
+    user.pop("password_hash", None)
+    
+    return {
+        "user": user,
+        "session_token": session_token
+    }
+
+# Get current user
+@api_router.get("/auth/me")
+async def get_me(request: Request):
+    """Get current authenticated user"""
+    user = await get_current_user(request)
+    user.pop("password_hash", None)
+    return user
+
+# Logout
+@api_router.post("/auth/logout")
+async def logout(request: Request, response: Response):
+    """Logout and clear session"""
+    # Igual que en get_current_user: la cabecera Authorization es el
+    # mecanismo fiable. Si solo mirasemos la cookie y esta ya se hubiera
+    # perdido (Safari/iOS la purga con facilidad entre dominios
+    # distintos), la sesion nunca se borraria de verdad en el servidor
+    # aunque la app la diera por cerrada.
+    session_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        session_token = auth_header.split(" ")[1]
+    if not session_token:
+        session_token = request.cookies.get("session_token")
+    
+    if session_token:
+        await db.user_sessions.delete_one({"session_token": session_token})
+    
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        secure=True,
+        samesite="none"
+    )
+    
+    return {"message": "Logged out successfully"}
+
+# ============ ADMIN: USER MANAGEMENT ============
+
+@api_router.get("/admin/users")
+async def get_all_users(request: Request):
+    """Get all users (admin only)"""
+    await require_admin(request)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users
+
+@api_router.get("/admin/users/pending")
+async def get_pending_users(request: Request):
+    """Get pending users (admin only)"""
+    await require_admin(request)
+    users = await db.users.find({"status": UserStatus.PENDING}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    return users
+
+@api_router.get("/admin/users/{user_id}")
+async def get_user_detail(user_id: str, request: Request):
+    """Ficha de un usuario concreto (admin only)."""
+    await require_admin(request)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return user
+
+@api_router.put("/admin/users/{user_id}")
+async def update_user(user_id: str, user_update: UserUpdate, request: Request):
+    """Update user (admin only)"""
+    await require_admin(request)
+    
+    existing = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_data = {k: v for k, v in user_update.model_dump().items() if v is not None}
+    if update_data:
+        await db.users.update_one({"user_id": user_id}, {"$set": update_data})
+    
+    updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
+class FotoUsuarioPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+@api_router.post("/admin/users/{user_id}/foto")
+async def subir_foto_usuario(user_id: str, payload: FotoUsuarioPayload, request: Request):
+    """Sube/reemplaza la foto de perfil de un usuario (admin only). Se
+    guarda directamente en el campo 'picture' que ya existia (antes solo
+    lo rellenaba el login de Google); un logo/foto manual pisa esa foto."""
+    await require_admin(request)
+    existing = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, _public_id = await _subir_logo_cloudinary(payload.imagen)
+    await db.users.update_one({"user_id": user_id}, {"$set": {"picture": url}})
+    updated = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
+@api_router.delete("/admin/users/{user_id}")
+async def delete_user(user_id: str, request: Request):
+    """Delete user (admin only)"""
+    admin = await require_admin(request)
+    
+    if admin["user_id"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    result = await db.users.delete_one({"user_id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete user sessions and vacations
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.vacaciones.delete_many({"user_id": user_id})
+    
+    return {"message": "User deleted successfully"}
+
+# ============ NOTIFICATIONS ENDPOINTS ============
+
+@api_router.get("/notifications")
+async def get_notifications(request: Request, unread_only: bool = False, limit: int = 50):
+    """Get user's notifications"""
+    user = await get_current_user(request)
+    
+    query = {"user_id": user["user_id"]}
+    if unread_only:
+        query["read"] = False
+    
+    notifications = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return notifications
+
+@api_router.get("/notifications/count")
+async def get_unread_count(request: Request):
+    """Get count of unread notifications"""
+    user = await get_current_user(request)
+    
+    count = await db.notifications.count_documents({
+        "user_id": user["user_id"],
+        "read": False
+    })
+    return {"unread_count": count}
+
+@api_router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, request: Request):
+    """Mark a notification as read"""
+    user = await get_current_user(request)
+    
+    result = await db.notifications.update_one(
+        {"id": notification_id, "user_id": user["user_id"]},
+        {"$set": {"read": True}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    return {"message": "Notification marked as read"}
+
+@api_router.post("/notifications/read-all")
+async def mark_all_read(request: Request):
+    """Mark all notifications as read"""
+    user = await get_current_user(request)
+    
+    result = await db.notifications.update_many(
+        {"user_id": user["user_id"], "read": False},
+        {"$set": {"read": True}}
+    )
+    
+    return {"message": f"Marked {result.modified_count} notifications as read"}
+
+@api_router.delete("/notifications/{notification_id}")
+async def delete_notification(notification_id: str, request: Request):
+    """Delete a notification"""
+    user = await get_current_user(request)
+    
+    result = await db.notifications.delete_one({
+        "id": notification_id,
+        "user_id": user["user_id"]
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    return {"message": "Notification deleted"}
+
+# Root endpoint
+@api_router.get("/")
+async def root():
+    return {"message": "Dashboard API"}
+
+# ============ BUDGET ENDPOINTS ============
+
+@api_router.get("/budgets", response_model=List[Budget])
+async def get_budgets(status: Optional[BudgetStatus] = None):
+    query = {}
+    if status:
+        query["status"] = status.value
+    budgets = await db.budgets.find(query, {"_id": 0}).to_list(1000)
+    for b in budgets:
+        if isinstance(b.get('created_at'), str):
+            b['created_at'] = datetime.fromisoformat(b['created_at'])
+    return budgets
+
+@api_router.get("/budgets/{budget_id}", response_model=Budget)
+async def get_budget(budget_id: str):
+    budget = await db.budgets.find_one({"id": budget_id}, {"_id": 0})
+    if not budget:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    if isinstance(budget.get('created_at'), str):
+        budget['created_at'] = datetime.fromisoformat(budget['created_at'])
+    return budget
+
+@api_router.post("/budgets", response_model=Budget)
+async def create_budget(budget_data: BudgetCreate):
+    budget = Budget(**budget_data.model_dump())
+    doc = budget.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.budgets.insert_one(doc)
+    return budget
+
+@api_router.put("/budgets/{budget_id}", response_model=Budget)
+async def update_budget(budget_id: str, budget_data: BudgetUpdate):
+    existing = await db.budgets.find_one({"id": budget_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    
+    update_data = {k: v for k, v in budget_data.model_dump().items() if v is not None}
+    if update_data:
+        await db.budgets.update_one({"id": budget_id}, {"$set": update_data})
+    
+    updated = await db.budgets.find_one({"id": budget_id}, {"_id": 0})
+    if isinstance(updated.get('created_at'), str):
+        updated['created_at'] = datetime.fromisoformat(updated['created_at'])
+    return updated
+
+@api_router.delete("/budgets/{budget_id}")
+async def delete_budget(budget_id: str):
+    result = await db.budgets.delete_one({"id": budget_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    return {"message": "Budget deleted successfully"}
+
+# ============ EVENT ENDPOINTS ============
+
+@api_router.get("/events", response_model=List[Event])
+async def get_events(date: Optional[str] = None, month: Optional[str] = None):
+    query = {}
+    if date:
+        query["date"] = date
+    elif month:
+        # Filter by month (YYYY-MM format)
+        query["date"] = {"$regex": f"^{month}"}
+    events = await db.events.find(query, {"_id": 0}).to_list(1000)
+    for e in events:
+        if isinstance(e.get('created_at'), str):
+            e['created_at'] = datetime.fromisoformat(e['created_at'])
+    return events
+
+@api_router.get("/events/{event_id}", response_model=Event)
+async def get_event(event_id: str):
+    event = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if isinstance(event.get('created_at'), str):
+        event['created_at'] = datetime.fromisoformat(event['created_at'])
+    return event
+
+@api_router.post("/events", response_model=Event)
+async def create_event(event_data: EventCreate):
+    event = Event(**event_data.model_dump())
+    doc = event.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.events.insert_one(doc)
+    return event
+
+@api_router.put("/events/{event_id}", response_model=Event)
+async def update_event(event_id: str, event_data: EventUpdate):
+    existing = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    update_data = {k: v for k, v in event_data.model_dump().items() if v is not None}
+    if update_data:
+        await db.events.update_one({"id": event_id}, {"$set": update_data})
+    
+    updated = await db.events.find_one({"id": event_id}, {"_id": 0})
+    if isinstance(updated.get('created_at'), str):
+        updated['created_at'] = datetime.fromisoformat(updated['created_at'])
+    return updated
+
+@api_router.delete("/events/{event_id}")
+async def delete_event(event_id: str):
+    result = await db.events.delete_one({"id": event_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"message": "Event deleted successfully"}
+
+# ============ OPERARIOS ENDPOINTS ============
+
+@api_router.get("/operarios", response_model=List[Operario])
+async def get_operarios():
+    operarios = await db.operarios.find({}, {"_id": 0}).sort("orden", 1).to_list(100)
+    return operarios
+
+@api_router.post("/operarios", response_model=Operario)
+async def create_operario(operario_data: OperarioCreate):
+    # Get next orden
+    count = await db.operarios.count_documents({})
+    operario = Operario(**operario_data.model_dump(), orden=count)
+    doc = operario.model_dump()
+    await db.operarios.insert_one(doc)
+    return operario
+
+@api_router.put("/operarios/{operario_id}", response_model=Operario)
+async def update_operario(operario_id: str, operario_data: OperarioUpdate):
+    existing = await db.operarios.find_one({"id": operario_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Operario not found")
+    
+    update_data = {k: v for k, v in operario_data.model_dump().items() if v is not None}
+    if update_data:
+        await db.operarios.update_one({"id": operario_id}, {"$set": update_data})
+    
+    updated = await db.operarios.find_one({"id": operario_id}, {"_id": 0})
+    return updated
+
+@api_router.delete("/operarios/{operario_id}")
+async def delete_operario(operario_id: str):
+    result = await db.operarios.delete_one({"id": operario_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Operario not found")
+    # Also delete related vacaciones
+    await db.vacaciones.delete_many({"operario_id": operario_id})
+    return {"message": "Operario deleted successfully"}
+
+# ============ VACACIONES ENDPOINTS (User-based) ============
+
+# User's own vacations
+@api_router.get("/my-vacaciones")
+async def get_my_vacaciones(request: Request, month: Optional[str] = None, year: Optional[int] = None):
+    """Get current user's vacations"""
+    user = await require_approved(request)
+    
+    query = {"user_id": user["user_id"]}
+    if month:
+        query["fecha"] = {"$regex": f"^{month}"}
+    elif year:
+        query["fecha"] = {"$regex": f"^{year}"}
+    
+    vacaciones = await db.vacaciones.find(query, {"_id": 0}).to_list(10000)
+    return vacaciones
+
+@api_router.post("/my-vacaciones")
+async def create_my_vacacion(request: Request, fecha: str, tipo: str = "vacacion"):
+    """Create vacation request for current user (status: pending)"""
+    user = await require_approved(request)
+    
+    # Check if already exists
+    existing = await db.vacaciones.find_one({
+        "user_id": user["user_id"],
+        "fecha": fecha
+    }, {"_id": 0})
+    
+    if existing:
+        # If pending, can toggle off (cancel request)
+        if existing.get("status") == VacationStatus.PENDING:
+            await db.vacaciones.delete_one({"user_id": user["user_id"], "fecha": fecha})
+            return {"message": "Request cancelled", "action": "deleted"}
+        # If approved, cannot modify
+        elif existing.get("status") == VacationStatus.APPROVED:
+            raise HTTPException(status_code=400, detail="Cannot modify approved vacation")
+        # If rejected, can create new request
+        elif existing.get("status") == VacationStatus.REJECTED:
+            await db.vacaciones.delete_one({"user_id": user["user_id"], "fecha": fecha})
+    
+    # Create new request (always pending)
+    vacacion = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["user_id"],
+        "fecha": fecha,
+        "tipo": tipo,
+        "status": VacationStatus.PENDING,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "rejection_comment": None
+    }
+    await db.vacaciones.insert_one(vacacion.copy())  # Insert copy to avoid _id mutation
+    
+    # Notify admins of the new vacation request
+    tipo_text = "vacaciones" if tipo == "vacacion" else "día libre"
+    try:
+        fecha_fmt = datetime.strptime(fecha, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        fecha_fmt = fecha
+    await notify_admins(
+        notification_type=NotificationType.VACATION_REQUEST,
+        title="Nueva solicitud de vacaciones 📅",
+        message=f"{user.get('name', '')} ha solicitado {tipo_text} para el {fecha_fmt}.",
+        data={"user_id": user["user_id"], "fecha": fecha, "tipo": tipo}
+    )
+    
+    # Add user info for response
+    vacacion["user_name"] = user.get("name", "")
+    vacacion["user_color"] = user.get("color", "#3B82F6")
+    vacacion["user_textura"] = user.get("textura", "solido")
+    vacacion["user_abreviatura"] = user.get("abreviatura", "")
+    
+    return {"message": "Request created", "action": "created", "vacacion": vacacion}
+
+@api_router.delete("/my-vacaciones/{fecha}")
+async def delete_my_vacacion(fecha: str, request: Request):
+    """Cancel pending vacation request for current user"""
+    user = await require_approved(request)
+    
+    # Check if exists and is pending
+    existing = await db.vacaciones.find_one({
+        "user_id": user["user_id"],
+        "fecha": fecha
+    }, {"_id": 0})
+    
+    if not existing:
+        raise HTTPException(status_code=404, detail="Vacation not found")
+    
+    if existing.get("status") == VacationStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="Cannot cancel approved vacation. Contact admin.")
+    
+    result = await db.vacaciones.delete_one({"user_id": user["user_id"], "fecha": fecha})
+    return {"message": "Request cancelled successfully"}
+
+@api_router.get("/my-vacaciones/resumen")
+async def get_my_resumen(request: Request, year: Optional[int] = None):
+    """Get current user's vacation summary"""
+    user = await require_approved(request)
+    
+    if not year:
+        year = datetime.now().year
+    
+    # Count APPROVED vacaciones for this year
+    vacaciones_approved = await db.vacaciones.count_documents({
+        "user_id": user["user_id"],
+        "fecha": {"$regex": f"^{year}"},
+        "tipo": "vacacion",
+        "status": VacationStatus.APPROVED
+    })
+    # Count PENDING vacaciones
+    vacaciones_pending = await db.vacaciones.count_documents({
+        "user_id": user["user_id"],
+        "fecha": {"$regex": f"^{year}"},
+        "tipo": "vacacion",
+        "status": VacationStatus.PENDING
+    })
+    
+    # Count APPROVED dias libres for this year
+    libres_approved = await db.vacaciones.count_documents({
+        "user_id": user["user_id"],
+        "fecha": {"$regex": f"^{year}"},
+        "tipo": "libre",
+        "status": VacationStatus.APPROVED
+    })
+    # Count PENDING dias libres
+    libres_pending = await db.vacaciones.count_documents({
+        "user_id": user["user_id"],
+        "fecha": {"$regex": f"^{year}"},
+        "tipo": "libre",
+        "status": VacationStatus.PENDING
+    })
+    
+    dias_vacaciones_disponibles = user.get("dias_vacaciones", 32)
+    dias_libres_disponibles = user.get("dias_libres", 6)
+    
+    return {
+        "user_id": user["user_id"],
+        "nombre": user.get("name", ""),
+        "email": user.get("email", ""),
+        "abreviatura": user.get("abreviatura", ""),
+        "color": user.get("color", "#3B82F6"),
+        # Vacaciones
+        "dias_disponibles": dias_vacaciones_disponibles,
+        "dias_aprobados": vacaciones_approved,
+        "dias_pendientes": vacaciones_pending,
+        "dias_restantes": dias_vacaciones_disponibles - vacaciones_approved,
+        # Días libres
+        "dias_libres_disponibles": dias_libres_disponibles,
+        "dias_libres_aprobados": libres_approved,
+        "dias_libres_pendientes": libres_pending,
+        "dias_libres_restantes": dias_libres_disponibles - libres_approved,
+    }
+
+# Admin: Get all users' vacations (for admin calendar view)
+@api_router.get("/admin/vacaciones")
+async def get_all_vacaciones(request: Request, month: Optional[str] = None, year: Optional[int] = None, status: Optional[str] = None):
+    """Get all users' vacations (admin only)"""
+    await require_admin(request)
+    
+    query = {}
+    if month:
+        query["fecha"] = {"$regex": f"^{month}"}
+    elif year:
+        query["fecha"] = {"$regex": f"^{year}"}
+    if status:
+        query["status"] = status
+    
+    vacaciones = await db.vacaciones.find(query, {"_id": 0}).to_list(10000)
+    
+    # Enrich with user info
+    users_cache = {}
+    for v in vacaciones:
+        user_id = v.get("user_id")
+        if user_id not in users_cache:
+            user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+            users_cache[user_id] = user
+        user = users_cache.get(user_id)
+        if user:
+            v["user_name"] = user.get("name", "")
+            v["user_color"] = user.get("color", "#3B82F6")
+            v["user_textura"] = user.get("textura", "solido")
+            v["user_abreviatura"] = user.get("abreviatura", "")
+            v["user_email"] = user.get("email", "")
+    
+    return vacaciones
+
+# Admin: Get pending requests
+@api_router.get("/admin/vacaciones/pending")
+async def get_pending_vacaciones(request: Request):
+    """Get all pending vacation requests (admin only)"""
+    await require_admin(request)
+    
+    vacaciones = await db.vacaciones.find({"status": VacationStatus.PENDING}, {"_id": 0}).to_list(10000)
+    
+    # Enrich with user info
+    users_cache = {}
+    for v in vacaciones:
+        user_id = v.get("user_id")
+        if user_id not in users_cache:
+            user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+            users_cache[user_id] = user
+        user = users_cache.get(user_id)
+        if user:
+            v["user_name"] = user.get("name", "")
+            v["user_color"] = user.get("color", "#3B82F6")
+            v["user_textura"] = user.get("textura", "solido")
+            v["user_abreviatura"] = user.get("abreviatura", "")
+            v["user_email"] = user.get("email", "")
+    
+    return vacaciones
+
+# Admin: Approve vacation request
+@api_router.post("/admin/vacaciones/{vacacion_id}/approve")
+async def approve_vacacion(vacacion_id: str, request: Request):
+    """Approve a vacation request (admin only)"""
+    admin = await require_admin(request)
+    
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+    
+    if vacacion.get("status") != VacationStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update vacation status
+    await db.vacaciones.update_one(
+        {"id": vacacion_id},
+        {"$set": {
+            "status": VacationStatus.APPROVED,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": admin["user_id"]
+        }}
+    )
+    
+    # Get user info for notification
+    user = await db.users.find_one({"user_id": vacacion["user_id"]}, {"_id": 0})
+    if user:
+        tipo_text = "vacaciones" if vacacion["tipo"] == "vacacion" else "día libre"
+        fecha_formatted = datetime.strptime(vacacion["fecha"], "%Y-%m-%d").strftime("%d/%m/%Y")
+        
+        # Create in-app notification
+        await create_notification(
+            user_id=user["user_id"],
+            notification_type=NotificationType.VACATION_APPROVED,
+            title="Solicitud aprobada ✅",
+            message=f"Tu solicitud de {tipo_text} para el {fecha_formatted} ha sido aprobada.",
+            data={"vacacion_id": vacacion_id, "fecha": vacacion["fecha"]}
+        )
+        
+        # Send email notification
+        email_html = create_vacation_email_html(
+            user_name=user.get("name", "Usuario"),
+            fecha=vacacion["fecha"],
+            tipo=vacacion["tipo"],
+            status="approved"
+        )
+        asyncio.create_task(send_notification_email(
+            to_email=user.get("email"),
+            subject="✅ Tu solicitud de vacaciones ha sido aprobada",
+            html_content=email_html
+        ))
+    
+    return {"message": "Vacation approved successfully"}
+
+# Admin: Reject vacation request
+@api_router.post("/admin/vacaciones/{vacacion_id}/reject")
+async def reject_vacacion(vacacion_id: str, request: Request, comment: Optional[str] = None):
+    """Reject a vacation request (admin only)"""
+    admin = await require_admin(request)
+    
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+    
+    if vacacion.get("status") != VacationStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update vacation status
+    await db.vacaciones.update_one(
+        {"id": vacacion_id},
+        {"$set": {
+            "status": VacationStatus.REJECTED,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "reviewed_by": admin["user_id"],
+            "rejection_comment": comment
+        }}
+    )
+    
+    # Get user info for notification
+    user = await db.users.find_one({"user_id": vacacion["user_id"]}, {"_id": 0})
+    if user:
+        tipo_text = "vacaciones" if vacacion["tipo"] == "vacacion" else "día libre"
+        fecha_formatted = datetime.strptime(vacacion["fecha"], "%Y-%m-%d").strftime("%d/%m/%Y")
+        
+        message = f"Tu solicitud de {tipo_text} para el {fecha_formatted} ha sido rechazada."
+        if comment:
+            message += f" Motivo: {comment}"
+        
+        # Create in-app notification
+        await create_notification(
+            user_id=user["user_id"],
+            notification_type=NotificationType.VACATION_REJECTED,
+            title="Solicitud rechazada ❌",
+            message=message,
+            data={"vacacion_id": vacacion_id, "fecha": vacacion["fecha"], "comment": comment}
+        )
+        
+        # Send email notification
+        email_html = create_vacation_email_html(
+            user_name=user.get("name", "Usuario"),
+            fecha=vacacion["fecha"],
+            tipo=vacacion["tipo"],
+            status="rejected",
+            comment=comment
+        )
+        asyncio.create_task(send_notification_email(
+            to_email=user.get("email"),
+            subject="❌ Tu solicitud de vacaciones ha sido rechazada",
+            html_content=email_html
+        ))
+    
+    return {"message": "Vacation rejected successfully"}
+
+# Admin: Bulk approve/reject
+@api_router.post("/admin/vacaciones/bulk-action")
+async def bulk_action_vacaciones(request: Request):
+    """Bulk approve or reject vacation requests (admin only)"""
+    admin = await require_admin(request)
+    data = await request.json()
+    
+    ids = data.get("ids", [])
+    action = data.get("action")  # "approve" or "reject"
+    comment = data.get("comment")
+    
+    if not ids or action not in ["approve", "reject"]:
+        raise HTTPException(status_code=400, detail="Invalid request")
+    
+    new_status = VacationStatus.APPROVED if action == "approve" else VacationStatus.REJECTED
+    
+    update_data = {
+        "status": new_status,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_by": admin["user_id"]
+    }
+    if action == "reject" and comment:
+        update_data["rejection_comment"] = comment
+    
+    result = await db.vacaciones.update_many(
+        {"id": {"$in": ids}, "status": VacationStatus.PENDING},
+        {"$set": update_data}
+    )
+    
+    return {"message": f"{result.modified_count} requests {action}d successfully"}
+
+# Admin: Delete any vacation/dia libre in any state (assigned, pending or
+# rejected) - a diferencia del borrado propio (/my-vacaciones/{fecha}), el
+# admin puede borrar en cualquier momento y con cualquier estado.
+@api_router.delete("/admin/vacaciones/{vacacion_id}")
+async def admin_delete_vacacion(vacacion_id: str, request: Request):
+    """Elimina una solicitud de vacaciones/dia libre, sea cual sea su estado
+    (pendiente, aprobada o rechazada). Solo admin."""
+    await require_admin(request)
+
+    vacacion = await db.vacaciones.find_one({"id": vacacion_id}, {"_id": 0})
+    if not vacacion:
+        raise HTTPException(status_code=404, detail="Vacation request not found")
+
+    await db.vacaciones.delete_one({"id": vacacion_id})
+    return {"message": "Vacation deleted successfully"}
+
+
+class AsignarVacacionesPayload(BaseModel):
+    operario_id: str
+    tipo: str = "vacacion"  # "vacacion" o "libre"
+    desde: Optional[str] = None  # YYYY-MM-DD (rango)
+    hasta: Optional[str] = None  # YYYY-MM-DD (rango)
+    fechas: Optional[List[str]] = None  # o lista de fechas sueltas
+
+
+@api_router.post("/admin/vacaciones/asignar")
+async def asignar_vacaciones_admin(payload: AsignarVacacionesPayload, request: Request):
+    """El admin asigna vacaciones/días libres directamente (ya aprobadas),
+    sin que el operario tenga que solicitarlas. Acepta un rango (desde/hasta)
+    o una lista de fechas sueltas. Los fines de semana se omiten en el rango
+    para vacaciones (se cuentan solo días laborables); para días sueltos se
+    respeta lo que envíe el admin."""
+    admin = await require_admin(request)
+
+    operario = await db.users.find_one({"user_id": payload.operario_id}, {"_id": 0})
+    if not operario:
+        raise HTTPException(status_code=404, detail="Operario no encontrado")
+
+    # Construir la lista de fechas a asignar
+    fechas = set(payload.fechas or [])
+    if payload.desde and payload.hasta:
+        try:
+            d = datetime.strptime(payload.desde, "%Y-%m-%d").date()
+            h = datetime.strptime(payload.hasta, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Fechas de rango no válidas")
+        if h < d:
+            raise HTTPException(status_code=400, detail="La fecha final es anterior a la inicial")
+        actual = d
+        while actual <= h:
+            # En el rango, omitir sábados (5) y domingos (6)
+            if actual.weekday() < 5:
+                fechas.add(actual.isoformat())
+            actual += timedelta(days=1)
+
+    if not fechas:
+        raise HTTPException(status_code=400, detail="No se han indicado fechas")
+
+    now = datetime.now(timezone.utc).isoformat()
+    creadas = 0
+    for fecha in sorted(fechas):
+        # Si ya existe una vacación ese día para ese operario, se pisa
+        # (se elimina y se crea la nueva aprobada).
+        await db.vacaciones.delete_one({"user_id": payload.operario_id, "fecha": fecha})
+        await db.vacaciones.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": payload.operario_id,
+            "fecha": fecha,
+            "tipo": payload.tipo,
+            "status": VacationStatus.APPROVED,
+            "created_at": now,
+            "reviewed_at": now,
+            "reviewed_by": admin["user_id"],
+            "rejection_comment": None,
+            "asignada_por_admin": True,
+        })
+        creadas += 1
+
+    # Avisar al operario de que se le han asignado
+    tipo_text = "vacaciones" if payload.tipo == "vacacion" else "días libres"
+    await create_notification(
+        user_id=payload.operario_id,
+        notification_type=NotificationType.VACATION_APPROVED,
+        title="Vacaciones asignadas",
+        message=f"El administrador te ha asignado {creadas} día(s) de {tipo_text}.",
+        data={"enlace": "/my-calendar"},
+    )
+
+    return {"message": "Vacaciones asignadas", "dias_asignados": creadas}
+
+@api_router.get("/admin/vacaciones/resumen")
+async def get_all_resumen(request: Request, year: Optional[int] = None):
+    """Get all users' vacation summary (admin only)"""
+    await require_admin(request)
+    
+    if not year:
+        year = datetime.now().year
+    
+    # Get all approved users
+    users = await db.users.find({"status": UserStatus.APPROVED}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    
+    resumen = []
+    for user in users:
+        # Count APPROVED vacaciones for this year
+        vacaciones_approved = await db.vacaciones.count_documents({
+            "user_id": user["user_id"],
+            "fecha": {"$regex": f"^{year}"},
+            "tipo": "vacacion",
+            "status": VacationStatus.APPROVED
+        })
+        vacaciones_pending = await db.vacaciones.count_documents({
+            "user_id": user["user_id"],
+            "fecha": {"$regex": f"^{year}"},
+            "tipo": "vacacion",
+            "status": VacationStatus.PENDING
+        })
+        # Count APPROVED dias libres for this year
+        libres_approved = await db.vacaciones.count_documents({
+            "user_id": user["user_id"],
+            "fecha": {"$regex": f"^{year}"},
+            "tipo": "libre",
+            "status": VacationStatus.APPROVED
+        })
+        libres_pending = await db.vacaciones.count_documents({
+            "user_id": user["user_id"],
+            "fecha": {"$regex": f"^{year}"},
+            "tipo": "libre",
+            "status": VacationStatus.PENDING
+        })
+        
+        dias_vacaciones_disponibles = user.get("dias_vacaciones", 32)
+        dias_libres_disponibles = user.get("dias_libres", 6)
+        
+        resumen.append({
+            "user_id": user["user_id"],
+            "nombre": user.get("name", ""),
+            "email": user.get("email", ""),
+            "abreviatura": user.get("abreviatura", ""),
+            "color": user.get("color", "#3B82F6"),
+            "textura": user.get("textura", "solido"),
+            # Vacaciones
+            "dias_disponibles": dias_vacaciones_disponibles,
+            "dias_aprobados": vacaciones_approved,
+            "dias_pendientes": vacaciones_pending,
+            "dias_restantes": dias_vacaciones_disponibles - vacaciones_approved,
+            # Días libres
+            "dias_libres_disponibles": dias_libres_disponibles,
+            "dias_libres_aprobados": libres_approved,
+            "dias_libres_pendientes": libres_pending,
+            "dias_libres_restantes": dias_libres_disponibles - libres_approved,
+        })
+    
+    return resumen
+
+# Legacy endpoints for backwards compatibility (admin only now)
+@api_router.get("/vacaciones")
+async def get_vacaciones(request: Request, month: Optional[str] = None):
+    """Get vacaciones - redirects based on role"""
+    try:
+        user = await get_current_user(request)
+        if user.get("role") == UserRole.ADMIN:
+            query = {}
+            if month:
+                query["fecha"] = {"$regex": f"^{month}"}
+            vacaciones = await db.vacaciones.find(query, {"_id": 0}).to_list(10000)
+            return vacaciones
+        else:
+            # Return only user's vacations
+            query = {"user_id": user["user_id"]}
+            if month:
+                query["fecha"] = {"$regex": f"^{month}"}
+            vacaciones = await db.vacaciones.find(query, {"_id": 0}).to_list(10000)
+            return vacaciones
+    except:
+        return []
+
+@api_router.get("/vacaciones/resumen")
+async def get_vacaciones_resumen(request: Request, year: Optional[int] = None):
+    """Get vacation summary - redirects based on role"""
+    try:
+        user = await get_current_user(request)
+        if user.get("role") == UserRole.ADMIN:
+            return await get_all_resumen(request, year)
+        else:
+            return [await get_my_resumen(request, year)]
+    except:
+        return []
+
+# ============ BUDGET TEMPLATE ENDPOINTS ============
+
+@api_router.get("/budget-templates", response_model=List[BudgetTemplate])
+async def get_budget_templates(
+    status: Optional[BudgetStatus] = None,
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+):
+    query = {}
+    if status:
+        query["status"] = status.value
+    if client_id:
+        query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
+    templates = await db.budget_templates.find(query, {"_id": 0}).to_list(1000)
+    for t in templates:
+        if isinstance(t.get('created_at'), str):
+            t['created_at'] = datetime.fromisoformat(t['created_at'])
+    return templates
+
+@api_router.get("/budget-templates/{template_id}", response_model=BudgetTemplate)
+async def get_budget_template(template_id: str):
+    template = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
+    if not template:
+        raise HTTPException(status_code=404, detail="Budget template not found")
+    if isinstance(template.get('created_at'), str):
+        template['created_at'] = datetime.fromisoformat(template['created_at'])
+    return template
+
+@api_router.post("/budget-templates", response_model=BudgetTemplate)
+async def create_budget_template(template_data: BudgetTemplateCreate):
+    template = BudgetTemplate(**template_data.model_dump())
+    doc = template.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    # Convert nested models to dicts
+    if doc.get('materiales'):
+        doc['materiales'] = [m if isinstance(m, dict) else m.model_dump() for m in doc['materiales']]
+    if doc.get('porte'):
+        doc['porte'] = doc['porte'] if isinstance(doc['porte'], dict) else doc['porte'].model_dump()
+    if doc.get('mano_obra'):
+        doc['mano_obra'] = doc['mano_obra'] if isinstance(doc['mano_obra'], dict) else doc['mano_obra'].model_dump()
+    if doc.get('calculo_mano_obra'):
+        doc['calculo_mano_obra'] = doc['calculo_mano_obra'] if isinstance(doc['calculo_mano_obra'], dict) else doc['calculo_mano_obra'].model_dump()
+    await db.budget_templates.insert_one(doc)
+    return template
+
+@api_router.put("/budget-templates/{template_id}", response_model=BudgetTemplate)
+async def update_budget_template(template_id: str, template_data: BudgetTemplateUpdate):
+    existing = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget template not found")
+    
+    update_data = {}
+    for k, v in template_data.model_dump().items():
+        if v is not None:
+            if k == 'materiales' and v:
+                update_data[k] = [m if isinstance(m, dict) else m.model_dump() for m in v]
+            elif k in ['porte', 'mano_obra', 'calculo_mano_obra'] and v:
+                update_data[k] = v if isinstance(v, dict) else v.model_dump()
+            else:
+                update_data[k] = v
+    
+    if update_data:
+        await db.budget_templates.update_one({"id": template_id}, {"$set": update_data})
+    
+    updated = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
+    if isinstance(updated.get('created_at'), str):
+        updated['created_at'] = datetime.fromisoformat(updated['created_at'])
+    return updated
+
+@api_router.delete("/budget-templates/{template_id}")
+async def delete_budget_template(template_id: str):
+    result = await db.budget_templates.delete_one({"id": template_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Budget template not found")
+    return {"message": "Budget template deleted successfully"}
+
+
+class DatosFacturacionPayload(BaseModel):
+    pedido_cliente: Optional[str] = None
+    factura_inicio: Optional[str] = None
+    factura_proveedor: Optional[str] = None
+    importe_proveedor: Optional[float] = None
+    anotaciones_facturacion: Optional[str] = None
+    facturado: Optional[bool] = None
+    pedido_par: Optional[str] = None
+
+
+@api_router.put("/budget-templates/{template_id}/facturacion")
+async def update_datos_facturacion(
+    template_id: str,
+    payload: DatosFacturacionPayload,
+    _: dict = Depends(require_budgets),
+):
+    """Actualiza SOLO los campos de facturación (los azules) de un
+    presupuesto: pedido cliente, facturas, importe proveedor, anotaciones,
+    facturado y pedido/par. El resto del presupuesto queda intacto. Es lo
+    que el rol facturación puede editar."""
+    existing = await db.budget_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget template not found")
+    # Solo los campos de facturación; se aceptan aunque vengan vacíos (para
+    # poder borrar un valor), pero se ignoran los que lleguen como None.
+    campos = payload.model_dump(exclude_none=True)
+    if campos:
+        await db.budget_templates.update_one(
+            {"id": template_id}, {"$set": campos}
+        )
+    return {"ok": True}
+
+# ============ DASHBOARD STATS ============
+
+@api_router.get("/dashboard/stats")
+async def get_dashboard_stats():
+    # Count from budget_templates collection now
+    total_budgets = await db.budget_templates.count_documents({})
+    pending_budgets = await db.budget_templates.count_documents({"status": "pending"})
+    approved_budgets = await db.budget_templates.count_documents({"status": "approved"})
+    rejected_budgets = await db.budget_templates.count_documents({"status": "rejected"})
+    
+    # Get total amount of approved budgets (SIN IVA - total_base)
+    pipeline = [
+        {"$match": {"status": "approved"}},
+        {"$group": {"_id": None, "total": {"$sum": "$total_base"}}}
+    ]
+    result = await db.budget_templates.aggregate(pipeline).to_list(1)
+    total_approved_amount = result[0]["total"] if result else 0
+    
+    # Get upcoming events (today and future)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    upcoming_events = await db.events.count_documents({"date": {"$gte": today}})
+    
+    return {
+        "total_budgets": total_budgets,
+        "pending_budgets": pending_budgets,
+        "approved_budgets": approved_budgets,
+        "rejected_budgets": rejected_budgets,
+        "total_approved_amount": total_approved_amount,
+        "upcoming_events": upcoming_events
+    }
+
+# =====================================================================
+# CLIENTES (Fase 2)
+# ---------------------------------------------------------------------
+# Modelo Client + endpoints REST.
+# Los 7 clientes iniciales se auto-siembran al arrancar la app si la
+# colección está vacía (ver seed_clients_if_empty).
+#
+# NOTA DE ARQUITECTURA (logo) - actualizada en Fase 5B:
+# El frontend sigue enviando el logo como data-URI base64 en logo_url
+# (sin cambios ahi). El backend, al crear o actualizar un cliente, detecta
+# si logo_url es un data-URI y en ese caso lo sube a Cloudinary y guarda
+# la URL resultante (mas logo_public_id, para poder borrar el asset viejo
+# cuando se reemplaza). MongoDB deja de usarse como almacen de binarios.
+# Ver _es_logo_base64 / _subir_logo_cloudinary / _borrar_logo_cloudinary.
+#
+# NOTA DE SEGURIDAD:
+# Lectura permitida a cualquier usuario aprobado (mismo patrón que
+# budget-templates: la restricción admin+facturación se aplica en el
+# frontend). Escritura restringida a admin.
+# =====================================================================
+
+import re
+
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+class ClientBase(BaseModel):
+    slug: str = Field(..., description="Identificador URL-friendly, único y estable")
+    nombre: str = Field(..., min_length=1, max_length=120)
+    logo_url: Optional[str] = Field(None, description="Data-URI base64 (entrada) o URL de Cloudinary (salida)")
+    mapa_zonas_url: Optional[str] = Field(
+        None,
+        description="Data-URI base64 (entrada) o URL de Cloudinary (salida) del plano de zonas "
+        "del cliente (Fase 6). Las letras A-M de las tareas por zona se corresponden con este mapa.",
+    )
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class ClientCreate(ClientBase):
+    pass
+
+
+class ClientUpdate(BaseModel):
+    # Todos opcionales: PUT parcial. El slug NO se puede cambiar una vez creado
+    # (rompería URLs y referencias futuras desde otras colecciones).
+    nombre: Optional[str] = Field(None, min_length=1, max_length=120)
+    logo_url: Optional[str] = None
+    mapa_zonas_url: Optional[str] = None
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Client(ClientBase):
+    id: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+    logo_public_id: Optional[str] = Field(
+        None, description="ID interno del asset en Cloudinary, para poder borrarlo al reemplazar el logo."
+    )
+    mapa_zonas_public_id: Optional[str] = Field(
+        None, description="ID interno del asset en Cloudinary del mapa de zonas."
+    )
+
+
+def _es_logo_base64(valor: Optional[str]) -> bool:
+    return bool(valor) and valor.startswith("data:image")
+
+
+async def _subir_logo_cloudinary(data_uri: str) -> tuple:
+    """Sube un logo (data-URI base64) a Cloudinary. Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder="inicia-gestion/clientes",
+            resource_type="image",
+        )
+    except Exception as e:
+        logger.error("Error subiendo logo a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el logo") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
+async def _borrar_logo_cloudinary(public_id: Optional[str]) -> None:
+    """Borra un asset de Cloudinary. Nunca lanza excepcion: si falla, se
+    queda huerfano en Cloudinary pero no debe romper la operacion del
+    usuario (crear/actualizar un cliente)."""
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(cloudinary.uploader.destroy, public_id)
+    except Exception:
+        logger.warning("No se pudo borrar un logo antiguo de Cloudinary", exc_info=True)
+
+
+async def _subir_pdf_cloudinary(pdf_bytes: bytes, carpeta: str) -> tuple:
+    """Sube un PDF (bytes crudos) a Cloudinary como recurso 'raw'.
+    Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            pdf_bytes,
+            folder=carpeta,
+            resource_type="raw",
+        )
+    except Exception as e:
+        logger.error("Error subiendo PDF a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el PDF") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
+async def _borrar_pdf_cloudinary(public_id: Optional[str]) -> None:
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(cloudinary.uploader.destroy, public_id, resource_type="raw")
+    except Exception:
+        logger.warning("No se pudo borrar un PDF antiguo de Cloudinary", exc_info=True)
+
+
+def _tipo_documento_base64(valor: Optional[str]) -> Optional[str]:
+    """Devuelve 'image', 'pdf' o None segun el data-URI recibido."""
+    if not valor:
+        return None
+    if valor.startswith("data:image"):
+        return "image"
+    if valor.startswith("data:application/pdf"):
+        return "pdf"
+    return None
+
+
+async def _subir_documento_cloudinary(data_uri: str, carpeta: str) -> tuple:
+    """Sube un documento (data-URI base64: imagen o PDF) a Cloudinary.
+    Las imagenes van como 'image' y los PDF como 'raw'. Devuelve
+    (url, public_id, resource_type)."""
+    tipo = _tipo_documento_base64(data_uri)
+    if tipo is None:
+        raise HTTPException(status_code=400, detail="Formato no valido (solo PDF o imagen)")
+    resource_type = "image" if tipo == "image" else "raw"
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder=carpeta,
+            resource_type=resource_type,
+        )
+    except Exception as e:
+        logger.error("Error subiendo documento a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el documento") from e
+    return resultado["secure_url"], resultado["public_id"], resource_type
+
+
+async def _borrar_documento_cloudinary(public_id: Optional[str], resource_type: str) -> None:
+    if not public_id:
+        return
+    try:
+        await asyncio.to_thread(
+            cloudinary.uploader.destroy, public_id, resource_type=resource_type or "image"
+        )
+    except Exception:
+        logger.warning("No se pudo borrar un documento antiguo de Cloudinary", exc_info=True)
+
+
+# =====================================================================
+# DOCUMENTOS PARA FIRMAR (Fase 14)
+# ---------------------------------------------------------------------
+# Subir un PDF cualquiera (contrato, albaran externo, etc.) y firmarlo
+# desde el movil colocando la firma en el punto EXACTO de la pagina que
+# se elija - no un sitio fijo. El usuario ve la pagina renderizada como
+# imagen, toca donde quiere la firma, y el backend la incrusta ahi
+# mismo usando pypdf+reportlab (la misma tecnica que un "watermark":
+# se crea una pagina superpuesta solo con la firma en su sitio, y se
+# fusiona sobre la pagina real).
+# =====================================================================
+
+
+def _es_pdf_base64(valor: Optional[str]) -> bool:
+    return bool(valor) and valor.startswith("data:application/pdf")
+
+
+class DocumentoFirmaCreate(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    pdf: str = Field(..., description="Data-URI base64 del PDF original")
+    categoria: Optional[str] = Field(
+        None, max_length=50, description="Ej. 'prevencion' para agrupar en ese apartado"
+    )
+
+
+class DocumentoFirma(BaseModel):
+    id: str
+    nombre: str
+    categoria: Optional[str] = None
+    pdf_url: str
+    pdf_public_id: str
+    num_paginas: int
+    firmado: bool = False
+    firma_pagina: Optional[int] = None
+    firmado_por: Optional[str] = None
+    firmado_por_nombre: Optional[str] = None
+    firmado_en: Optional[datetime] = None
+    pdf_firmado_url: Optional[str] = None
+    pdf_firmado_public_id: Optional[str] = None
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+class FirmarDocumentoPayload(BaseModel):
+    pagina: int = Field(..., ge=0, description="Indice de pagina, empezando en 0")
+    x_frac: float = Field(
+        ..., ge=0, le=1, description="Punto tocado, fraccion del ancho (0=izq, 1=der)"
+    )
+    y_frac: float = Field(
+        ..., ge=0, le=1, description="Punto tocado, fraccion del alto (0=arriba, 1=abajo)"
+    )
+    firma: str = Field(..., description="Data-URI base64 (PNG) de la firma")
+    nombre_firmante: str = Field(..., min_length=1, max_length=200)
+
+
+@api_router.post("/documentos-firma", response_model=DocumentoFirma)
+async def crear_documento_firma(
+    payload: DocumentoFirmaCreate, current_user: dict = Depends(require_admin)
+):
+    if not _es_pdf_base64(payload.pdf):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
+
+    try:
+        _, datos_b64 = payload.pdf.split(",", 1)
+        pdf_bytes = base64.b64decode(datos_b64)
+        num_paginas = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="No se pudo leer el PDF") from e
+
+    url, public_id = await _subir_pdf_cloudinary(pdf_bytes, "inicia-gestion/documentos-firma")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre.strip(),
+        "categoria": payload.categoria,
+        "pdf_url": url,
+        "pdf_public_id": public_id,
+        "num_paginas": num_paginas,
+        "firmado": False,
+        "firma_pagina": None,
+        "firmado_por": None,
+        "firmado_por_nombre": None,
+        "firmado_en": None,
+        "pdf_firmado_url": None,
+        "pdf_firmado_public_id": None,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.documentos_firma.insert_one(doc)
+    return DocumentoFirma(**doc)
+
+
+@api_router.get("/documentos-firma", response_model=List[DocumentoFirma])
+async def list_documentos_firma(
+    solo_pendientes: bool = False,
+    categoria: Optional[str] = None,
+    _: dict = Depends(require_approved),
+):
+    query = {}
+    if solo_pendientes:
+        query["firmado"] = False
+    if categoria:
+        query["categoria"] = categoria
+    cursor = db.documentos_firma.find(query).sort("creado_en", -1)
+    return [DocumentoFirma(**d) async for d in cursor]
+
+
+@api_router.get("/documentos-firma/{doc_id}", response_model=DocumentoFirma)
+async def obtener_documento_firma(doc_id: str, _: dict = Depends(require_approved)):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return DocumentoFirma(**doc)
+
+
+async def _descargar_bytes(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        resp = await client_http.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
+@api_router.get("/documentos-firma/{doc_id}/pagina/{pagina}")
+async def obtener_pagina_documento(
+    doc_id: str, pagina: int, _: dict = Depends(require_approved)
+):
+    """Renderiza una pagina del PDF como PNG, para que el frontend la
+    muestre y el usuario pueda tocar donde quiere colocar la firma."""
+    if not _PYPDFIUM2_DISPONIBLE:
+        raise HTTPException(
+            status_code=503,
+            detail="La vista previa de PDF no esta disponible en este servidor ahora mismo.",
+        )
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if pagina < 0 or pagina >= doc["num_paginas"]:
+        raise HTTPException(status_code=400, detail="Numero de pagina invalido")
+
+    try:
+        pdf_bytes = await _descargar_bytes(doc["pdf_url"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="No se pudo descargar el PDF") from e
+
+    def _renderizar():
+        pdf = pdfium.PdfDocument(pdf_bytes)
+        page = pdf[pagina]
+        bitmap = page.render(scale=2.0)
+        img = bitmap.to_pil()
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    try:
+        png_bytes = await asyncio.to_thread(_renderizar)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="No se pudo generar la vista previa") from e
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@api_router.post("/documentos-firma/{doc_id}/firmar", response_model=DocumentoFirma)
+async def firmar_documento(
+    doc_id: str,
+    payload: FirmarDocumentoPayload,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if doc["firmado"]:
+        raise HTTPException(status_code=400, detail="Este documento ya esta firmado")
+    if payload.pagina < 0 or payload.pagina >= doc["num_paginas"]:
+        raise HTTPException(status_code=400, detail="Numero de pagina invalido")
+    if not _es_logo_base64(payload.firma):
+        raise HTTPException(status_code=400, detail="Formato de firma no valido")
+
+    try:
+        pdf_bytes_original = await _descargar_bytes(doc["pdf_url"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="No se pudo descargar el PDF original") from e
+
+    _, firma_b64 = payload.firma.split(",", 1)
+    firma_bytes = base64.b64decode(firma_b64)
+
+    def _incrustar_firma():
+        reader = PdfReader(io.BytesIO(pdf_bytes_original))
+        writer = PdfWriter()
+        pagina_objetivo = reader.pages[payload.pagina]
+        ancho_pt = float(pagina_objetivo.mediabox.width)
+        alto_pt = float(pagina_objetivo.mediabox.height)
+
+        firma_img = PILImage.open(io.BytesIO(firma_bytes))
+        ratio_firma = firma_img.height / firma_img.width
+        ancho_firma_pt = ancho_pt * 0.25
+        alto_firma_pt = ancho_firma_pt * ratio_firma
+
+        # El punto tocado (origen arriba-izquierda, como en pantalla) se
+        # convierte a coordenadas PDF (origen abajo-izquierda), y la
+        # firma se centra sobre ese punto.
+        centro_x = payload.x_frac * ancho_pt
+        centro_y_desde_arriba = payload.y_frac * alto_pt
+        pdf_x = centro_x - ancho_firma_pt / 2
+        pdf_y = (alto_pt - centro_y_desde_arriba) - alto_firma_pt / 2
+        pdf_x = max(0, min(pdf_x, ancho_pt - ancho_firma_pt))
+        pdf_y = max(0, min(pdf_y, alto_pt - alto_firma_pt))
+
+        overlay_buf = io.BytesIO()
+        c = rl_canvas.Canvas(overlay_buf, pagesize=(ancho_pt, alto_pt))
+        c.drawImage(
+            ImageReader(firma_img),
+            pdf_x,
+            pdf_y,
+            width=ancho_firma_pt,
+            height=alto_firma_pt,
+            mask="auto",
+        )
+        c.save()
+        overlay_buf.seek(0)
+        overlay_reader = PdfReader(overlay_buf)
+        pagina_objetivo.merge_page(overlay_reader.pages[0])
+
+        for p in reader.pages:
+            writer.add_page(p)
+
+        salida = io.BytesIO()
+        writer.write(salida)
+        return salida.getvalue()
+
+    try:
+        pdf_firmado_bytes = await asyncio.to_thread(_incrustar_firma)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="No se pudo incrustar la firma") from e
+
+    url_firmado, public_id_firmado = await _subir_pdf_cloudinary(
+        pdf_firmado_bytes, "inicia-gestion/documentos-firma"
+    )
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    await db.documentos_firma.update_one(
+        {"id": doc_id},
+        {
+            "$set": {
+                "firmado": True,
+                "firma_pagina": payload.pagina,
+                "firmado_por": current_user["user_id"],
+                "firmado_por_nombre": (usuario["name"] if usuario else None)
+                or payload.nombre_firmante.strip(),
+                "firmado_en": now,
+                "pdf_firmado_url": url_firmado,
+                "pdf_firmado_public_id": public_id_firmado,
+            }
+        },
+    )
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    return DocumentoFirma(**doc)
+
+
+@api_router.delete("/documentos-firma/{doc_id}")
+async def eliminar_documento_firma(doc_id: str, _: dict = Depends(require_admin)):
+    doc = await db.documentos_firma.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_pdf_cloudinary(doc.get("pdf_public_id"))
+    await _borrar_pdf_cloudinary(doc.get("pdf_firmado_public_id"))
+    await db.documentos_firma.delete_one({"id": doc_id})
+    return {"ok": True}
+
+
+
+async def _subir_audio_cloudinary(data_uri: str) -> tuple:
+    """Sube una nota de voz (data-URI base64) a Cloudinary. resource_type
+    'auto' porque Cloudinary no tiene un tipo 'audio' propio - lo detecta
+    solo. Devuelve (url, public_id)."""
+    try:
+        resultado = await asyncio.to_thread(
+            cloudinary.uploader.upload,
+            data_uri,
+            folder="inicia-gestion/audios",
+            resource_type="auto",
+        )
+    except Exception as e:
+        logger.error("Error subiendo audio a Cloudinary", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo subir el audio") from e
+    return resultado["secure_url"], resultado["public_id"]
+
+
+def _validate_slug(slug: str) -> str:
+    slug = (slug or "").strip().lower()
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(
+            status_code=400,
+            detail="slug inválido: usa minúsculas, números y guiones (ej. 'leroy-merlin')",
+        )
+    return slug
+
+
+# Los 7 clientes iniciales que el frontend usaba hardcodeados.
+# Los slugs coinciden EXACTAMENTE con los ids del array del frontend
+# para que URLs ya en uso (/clients/sanitas, etc.) sigan resolviendo.
+_SEED_CLIENTS = [
+    {"slug": "sanitas", "nombre": "SANITAS"},
+    {"slug": "leroy-merlin", "nombre": "LEROY MERLIN"},
+    {"slug": "ikea", "nombre": "IKEA"},
+    {"slug": "iberdrola", "nombre": "IBERDROLA"},
+    {"slug": "style-outlet", "nombre": "STYLE OUTLET"},
+    {"slug": "clarins", "nombre": "CLARINS"},
+    {"slug": "galp", "nombre": "GALP"},
+]
+
+
+async def seed_clients_if_empty() -> None:
+    """Inserta los 7 clientes iniciales si la colección está vacía. Idempotente."""
+    count = await db.clients.count_documents({})
+    if count > 0:
+        return
+    now = datetime.now(timezone.utc)
+    docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "slug": c["slug"],
+            "nombre": c["nombre"],
+            "logo_url": None,
+            "notas": "",
+            "activo": True,
+            "creado_en": now,
+            "actualizado_en": now,
+        }
+        for c in _SEED_CLIENTS
+    ]
+    await db.clients.insert_many(docs)
+
+
+@api_router.get("/clients", response_model=List[Client])
+async def list_clients(_: dict = Depends(require_approved)):
+    """Lista de clientes activos, orden alfabético por nombre."""
+    cursor = db.clients.find({"activo": True}).sort("nombre", 1)
+    return [Client(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}", response_model=Client)
+async def get_client(slug: str, _: dict = Depends(require_approved)):
+    slug = _validate_slug(slug)
+    doc = await db.clients.find_one({"slug": slug, "activo": True})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return Client(**doc)
+
+
+@api_router.post("/clients", response_model=Client)
+async def create_client(payload: ClientCreate, _: dict = Depends(require_admin)):
+    slug = _validate_slug(payload.slug)
+    existing = await db.clients.find_one({"slug": slug})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe un cliente con ese slug")
+    now = datetime.now(timezone.utc)
+    logo_url = payload.logo_url
+    logo_public_id = None
+    if _es_logo_base64(logo_url):
+        logo_url, logo_public_id = await _subir_logo_cloudinary(logo_url)
+    mapa_zonas_url = payload.mapa_zonas_url
+    mapa_zonas_public_id = None
+    if _es_logo_base64(mapa_zonas_url):
+        mapa_zonas_url, mapa_zonas_public_id = await _subir_logo_cloudinary(mapa_zonas_url)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "slug": slug,
+        "nombre": payload.nombre.strip(),
+        "logo_url": logo_url,
+        "logo_public_id": logo_public_id,
+        "mapa_zonas_url": mapa_zonas_url,
+        "mapa_zonas_public_id": mapa_zonas_public_id,
+        "notas": (payload.notas or "").strip(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.clients.insert_one(doc)
+    return Client(**doc)
+
+
+@api_router.put("/clients/{client_id}", response_model=Client)
+async def update_client(
+    client_id: str, payload: ClientUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.clients.find_one({"id": client_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return Client(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+    if "notas" in updates and updates["notas"] is not None:
+        updates["notas"] = updates["notas"].strip()
+
+    if "logo_url" in updates:
+        nuevo_logo = updates["logo_url"]
+        if _es_logo_base64(nuevo_logo):
+            # Logo nuevo: subir a Cloudinary y borrar el anterior (si habia)
+            url, public_id = await _subir_logo_cloudinary(nuevo_logo)
+            await _borrar_logo_cloudinary(doc.get("logo_public_id"))
+            updates["logo_url"] = url
+            updates["logo_public_id"] = public_id
+        elif nuevo_logo is None and doc.get("logo_public_id"):
+            # Logo eliminado explicitamente
+            await _borrar_logo_cloudinary(doc.get("logo_public_id"))
+            updates["logo_public_id"] = None
+
+    if "mapa_zonas_url" in updates:
+        nuevo_mapa = updates["mapa_zonas_url"]
+        if _es_logo_base64(nuevo_mapa):
+            url, public_id = await _subir_logo_cloudinary(nuevo_mapa)
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_url"] = url
+            updates["mapa_zonas_public_id"] = public_id
+        elif nuevo_mapa is None and doc.get("mapa_zonas_public_id"):
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_public_id"] = None
+
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.clients.update_one({"id": client_id}, {"$set": updates})
+    doc = await db.clients.find_one({"id": client_id})
+    return Client(**doc)
+
+
+@api_router.post("/admin/clients/migrar-logos-cloudinary")
+async def migrar_logos_cloudinary(_: dict = Depends(require_admin)):
+    """Tarea puntual (Fase 5B): sube a Cloudinary los logos que aun esten
+    en base64 dentro de MongoDB (clientes creados/sembrados antes de esta
+    fase). Idempotente: los que ya estan en Cloudinary se saltan, asi que
+    se puede ejecutar mas de una vez sin problema."""
+    migrados, ya_en_cloudinary, sin_logo = 0, 0, 0
+    async for doc in db.clients.find({}):
+        logo = doc.get("logo_url")
+        if not logo:
+            sin_logo += 1
+            continue
+        if not _es_logo_base64(logo):
+            ya_en_cloudinary += 1
+            continue
+        url, public_id = await _subir_logo_cloudinary(logo)
+        await db.clients.update_one(
+            {"id": doc["id"]},
+            {
+                "$set": {
+                    "logo_url": url,
+                    "logo_public_id": public_id,
+                    "actualizado_en": datetime.now(timezone.utc),
+                }
+            },
+        )
+        migrados += 1
+    return {"migrados": migrados, "ya_en_cloudinary": ya_en_cloudinary, "sin_logo": sin_logo}
+
+
+@api_router.delete("/clients/{client_id}")
+async def delete_client(client_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False, no borra datos históricos."""
+    doc = await db.clients.find_one({"id": client_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+# =====================================================================
+# UBICACIONES DE CLIENTE (Fase 6)
+# ---------------------------------------------------------------------
+# Generico: cualquier cliente puede tener ubicaciones (sedes, estaciones,
+# delegaciones...) que requieren visitas periodicas. Nace del caso GALP
+# (39 estaciones de servicio con visitas recurrentes que antes se
+# llevaban en Excel), pero no esta atado a ese cliente.
+#
+# FRECUENCIA_OBJETIVO_VISITAS es un mapeo FIJO confirmado sobre datos
+# reales del cliente, sin excepciones observadas: no es literal (p.ej.
+# "trimestral" son 3 visitas/año, no 4). Se autorellena en el frontend
+# al elegir la frecuencia, pero el campo queda editable por si algun
+# caso futuro lo necesita distinto.
+#
+# El calculo de visitas realizadas/pendientes (a partir de las visitas
+# reales registradas) llega en la Fase 6 parte 2, junto al calendario.
+# =====================================================================
+
+FRECUENCIA_OBJETIVO_VISITAS = {
+    "MENSUAL": 8,
+    "BIMESTRAL": 4,
+    "TRIMESTRAL": 3,
+    "SEMESTRAL": 2,
+    "ANUAL": 1,
+}
+
+_FRECUENCIA_PATTERN = r"^(MENSUAL|BIMESTRAL|TRIMESTRAL|SEMESTRAL|ANUAL)$"
+_DIFICULTAD_PATTERN = r"^(facil|media|dificil)$"
+
+
+class ClientLocationBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    referencia_cliente: Optional[str] = Field(
+        None, max_length=50, description="Codigo interno del propio cliente (ej. E0803 en GALP)"
+    )
+    direccion: Optional[str] = Field("", max_length=300)
+    email_contacto: Optional[str] = Field(None, max_length=200)
+    enlace_maps: Optional[str] = Field(None, max_length=500)
+    # Opcionales (Fase 17 - unificacion Centros/Ubicaciones): un "centro"
+    # sencillo (ej. columna de Planificacion) no siempre tiene datos de
+    # seguimiento de visitas tipo GALP; solo son obligatorios cuando se
+    # rellenan desde la ficha completa.
+    horas_por_visita: Optional[float] = Field(None, ge=0)
+    frecuencia: Optional[str] = Field(None, pattern=_FRECUENCIA_PATTERN)
+    visitas_objetivo_ano: Optional[int] = Field(None, ge=0)
+    responsable_id: Optional[str] = None
+    responsable_texto_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre libre si el responsable no es un usuario registrado"
+    )
+    dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class ClientLocationCreate(ClientLocationBase):
+    pass
+
+
+class ClientLocationUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    referencia_cliente: Optional[str] = Field(None, max_length=50)
+    direccion: Optional[str] = Field(None, max_length=300)
+    email_contacto: Optional[str] = Field(None, max_length=200)
+    enlace_maps: Optional[str] = Field(None, max_length=500)
+    horas_por_visita: Optional[float] = Field(None, ge=0)
+    frecuencia: Optional[str] = Field(None, pattern=_FRECUENCIA_PATTERN)
+    visitas_objetivo_ano: Optional[int] = Field(None, ge=0)
+    responsable_id: Optional[str] = None
+    responsable_texto_libre: Optional[str] = Field(None, max_length=200)
+    dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class ClientLocation(ClientLocationBase):
+    id: str
+    client_id: str
+    client_slug: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class VisitaResumen(BaseModel):
+    """Entrada compacta para el mini-listado tipo Excel: fecha + horas
+    totales de una visita ya realizada."""
+
+    fecha: str
+    horas_totales: float
+
+
+class ClientLocationConVisitas(ClientLocation):
+    """Ubicacion + contadores del ano en curso, calculados a partir de las
+    visitas reales registradas (Fase 6 parte 2). Sustituye al COUNTIF fragil
+    del Excel: aqui se cuenta contra datos estructurados, no texto libre.
+
+    horas_estimadas_ano es el estimado SOLO de las visitas ya realizadas
+    (horas_por_visita x visitas_realizadas_ano), para comparar manzanas con
+    manzanas contra horas_realizadas_ano - no contra el objetivo completo
+    del ano, que incluye visitas que aun no han pasado."""
+
+    visitas_realizadas_ano: int = 0
+    visitas_pendientes_ano: int = 0
+    horas_realizadas_ano: float = 0
+    horas_estimadas_ano: float = 0
+    visitas_detalle: List[VisitaResumen] = Field(default_factory=list)
+
+
+def _num_operarios_visita(visita: dict) -> int:
+    """Cuenta operarios de una visita: registrados + texto libre (separado
+    por comas). Nunca 0: una visita sin operarios anotados cuenta como 1,
+    para no perder horas ya registradas en el total."""
+    n = len(visita.get("operarios_ids") or [])
+    libres = visita.get("operarios_texto_libre") or ""
+    n += len([x for x in libres.split(",") if x.strip()])
+    return max(n, 1)
+
+
+def _horas_totales_visita(visita: dict) -> float:
+    """Horas-persona de una visita: horas de la jornada x nº de operarios.
+    2 operarios x 3h de visita = 6h totales (asi lo pidio el cliente)."""
+    return (visita.get("horas") or 0) * _num_operarios_visita(visita)
+
+
+async def _visitas_stats_por_ubicacion(client_id: str, year: int) -> dict:
+    """{location_id: {visitas, horas, detalle}} para el ano dado. 'horas' ya
+    es el total horas-persona (ver _horas_totales_visita), no solo la
+    duracion de la visita. 'detalle' es la lista [{fecha, horas_totales}]
+    ordenada por fecha, para el mini-listado tipo Excel del catalogo."""
+    cursor = db.client_location_visits.find(
+        {
+            "client_id": client_id,
+            "fecha": {"$gte": f"{year}-01-01", "$lt": f"{year + 1}-01-01"},
+        }
+    ).sort("fecha", 1)
+    stats = {}
+    async for v in cursor:
+        loc_id = v["client_location_id"]
+        if loc_id not in stats:
+            stats[loc_id] = {"visitas": 0, "horas": 0, "detalle": []}
+        horas_totales = _horas_totales_visita(v)
+        stats[loc_id]["visitas"] += 1
+        stats[loc_id]["horas"] += horas_totales
+        stats[loc_id]["detalle"].append(
+            {"fecha": v["fecha"], "horas_totales": horas_totales}
+        )
+    return stats
+
+
+@api_router.get("/clients/{slug}/locations", response_model=List[ClientLocationConVisitas])
+async def list_client_locations(slug: str, _: dict = Depends(require_approved)):
+    """Ubicaciones activas del cliente, por nombre ascendente, con contadores
+    de visitas del ano en curso ya calculados."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    year = datetime.now(timezone.utc).year
+    stats = await _visitas_stats_por_ubicacion(cliente["id"], year)
+
+    resultado = []
+    cursor = db.client_locations.find(
+        {"client_id": cliente["id"], "activo": True}
+    ).sort("nombre", 1)
+    async for doc in cursor:
+        s = stats.get(doc["id"], {"visitas": 0, "horas": 0, "detalle": []})
+        objetivo = doc.get("visitas_objetivo_ano") or 0
+        resultado.append(
+            ClientLocationConVisitas(
+                **doc,
+                visitas_realizadas_ano=s["visitas"],
+                visitas_pendientes_ano=max(0, objetivo - s["visitas"]),
+                horas_realizadas_ano=s["horas"],
+                horas_estimadas_ano=(doc.get("horas_por_visita") or 0) * s["visitas"],
+                visitas_detalle=[VisitaResumen(**d) for d in s["detalle"]],
+            )
+        )
+    return resultado
+
+
+@api_router.post("/clients/{slug}/locations", response_model=ClientLocation)
+async def create_client_location(
+    slug: str, payload: ClientLocationCreate, _: dict = Depends(require_admin)
+):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cliente["id"],
+        "client_slug": slug,
+        **payload.model_dump(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.client_locations.insert_one(doc)
+    return ClientLocation(**doc)
+
+
+@api_router.put("/locations/{location_id}", response_model=ClientLocation)
+async def update_client_location(
+    location_id: str, payload: ClientLocationUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.client_locations.find_one({"id": location_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return ClientLocation(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.client_locations.update_one({"id": location_id}, {"$set": updates})
+    doc = await db.client_locations.find_one({"id": location_id})
+    return ClientLocation(**doc)
+
+
+@api_router.delete("/locations/{location_id}")
+async def delete_client_location(location_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False, no borra el historial de visitas."""
+    doc = await db.client_locations.find_one({"id": location_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    await db.client_locations.update_one(
+        {"id": location_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+# =====================================================================
+# VISITAS A UBICACIONES (Fase 6 parte 2)
+# ---------------------------------------------------------------------
+# Calendario dedicado (no el de vacaciones/dias libres del equipo).
+# Crear/editar/borrar una visita esta abierto a cualquier aprobado (igual
+# que las sesiones de partes de trabajo) - es una tarea operativa, no de
+# gestion del catalogo. operarios_ids/operarios_texto_libre reutilizan
+# exactamente el mismo patron que WorkSession.
+# =====================================================================
+
+
+class ClientLocationVisitBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    horas: float = Field(..., ge=0)
+    operarios_ids: List[str] = Field(default_factory=list)
+    operarios_texto_libre: Optional[str] = Field("", max_length=500)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class ClientLocationVisitCreate(ClientLocationVisitBase):
+    pass
+
+
+class ClientLocationVisitUpdate(BaseModel):
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    horas: Optional[float] = Field(None, ge=0)
+    operarios_ids: Optional[List[str]] = None
+    operarios_texto_libre: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ClientLocationVisit(ClientLocationVisitBase):
+    id: str
+    client_location_id: str
+    client_id: str
+    client_slug: str
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class ClientLocationVisitConUbicacion(ClientLocationVisit):
+    """Para el calendario: incluye el nombre oficial de la ubicacion ya
+    resuelto, para no depender nunca de un ID/referencia tecleado a mano.
+    num_operarios y horas_totales se calculan aqui (misma logica que
+    _visitas_stats_por_ubicacion) para que el calendario nunca las
+    recalcule por su cuenta y se desincronice."""
+
+    location_nombre: str
+    location_referencia_cliente: Optional[str] = None
+    location_dificultad: Optional[str] = None
+    num_operarios: int = 1
+    horas_totales: float = 0
+
+
+@api_router.get(
+    "/clients/{slug}/visits", response_model=List[ClientLocationVisitConUbicacion]
+)
+async def list_client_visits(
+    slug: str, desde: str, hasta: str, _: dict = Depends(require_approved)
+):
+    """Visitas del cliente con fecha en [desde, hasta) - formato 'YYYY-MM-DD'.
+    Pensado para pintar el calendario mes a mes."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    ubicaciones = {
+        loc["id"]: loc
+        async for loc in db.client_locations.find({"client_id": cliente["id"]})
+    }
+
+    cursor = db.client_location_visits.find(
+        {"client_id": cliente["id"], "fecha": {"$gte": desde, "$lt": hasta}}
+    ).sort("fecha", 1)
+
+    resultado = []
+    async for v in cursor:
+        loc = ubicaciones.get(v["client_location_id"])
+        resultado.append(
+            ClientLocationVisitConUbicacion(
+                **v,
+                location_nombre=loc["nombre"] if loc else "(ubicación eliminada)",
+                location_referencia_cliente=loc.get("referencia_cliente") if loc else None,
+                location_dificultad=loc.get("dificultad") if loc else None,
+                num_operarios=_num_operarios_visita(v),
+                horas_totales=_horas_totales_visita(v),
+            )
+        )
+    return resultado
+
+
+# Etiqueta de la columna genérica de planificación donde caen todas las
+# visitas del apartado Galp (en vez de una columna por estación).
+_COLUMNA_GALP_ETIQUETA = "GALP"
+
+
+async def _asegurar_columna_galp() -> None:
+    """Crea la columna libre 'GALP' en la planificacion si no existe, para
+    que las visitas de estaciones Galp tengan donde mostrarse."""
+    existe = await db.planificacion_columnas.find_one(
+        {"tipo": "libre", "etiqueta_libre": _COLUMNA_GALP_ETIQUETA}
+    )
+    if existe:
+        return
+    ultima = await db.planificacion_columnas.find_one(sort=[("orden", -1)])
+    orden = (ultima["orden"] + 1) if ultima else 0
+    await db.planificacion_columnas.insert_one({
+        "id": str(uuid.uuid4()),
+        "tipo": "libre",
+        "cliente_id": None,
+        "centro_id": None,
+        "etiqueta_libre": _COLUMNA_GALP_ETIQUETA,
+        "color_fondo": "#FEF3C7",  # ámbar suave
+        "orden": orden,
+        "creado_en": datetime.now(timezone.utc),
+    })
+
+
+async def _sincronizar_asignaciones_visita(
+    visita_id: str, fecha: str, operarios_ids: list, creado_por: str
+):
+    """Conecta el apartado Galp con la Planificacion de operarios: por cada
+    operario asignado a una visita (estacion + fecha), lo coloca en la
+    columna generica 'GALP' de la cuadricula ese dia (no una columna por
+    estacion). En su calendario el operario ve la estacion concreta a
+    traves de la propia visita; en la cuadricula solo se agrupa en GALP.
+
+    Idempotente: primero borra las asignaciones que generó ESTA visita y
+    luego crea las que correspondan al estado actual."""
+    await db.asignaciones.delete_many({"visita_id": visita_id})
+
+    if not operarios_ids:
+        return
+
+    await _asegurar_columna_galp()
+
+    now = datetime.now(timezone.utc)
+    for op_id in operarios_ids:
+        # No duplicar si ya existe una asignacion a GALP ese dia
+        ya = await db.asignaciones.find_one({
+            "operario_id": op_id,
+            "fecha": fecha,
+            "destino_libre": _COLUMNA_GALP_ETIQUETA,
+        })
+        if ya:
+            await db.asignaciones.update_one(
+                {"id": ya["id"]}, {"$set": {"visita_id": visita_id}}
+            )
+            continue
+        await db.asignaciones.insert_one({
+            "id": str(uuid.uuid4()),
+            "operario_id": op_id,
+            "fecha": fecha,
+            "destino_cliente_id": None,
+            "destino_centro_id": None,
+            "destino_libre": _COLUMNA_GALP_ETIQUETA,
+            "visita_id": visita_id,
+            "creado_por": creado_por,
+            "creado_en": now,
+            "actualizado_en": now,
+        })
+
+
+@api_router.post("/locations/{location_id}/visits", response_model=ClientLocationVisit)
+async def create_location_visit(
+    location_id: str,
+    payload: ClientLocationVisitCreate,
+    current_user: dict = Depends(require_approved),
+):
+    loc = await db.client_locations.find_one({"id": location_id})
+    if not loc:
+        raise HTTPException(status_code=404, detail="Ubicación no encontrada")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_location_id": location_id,
+        "client_id": loc["client_id"],
+        "client_slug": loc["client_slug"],
+        **payload.model_dump(),
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.client_location_visits.insert_one(doc)
+    await _sincronizar_asignaciones_visita(
+        doc["id"], doc.get("fecha"), doc.get("operarios_ids") or [], doc["creado_por"],
+    )
+    return ClientLocationVisit(**doc)
+
+
+@api_router.put("/visits/{visit_id}", response_model=ClientLocationVisit)
+async def update_location_visit(
+    visit_id: str, payload: ClientLocationVisitUpdate, _: dict = Depends(require_approved)
+):
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Visita no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return ClientLocationVisit(**doc)
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.client_location_visits.update_one({"id": visit_id}, {"$set": updates})
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    await _sincronizar_asignaciones_visita(
+        doc["id"], doc.get("fecha"), doc.get("operarios_ids") or [], doc.get("creado_por") or "?",
+    )
+    return ClientLocationVisit(**doc)
+
+
+@api_router.delete("/visits/{visit_id}")
+async def delete_location_visit(visit_id: str, _: dict = Depends(require_approved)):
+    doc = await db.client_location_visits.find_one({"id": visit_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Visita no encontrada")
+    await db.client_location_visits.delete_one({"id": visit_id})
+    await db.asignaciones.delete_many({"visita_id": visit_id})
+    return {"ok": True}
+
+
+class EstacionAsignadaDia(BaseModel):
+    centro_id: str
+    nombre: str
+    direccion: Optional[str] = None
+    contacto: Optional[str] = None
+    maps_url: Optional[str] = None
+    notas: Optional[str] = None
+
+
+@api_router.get("/mis-estaciones-dia", response_model=List[EstacionAsignadaDia])
+async def mis_estaciones_dia(fecha: str, current_user: dict = Depends(require_approved)):
+    """Estaciones (centros) donde el operario tiene visita asignada en una
+    fecha, con sus datos de ubicacion y contacto. Alimenta el detalle de
+    'GALP' en el calendario del operario."""
+    uid = current_user["user_id"]
+    visitas = [
+        v async for v in db.client_location_visits.find(
+            {"fecha": fecha, "operarios_ids": uid}
+        )
+    ]
+    salida = []
+    vistos = set()
+    for v in visitas:
+        loc_id = v.get("client_location_id")
+        if not loc_id or loc_id in vistos:
+            continue
+        vistos.add(loc_id)
+        centro = await db.client_locations.find_one({"id": loc_id})
+        if not centro:
+            continue
+        salida.append(EstacionAsignadaDia(
+            centro_id=loc_id,
+            nombre=centro.get("nombre", "?"),
+            direccion=centro.get("direccion"),
+            contacto=centro.get("contacto"),
+            maps_url=centro.get("maps_url"),
+            notas=v.get("notas") or None,
+        ))
+    return salida
+
+
+
+# ---------------------------------------------------------------------
+# Presupuestos asociados a un cliente (Fase 4)
+# ---------------------------------------------------------------------
+# Filtro hibrido: por client_id (nuevos) OR por texto de `cliente`
+# case-insensitive contra el nombre del cliente (historicos sin migrar).
+# Asi cubrimos ambos casos sin necesidad de migrar la base de datos.
+
+def _budgets_query_for_client(cliente_doc: dict) -> dict:
+    """Construye la query MongoDB con el filtro OR cliente_id / texto."""
+    nombre = (cliente_doc.get("nombre") or "").strip()
+    # Escape de regex para el nombre (por si contiene caracteres especiales)
+    safe = re.escape(nombre)
+    return {
+        "$or": [
+            {"client_id": cliente_doc["id"]},
+            # ^...$ con anclas + case-insensitive + strip previo
+            {"cliente": {"$regex": f"^\\s*{safe}\\s*$", "$options": "i"}},
+        ]
+    }
+
+
+@api_router.get("/clients/{slug}/budgets", response_model=List[BudgetTemplate])
+async def list_client_budgets(slug: str, _: dict = Depends(require_approved)):
+    """Lista de presupuestos asociados al cliente, mas recientes primero."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    query = _budgets_query_for_client(cliente)
+    cursor = db.budget_templates.find(query).sort("budget_date", -1)
+    return [BudgetTemplate(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}/budgets/summary")
+async def client_budgets_summary(slug: str, _: dict = Depends(require_approved)):
+    """Totales agregados por cliente en base imponible.
+
+    - total_facturado: suma de total_base de presupuestos con facturado=True
+    - total_pendiente: suma de total_base de presupuestos con facturado=False
+    - count: numero total de presupuestos asociados
+    """
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    query = _budgets_query_for_client(cliente)
+    total_facturado = 0.0
+    total_pendiente = 0.0
+    count = 0
+    async for doc in db.budget_templates.find(query, {"total_base": 1, "facturado": 1}):
+        count += 1
+        base = float(doc.get("total_base") or 0)
+        if doc.get("facturado"):
+            total_facturado += base
+        else:
+            total_pendiente += base
+    return {
+        "count": count,
+        "total_facturado": round(total_facturado, 2),
+        "total_pendiente": round(total_pendiente, 2),
+    }
+
+
+# =====================================================================
+# CATALOGO DE TAREAS DE TRABAJO (Fase 5A.1)
+# ---------------------------------------------------------------------
+# Modelo WorkTask + endpoints.
+# Las 10 tareas tipicas de jardineria se autosiembran al arrancar
+# si la coleccion esta vacia (ver seed_work_tasks_if_empty).
+#
+# El campo `en_top10` marca las tareas que aparecen como checkbox
+# rapido en el formulario de sesion. El resto quedan disponibles
+# en un buscador/desplegable. La propiedad es editable por admin
+# y facturacion desde la pagina /admin/work-tasks.
+#
+# Cualquier usuario aprobado puede crear tareas al vuelo desde el
+# formulario del parte. Solo admin+facturacion pueden editar o
+# borrar tareas existentes (para no ensuciar el catalogo).
+# =====================================================================
+
+
+class WorkTaskBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=80)
+    en_top10: bool = False
+    orden: int = 100
+
+
+class WorkTaskCreate(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=80)
+    # en_top10 y orden solo pueden asignarse en creacion por admin/facturacion.
+    # Un usuario normal creando al vuelo solo indica el nombre.
+    en_top10: Optional[bool] = False
+    orden: Optional[int] = 100
+
+
+class WorkTaskUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=80)
+    en_top10: Optional[bool] = None
+    orden: Optional[int] = None
+    activo: Optional[bool] = None
+
+
+class WorkTask(WorkTaskBase):
+    id: str
+    activo: bool = True
+    uso_count: int = 0
+    creado_en: datetime
+
+
+# Tareas iniciales tipicas de jardineria. Las 10 estan marcadas como top10.
+_SEED_WORK_TASKS = [
+    {"nombre": "Poda", "orden": 10, "en_top10": True},
+    {"nombre": "Siega", "orden": 20, "en_top10": True},
+    {"nombre": "Desbroce", "orden": 30, "en_top10": True},
+    {"nombre": "Riego", "orden": 40, "en_top10": True},
+    {"nombre": "Abonado", "orden": 50, "en_top10": True},
+    {"nombre": "Tratamiento fitosanitario", "orden": 60, "en_top10": True},
+    {"nombre": "Limpieza", "orden": 70, "en_top10": True},
+    {"nombre": "Recogida de restos", "orden": 80, "en_top10": True},
+    {"nombre": "Plantacion", "orden": 90, "en_top10": True},
+    {"nombre": "Trasplante", "orden": 100, "en_top10": True},
+]
+
+
+async def seed_work_tasks_if_empty() -> None:
+    """Inserta las 10 tareas iniciales si la coleccion esta vacia. Idempotente."""
+    count = await db.work_tasks.count_documents({})
+    if count > 0:
+        return
+    now = datetime.now(timezone.utc)
+    docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "nombre": t["nombre"],
+            "orden": t["orden"],
+            "en_top10": t["en_top10"],
+            "activo": True,
+            "uso_count": 0,
+            "creado_en": now,
+        }
+        for t in _SEED_WORK_TASKS
+    ]
+    await db.work_tasks.insert_many(docs)
+
+
+@api_router.get("/work-tasks", response_model=List[WorkTask])
+async def list_work_tasks(_: dict = Depends(require_approved)):
+    """Catalogo de tareas activas, orden ascendente por 'orden' y luego nombre."""
+    cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    return [WorkTask(**doc) async for doc in cursor]
+
+
+@api_router.post("/work-tasks", response_model=WorkTask)
+async def create_work_task(
+    payload: WorkTaskCreate, current_user: dict = Depends(require_approved)
+):
+    """Crea una tarea nueva. Cualquier usuario aprobado puede crearla al vuelo.
+
+    Si el usuario NO es admin/facturacion, se ignora `en_top10` y `orden`
+    para evitar que un operario ensucie el catalogo desde el formulario.
+    """
+    nombre = payload.nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Nombre obligatorio")
+    # Comprobar duplicado case-insensitive
+    existing = await db.work_tasks.find_one(
+        {"nombre": {"$regex": f"^{re.escape(nombre)}$", "$options": "i"}}
+    )
+    if existing:
+        # Devolvemos la existente (idempotente): si la reactivamos si estaba inactiva
+        if not existing.get("activo", True):
+            await db.work_tasks.update_one(
+                {"id": existing["id"]}, {"$set": {"activo": True}}
+            )
+            existing = await db.work_tasks.find_one({"id": existing["id"]})
+        return WorkTask(**existing)
+
+    is_admin_like = current_user.get("role") in ("admin", "facturacion")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": nombre,
+        "orden": (payload.orden if is_admin_like and payload.orden is not None else 100),
+        "en_top10": (bool(payload.en_top10) if is_admin_like else False),
+        "activo": True,
+        "uso_count": 0,
+        "creado_en": now,
+    }
+    await db.work_tasks.insert_one(doc)
+    return WorkTask(**doc)
+
+
+@api_router.patch("/work-tasks/{task_id}", response_model=WorkTask)
+async def update_work_task(
+    task_id: str, payload: WorkTaskUpdate, _: dict = Depends(require_admin)
+):
+    """Editar tarea o mover en/fuera del top10 (solo admin).
+
+    Nota: la restriccion admin+facturacion se aplicara desde el frontend
+    si en el futuro se decide relajar. De momento solo admin para evitar
+    conflictos con el catalogo.
+    """
+    doc = await db.work_tasks.find_one({"id": task_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkTask(**doc)
+    if "nombre" in updates and updates["nombre"] is not None:
+        updates["nombre"] = updates["nombre"].strip()
+        if not updates["nombre"]:
+            raise HTTPException(status_code=400, detail="Nombre no puede estar vacio")
+        # Duplicado con otra tarea distinta
+        dup = await db.work_tasks.find_one(
+            {
+                "nombre": {"$regex": f"^{re.escape(updates['nombre'])}$", "$options": "i"},
+                "id": {"$ne": task_id},
+            }
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail="Ya existe una tarea con ese nombre")
+    await db.work_tasks.update_one({"id": task_id}, {"$set": updates})
+    doc = await db.work_tasks.find_one({"id": task_id})
+    return WorkTask(**doc)
+
+
+@api_router.delete("/work-tasks/{task_id}")
+async def delete_work_task(task_id: str, _: dict = Depends(require_admin)):
+    """Soft delete: marca activo=False. Los partes que la usaron conservan la referencia."""
+    doc = await db.work_tasks.find_one({"id": task_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.work_tasks.update_one({"id": task_id}, {"$set": {"activo": False}})
+    return {"ok": True}
+
+# =====================================================================
+# OPERARIOS (Fase 5A.2 parte 2)
+# ---------------------------------------------------------------------
+# Endpoint ligero para poblar el desplegable de operarios registrados
+# en el modal de sesion. Deliberadamente NO reutiliza /admin/users
+# (protegido por require_admin): cualquier operario aprobado necesita
+# poder ver a sus companeros para rellenar un parte, no solo el admin.
+# Expone solo lo imprescindible (id, nombre, email) - nunca password_hash
+# ni otros campos sensibles.
+# =====================================================================
+
+
+@api_router.get("/users/operarios")
+async def list_operarios(_: dict = Depends(require_approved)):
+    """Usuarios con rol 'user' o 'admin' y estado 'approved', para selects de
+    operarios. Se incluye al admin porque tambien puede ir sobre el terreno
+    y hay que poder asignarlo (ej. en la Planificacion de equipo)."""
+    cursor = db.users.find(
+        {"role": {"$in": [UserRole.USER, UserRole.ADMIN]}, "status": UserStatus.APPROVED},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "color": 1, "textura": 1, "abreviatura": 1},
+    ).sort("name", 1)
+    return await cursor.to_list(1000)
+
+
+# =====================================================================
+# FOTOS RAPIDAS (Fase 8)
+# ---------------------------------------------------------------------
+# Alternativa a WhatsApp: el operario hace la foto desde la app (camara
+# directa, sin elegir cliente) y llega a una bandeja "sin clasificar" para
+# que el admin la asigne despues. Reutiliza _subir_logo_cloudinary /
+# _borrar_logo_cloudinary (genericos pese al nombre) para el almacen.
+# =====================================================================
+
+
+class FotoCreatePayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto tomada con la camara")
+    lote_id: Optional[str] = Field(
+        None,
+        description="Agrupa varias fotos tomadas en la misma sesion (generado por el "
+        "frontend), para poder clasificarlas todas a la vez despues.",
+    )
+
+
+class FotoClasificarPayload(BaseModel):
+    client_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    work_order_id: Optional[str] = None
+
+
+class ClasificarLotePayload(BaseModel):
+    """Mini-clasificacion que el propio operario puede rellenar justo
+    despues de tomar las fotos (Fase 8 parte 2), o la clasificacion
+    completa que hace el admin desde la pagina de detalle de la
+    conversacion (Fase 8 parte 5, incluye work_order_id). Todos los
+    campos son opcionales: si no se rellena nada, las fotos quedan igual
+    que antes."""
+
+    antes_despues: Optional[str] = Field(None, pattern=r"^(antes|despues)$")
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    client_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    work_order_id: Optional[str] = None
+    audio: Optional[str] = Field(None, description="Data-URI base64 de la nota de voz")
+
+
+class Foto(BaseModel):
+    id: str
+    operario_id: str
+    url: str
+    public_id: Optional[str] = None
+    lote_id: Optional[str] = None
+    antes_despues: Optional[str] = None
+    fecha: Optional[str] = None
+    audio_url: Optional[str] = None
+    audio_public_id: Optional[str] = None
+    client_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    work_order_id: Optional[str] = None
+    creado_en: datetime
+    clasificado_en: Optional[datetime] = None
+
+
+class FotoConNombres(Foto):
+    """Para la bandeja del admin: nombres ya resueltos, no solo IDs."""
+
+    operario_nombre: str
+    client_nombre: Optional[str] = None
+    centro_nombre: Optional[str] = None
+    work_order_titulo: Optional[str] = None
+
+
+# =====================================================================
+# COMENTARIOS SOBRE FOTOS (Fase 8 parte 4)
+# ---------------------------------------------------------------------
+# Mini-chat por lote de fotos: si una foto llega "en bruto" (o incluso ya
+# clasificada), el admin puede preguntar algo y el operario responde. Se
+# apoya en el sistema de notificaciones ya existente (create_notification
+# / notify_admins) - no hace falta nada nuevo ahi.
+# =====================================================================
+
+
+class ComentarioFotoBase(BaseModel):
+    texto: str = Field(..., min_length=1, max_length=1000)
+
+
+class ComentarioFoto(ComentarioFotoBase):
+    id: str
+    lote_id: str
+    autor_id: str
+    creado_en: datetime
+
+
+class ComentarioFotoConNombre(ComentarioFoto):
+    autor_nombre: str
+    es_admin: bool
+
+
+@api_router.get(
+    "/fotos/lote/{lote_id}/comentarios", response_model=List[ComentarioFotoConNombre]
+)
+async def list_comentarios_lote(lote_id: str, _: dict = Depends(require_approved)):
+    cursor = db.foto_comentarios.find({"lote_id": lote_id}).sort("creado_en", 1)
+    comentarios = [c async for c in cursor]
+
+    autor_ids = {c["autor_id"] for c in comentarios}
+    autores = {}
+    if autor_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(autor_ids)}}, {"_id": 0, "user_id": 1, "name": 1, "role": 1}
+        ):
+            autores[u["user_id"]] = u
+
+    return [
+        ComentarioFotoConNombre(
+            **c,
+            autor_nombre=autores.get(c["autor_id"], {}).get("name", "Usuario"),
+            es_admin=autores.get(c["autor_id"], {}).get("role") == UserRole.ADMIN,
+        )
+        for c in comentarios
+    ]
+
+
+@api_router.post(
+    "/fotos/lote/{lote_id}/comentarios", response_model=ComentarioFotoConNombre
+)
+async def crear_comentario_lote(
+    lote_id: str,
+    payload: ComentarioFotoBase,
+    current_user: dict = Depends(require_approved),
+):
+    foto = await db.fotos.find_one({"lote_id": lote_id})
+    if not foto:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+
+    now = datetime.now(timezone.utc)
+    texto = payload.texto.strip()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "lote_id": lote_id,
+        "autor_id": current_user["user_id"],
+        "texto": texto,
+        "creado_en": now,
+    }
+    await db.foto_comentarios.insert_one(doc)
+
+    es_admin_autor = current_user.get("role") == UserRole.ADMIN
+    if es_admin_autor:
+        if foto["operario_id"] != current_user["user_id"]:
+            await create_notification(
+                user_id=foto["operario_id"],
+                notification_type=NotificationType.FOTO_COMENTARIO,
+                title="Pregunta sobre tus fotos",
+                message=texto[:150],
+                data={"lote_id": lote_id},
+            )
+    else:
+        await notify_admins(
+            notification_type=NotificationType.FOTO_COMENTARIO,
+            title=f"{current_user.get('name', 'Un operario')} respondió sobre unas fotos",
+            message=texto[:150],
+            data={"lote_id": lote_id},
+        )
+
+    return ComentarioFotoConNombre(
+        **doc,
+        autor_nombre=current_user.get("name", "Usuario"),
+        es_admin=es_admin_autor,
+    )
+
+
+@api_router.post("/fotos", response_model=Foto)
+async def subir_foto(
+    payload: FotoCreatePayload, current_user: dict = Depends(require_approved)
+):
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "url": url,
+        "public_id": public_id,
+        "lote_id": payload.lote_id,
+        "antes_despues": None,
+        "fecha": None,
+        "audio_url": None,
+        "audio_public_id": None,
+        "client_id": None,
+        "work_order_id": None,
+        "creado_en": now,
+        "clasificado_en": None,
+    }
+    # Notificar al admin solo en la PRIMERA foto de cada lote, para no
+    # generar una notificacion por cada foto de una misma tanda.
+    ya_habia = False
+    if payload.lote_id:
+        ya_habia = (
+            await db.fotos.count_documents({"lote_id": payload.lote_id}, limit=1)
+        ) > 0
+
+    await db.fotos.insert_one(doc)
+
+    if not ya_habia:
+        usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+        nombre = usuario["name"] if usuario else "Un operario"
+        await notify_admins(
+            notification_type=NotificationType.FOTO_SUBIDA,
+            title="Fotos nuevas",
+            message=f"{nombre} ha subido fotos.",
+            data={"enlace": "/fotos"},
+        )
+    return Foto(**doc)
+
+
+@api_router.put("/fotos/lote/{lote_id}/clasificar")
+async def clasificar_lote(
+    lote_id: str,
+    payload: ClasificarLotePayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Aplica la mini-clasificacion (antes/despues, fecha, cliente, audio)
+    a todas las fotos de un mismo lote a la vez. La puede rellenar el
+    propio operario justo despues de tomar las fotos - no hace falta ser
+    admin, pero solo sobre lotes propios (o si eres admin)."""
+    alguna = await db.fotos.find_one({"lote_id": lote_id})
+    if not alguna:
+        raise HTTPException(status_code=404, detail="Lote no encontrado")
+    if alguna["operario_id"] != current_user["user_id"] and current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="No puedes clasificar fotos de otro operario")
+
+    updates = {}
+    if payload.antes_despues is not None:
+        updates["antes_despues"] = payload.antes_despues
+    if payload.fecha is not None:
+        updates["fecha"] = payload.fecha
+    if payload.client_id is not None:
+        updates["client_id"] = payload.client_id
+        updates["clasificado_en"] = datetime.now(timezone.utc)
+    if payload.centro_id is not None:
+        updates["centro_id"] = payload.centro_id
+    if payload.work_order_id is not None:
+        if current_user.get("role") != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=403, detail="Solo un administrador puede asignar el parte"
+            )
+        updates["work_order_id"] = payload.work_order_id
+    if payload.audio:
+        audio_url, audio_public_id = await _subir_audio_cloudinary(payload.audio)
+        updates["audio_url"] = audio_url
+        updates["audio_public_id"] = audio_public_id
+
+    if not updates:
+        return {"ok": True, "actualizadas": 0}
+
+    result = await db.fotos.update_many({"lote_id": lote_id}, {"$set": updates})
+    return {"ok": True, "actualizadas": result.modified_count}
+
+
+@api_router.get("/fotos", response_model=List[FotoConNombres])
+async def list_fotos(
+    solo_sin_clasificar: bool = False,
+    clasificadas_por_operario: bool = False,
+    work_order_id: Optional[str] = None,
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+    mias: bool = False,
+    lote_id: Optional[str] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    antes_despues: Optional[str] = None,
+    operario_id: Optional[str] = None,
+    current_user: dict = Depends(require_approved),
+):
+    """Bandeja de fotos. Con lote_id, solo las de ese grupo concreto (la
+    pagina de detalle de una conversacion, a la que se llega desde una
+    notificacion). Con solo_sin_clasificar=True, las que aun no
+    tienen un PARTE asignado (aunque el operario ya les haya puesto
+    cliente en la mini-clasificacion, siguen "pendientes" hasta que el
+    admin las ubique en un parte concreto). Con work_order_id, solo las
+    clasificadas en ese parte concreto (la vista dentro de un parte de
+    trabajo). Con client_id, todas las del cliente (con o sin parte
+    concreto - vista en la ficha del cliente). Con mias=True, solo las
+    que ha subido el usuario actual (para su propia pagina "Mis fotos").
+
+    fecha_desde/fecha_hasta, antes_despues y operario_id son filtros
+    adicionales, combinables entre si y con cualquiera de las vistas de
+    arriba - los usa el archivo filtrable de "Fotografias" (fecha,
+    antes/despues, operario; zona queda pendiente, cada jardin tendra la
+    suya propia)."""
+    if lote_id:
+        query = {"lote_id": lote_id}
+    elif work_order_id:
+        query = {"work_order_id": work_order_id}
+    elif client_id:
+        query = {"client_id": client_id}
+        if centro_id:
+            query["centro_id"] = centro_id
+    elif mias:
+        query = {"operario_id": current_user["user_id"]}
+    elif solo_sin_clasificar:
+        # Pendientes DE VERDAD: sin cliente asignado (nadie las ha clasificado).
+        query = {"client_id": None}
+    elif clasificadas_por_operario:
+        # Las que un operario ya asignó a un cliente pero el admin aún no ha
+        # revisado (para poder corregir el centro o darlas por buenas).
+        query = {"client_id": {"$ne": None}, "revisada_admin": {"$ne": True}}
+    else:
+        query = {}
+
+    if fecha_desde or fecha_hasta:
+        rango = {}
+        if fecha_desde:
+            rango["$gte"] = fecha_desde
+        if fecha_hasta:
+            rango["$lte"] = fecha_hasta
+        query["fecha"] = rango
+    if antes_despues:
+        query["antes_despues"] = antes_despues
+    if operario_id:
+        query["operario_id"] = operario_id
+
+    cursor = db.fotos.find(query).sort("creado_en", -1)
+    fotos = [f async for f in cursor]
+
+    operario_ids = {f["operario_id"] for f in fotos}
+    client_ids = {f["client_id"] for f in fotos if f.get("client_id")}
+    wo_ids = {f["work_order_id"] for f in fotos if f.get("work_order_id")}
+
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    clientes_map = {}
+    if client_ids:
+        async for cl in db.clients.find({"id": {"$in": list(client_ids)}}):
+            clientes_map[cl["id"]] = cl["nombre"]
+
+    # Nombres de centro (client_locations)
+    centro_ids = {f.get("centro_id") for f in fotos if f.get("centro_id")}
+    centros_map = {}
+    if centro_ids:
+        async for c in db.client_locations.find({"id": {"$in": list(centro_ids)}}):
+            centros_map[c["id"]] = c.get("nombre")
+
+    wo_map = {}
+    if wo_ids:
+        async for wo in db.work_orders.find({"id": {"$in": list(wo_ids)}}):
+            wo_map[wo["id"]] = wo["titulo"]
+
+    return [
+        FotoConNombres(
+            **f,
+            operario_nombre=operarios_map.get(f["operario_id"], "Operario"),
+            client_nombre=clientes_map.get(f.get("client_id")),
+            centro_nombre=centros_map.get(f.get("centro_id")),
+            work_order_titulo=wo_map.get(f.get("work_order_id")),
+        )
+        for f in fotos
+    ]
+
+
+@api_router.put("/fotos/{foto_id}/clasificar", response_model=Foto)
+async def clasificar_foto(
+    foto_id: str, payload: FotoClasificarPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    if payload.work_order_id and not payload.client_id:
+        raise HTTPException(
+            status_code=400, detail="No se puede asignar un parte sin cliente"
+        )
+    updates = {
+        "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
+        "work_order_id": payload.work_order_id,
+        "clasificado_en": datetime.now(timezone.utc) if payload.client_id else None,
+    }
+    await db.fotos.update_one({"id": foto_id}, {"$set": updates})
+    doc = await db.fotos.find_one({"id": foto_id})
+    return Foto(**doc)
+
+
+@api_router.delete("/fotos/{foto_id}")
+async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await _borrar_logo_cloudinary(doc.get("public_id"))
+    await db.fotos.delete_one({"id": foto_id})
+    return {"ok": True}
+
+
+@api_router.put("/fotos/{foto_id}/marcar-revisada")
+async def marcar_foto_revisada(foto_id: str, _: dict = Depends(require_admin)):
+    """Marca una foto ya clasificada por un operario como revisada por el
+    admin: desaparece de la bandeja de 'clasificadas por operarios' pero la
+    foto SIGUE archivada en su cliente/centro (no se borra)."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await db.fotos.update_one(
+        {"id": foto_id}, {"$set": {"revisada_admin": True}}
+    )
+    return {"ok": True}
+
+
+# =====================================================================
+# CENTROS DE TRABAJO (Fase 9 parte 5)
+# ---------------------------------------------------------------------
+# Subgrupo dentro de un cliente: los sitios/centros concretos donde se
+# trabaja (ej. "IKEA - Alcorcon", "IKEA - Getafe"). Version ligera y
+# generica, sin los campos de frecuencia/horas de ClientLocation (esos
+# son especificos del seguimiento de visitas recurrentes de GALP). Sirve
+# sobre todo para dar mas precision a las columnas de Planificacion.
+# =====================================================================
+
+
+class CentroBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    direccion: Optional[str] = Field(None, max_length=300)
+    contacto: Optional[str] = Field("", max_length=300)
+    maps_url: Optional[str] = Field("", max_length=600)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class CentroCreate(CentroBase):
+    pass
+
+
+class CentroUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    direccion: Optional[str] = Field(None, max_length=300)
+    contacto: Optional[str] = Field(None, max_length=300)
+    maps_url: Optional[str] = Field(None, max_length=600)
+    notas: Optional[str] = Field(None, max_length=1000)
+    activo: Optional[bool] = None
+
+
+class Centro(CentroBase):
+    id: str
+    client_id: str
+    client_slug: str
+    activo: bool = True
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+@api_router.get("/clients/{slug}/centros", response_model=List[Centro])
+async def list_centros(slug: str, _: dict = Depends(require_approved)):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cursor = db.client_locations.find({"client_id": cliente["id"], "activo": True}).sort("nombre", 1)
+    return [Centro(**c) async for c in cursor]
+
+
+@api_router.post("/clients/{slug}/centros", response_model=Centro)
+async def crear_centro(slug: str, payload: CentroCreate, _: dict = Depends(require_admin)):
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cliente["id"],
+        "client_slug": slug,
+        **payload.model_dump(),
+        "activo": True,
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.client_locations.insert_one(doc)
+    return Centro(**doc)
+
+
+@api_router.get("/centros/{centro_id}", response_model=Centro)
+async def obtener_centro(centro_id: str, _: dict = Depends(require_approved)):
+    doc = await db.client_locations.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    return Centro(**doc)
+
+
+@api_router.put("/centros/{centro_id}", response_model=Centro)
+async def actualizar_centro(centro_id: str, payload: CentroUpdate, _: dict = Depends(require_admin)):
+    doc = await db.client_locations.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.client_locations.update_one({"id": centro_id}, {"$set": updates})
+    doc = await db.client_locations.find_one({"id": centro_id})
+    return Centro(**doc)
+
+
+@api_router.delete("/centros/{centro_id}")
+async def eliminar_centro(centro_id: str, _: dict = Depends(require_admin)):
+    doc = await db.client_locations.find_one({"id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+    await db.client_locations.update_one(
+        {"id": centro_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+# --- Guia de trabajo del centro ------------------------------------------
+# Elementos (foto o PDF) con titulo de zona y descripcion de como trabajar
+# en ella. Los ven todos los operarios; solo el admin los gestiona.
+
+class GuiaTrabajoItem(BaseModel):
+    id: str
+    centro_id: str
+    tipo: str  # "imagen" | "pdf"
+    url: str
+    public_id: Optional[str] = None
+    zona: Optional[str] = None
+    descripcion: Optional[str] = None
+    orden: int = 0
+    creado_en: datetime
+
+
+class GuiaTrabajoCrear(BaseModel):
+    zona: Optional[str] = Field("", max_length=200)
+    descripcion: Optional[str] = Field("", max_length=2000)
+    archivo: Optional[str] = None  # data-URI base64 (imagen o PDF)
+    foto_id: Optional[str] = None  # o reutilizar una foto ya existente
+
+
+class GuiaTrabajoEditar(BaseModel):
+    zona: Optional[str] = Field(None, max_length=200)
+    descripcion: Optional[str] = Field(None, max_length=2000)
+
+
+@api_router.get("/centros/{centro_id}/guia", response_model=List[GuiaTrabajoItem])
+async def list_guia_trabajo(centro_id: str, _: dict = Depends(require_approved)):
+    cursor = db.guia_trabajo.find({"centro_id": centro_id, "activo": {"$ne": False}}).sort(
+        [("orden", 1), ("creado_en", 1)]
+    )
+    return [GuiaTrabajoItem(**g) async for g in cursor]
+
+
+@api_router.post("/centros/{centro_id}/guia", response_model=GuiaTrabajoItem)
+async def crear_guia_trabajo(
+    centro_id: str, payload: GuiaTrabajoCrear, _: dict = Depends(require_admin)
+):
+    centro = await db.client_locations.find_one({"id": centro_id})
+    if not centro:
+        raise HTTPException(status_code=404, detail="Centro no encontrado")
+
+    tipo = "imagen"
+    url = None
+    public_id = None
+
+    if payload.foto_id:
+        # Reutilizar una foto existente del archivo
+        foto = await db.fotos.find_one({"id": payload.foto_id})
+        if not foto:
+            raise HTTPException(status_code=404, detail="Foto no encontrada")
+        url = foto.get("url")
+        public_id = None  # la foto original conserva su public_id; no lo tocamos
+        tipo = "imagen"
+    elif payload.archivo:
+        # Subir imagen o PDF nuevo
+        base_tipo = _tipo_documento_base64(payload.archivo)
+        if base_tipo == "pdf":
+            tipo = "pdf"
+        else:
+            tipo = "imagen"
+        url, public_id = await _subir_documento_cloudinary(payload.archivo, "inicia-gestion/guias")
+    else:
+        raise HTTPException(status_code=400, detail="Falta el archivo o la foto")
+
+    # Orden: al final
+    ultimo = await db.guia_trabajo.find_one(
+        {"centro_id": centro_id}, sort=[("orden", -1)]
+    )
+    orden = (ultimo["orden"] + 1) if ultimo else 0
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "centro_id": centro_id,
+        "tipo": tipo,
+        "url": url,
+        "public_id": public_id,
+        "zona": (payload.zona or "").strip(),
+        "descripcion": (payload.descripcion or "").strip(),
+        "orden": orden,
+        "activo": True,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    await db.guia_trabajo.insert_one(doc)
+    return GuiaTrabajoItem(**doc)
+
+
+@api_router.put("/centros/{centro_id}/guia/{item_id}", response_model=GuiaTrabajoItem)
+async def editar_guia_trabajo(
+    centro_id: str, item_id: str, payload: GuiaTrabajoEditar, _: dict = Depends(require_admin)
+):
+    doc = await db.guia_trabajo.find_one({"id": item_id, "centro_id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Elemento no encontrado")
+    updates = {}
+    if payload.zona is not None:
+        updates["zona"] = payload.zona.strip()
+    if payload.descripcion is not None:
+        updates["descripcion"] = payload.descripcion.strip()
+    if updates:
+        await db.guia_trabajo.update_one({"id": item_id}, {"$set": updates})
+    doc = await db.guia_trabajo.find_one({"id": item_id})
+    return GuiaTrabajoItem(**doc)
+
+
+@api_router.delete("/centros/{centro_id}/guia/{item_id}")
+async def borrar_guia_trabajo(
+    centro_id: str, item_id: str, _: dict = Depends(require_admin)
+):
+    doc = await db.guia_trabajo.find_one({"id": item_id, "centro_id": centro_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Elemento no encontrado")
+    # Si tiene archivo propio en Cloudinary (no una foto reutilizada), borrarlo
+    if doc.get("public_id"):
+        resource = "raw" if doc.get("tipo") == "pdf" else "image"
+        await _borrar_documento_cloudinary(doc["public_id"], resource)
+    await db.guia_trabajo.delete_one({"id": item_id})
+    return {"ok": True}
+
+
+def _normalizar_nombre_centro(txt: str) -> str:
+    """Normaliza un nombre de centro para poder emparejar por nombre aunque
+    cambien mayusculas, acentos o espacios."""
+    import unicodedata
+    if not txt:
+        return ""
+    t = unicodedata.normalize("NFKD", txt)
+    t = "".join(c for c in t if not unicodedata.combining(c))  # quitar acentos
+    t = t.lower()
+    for ch in [".", ",", "-", "_", "/", "\\", "(", ")", "\n", "\t"]:
+        t = t.replace(ch, " ")
+    t = " ".join(t.split())
+    return t
+
+
+# =====================================================================
+# TAREAS PENDIENTES POR CLIENTE/CENTRO (Fase 13)
+# ---------------------------------------------------------------------
+# Checklist compartido admin+operario por cliente (y opcionalmente por
+# un centro concreto de ese cliente). Cualquier aprobado puede crear y
+# marcar como hecha (con foto opcional); solo admin puede borrar. El
+# operario ve automaticamente las tareas de "su jardin de hoy" cruzando
+# con sus asignaciones de Planificacion del dia.
+# =====================================================================
+
+
+class TareaCentroCreate(BaseModel):
+    client_id: str
+    centro_id: Optional[str] = Field(
+        None, description="Si se indica, la tarea es especifica de ese centro. Si se "
+        "omite, aplica a todo el cliente en general."
+    )
+    descripcion: str = Field(..., min_length=1, max_length=500)
+    prioridad: int = Field(3, ge=1, le=5, description="1 (baja) a 5 (maxima)")
+    foto: Optional[str] = Field(None, description="Data-URI base64 opcional al proponer")
+
+
+class TareaCentroUpdate(BaseModel):
+    descripcion: Optional[str] = Field(None, min_length=1, max_length=500)
+    prioridad: Optional[int] = Field(None, ge=1, le=5)
+
+
+class CompletarTareaPayload(BaseModel):
+    foto: Optional[str] = Field(None, description="Data-URI base64 de la foto, opcional")
+
+
+class TareaCentro(BaseModel):
+    id: str
+    client_id: str
+    centro_id: Optional[str] = None
+    descripcion: str
+    prioridad: int
+    # estado: activa | pendiente_aprobacion | pendiente_validacion | completada
+    #  - pendiente_aprobacion: creada por operario, espera OK del admin
+    #  - activa: aprobada o creada por admin; disponible para hacerse
+    #  - pendiente_validacion: un operario la marco con foto, espera OK admin
+    #  - completada: el admin dio el visto bueno final
+    estado: str = "activa"
+    completada: bool = False  # se mantiene por compatibilidad (== estado completada)
+    completada_por: Optional[str] = None
+    completada_por_nombre: Optional[str] = None
+    completada_en: Optional[datetime] = None
+    marcada_por: Optional[str] = None  # operario que la marco como hecha
+    marcada_por_nombre: Optional[str] = None
+    marcada_en: Optional[datetime] = None
+    foto_url: Optional[str] = None
+    foto_public_id: Optional[str] = None
+    incidencia_id: Optional[str] = None  # si se convirtio en incidencia
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+    actualizado_en: datetime
+
+    @model_validator(mode="after")
+    def _derivar_estado_antiguo(self):
+        # Documentos antiguos sin 'estado' explicito: derivarlo de
+        # 'completada'. Como 'estado' tiene default "activa", solo
+        # corregimos el caso en que la tarea estaba completada.
+        if self.completada and self.estado == "activa":
+            self.estado = "completada"
+        return self
+
+
+class TareaCentroConNombres(TareaCentro):
+    client_nombre: str
+    centro_nombre: Optional[str] = None
+
+
+async def _resolver_nombres_tareas(tareas: list) -> List[TareaCentroConNombres]:
+    """Adjunta el nombre del cliente y del centro (si aplica) a cada
+    tarea, para no tener que hacerlo por separado en cada endpoint."""
+    client_ids = {t["client_id"] for t in tareas}
+    centro_ids = {t["centro_id"] for t in tareas if t.get("centro_id")}
+    clientes_map = {}
+    if client_ids:
+        async for c in db.clients.find({"id": {"$in": list(client_ids)}}):
+            clientes_map[c["id"]] = c["nombre"]
+    centros_map = {}
+    if centro_ids:
+        async for ce in db.client_locations.find({"id": {"$in": list(centro_ids)}}):
+            centros_map[ce["id"]] = ce["nombre"]
+    return [
+        TareaCentroConNombres(
+            **t,
+            client_nombre=clientes_map.get(t["client_id"], "(cliente eliminado)"),
+            centro_nombre=centros_map.get(t["centro_id"]) if t.get("centro_id") else None,
+        )
+        for t in tareas
+    ]
+
+
+@api_router.get("/tareas-centro", response_model=List[TareaCentroConNombres])
+async def list_tareas_centro(
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+    solo_pendientes: bool = False,
+    _: dict = Depends(require_approved),
+):
+    query = {}
+    if client_id:
+        query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
+    if solo_pendientes:
+        query["completada"] = False
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
+    tareas = [t async for t in cursor]
+    return await _resolver_nombres_tareas(tareas)
+
+
+@api_router.get("/tareas-centro/pendientes-todas", response_model=List[TareaCentroConNombres])
+async def list_todas_pendientes(
+    estado: Optional[str] = None, _: dict = Depends(require_admin)
+):
+    """Vista para el administrador. Sin filtro: todas las tareas no
+    completadas. Con 'estado': solo las de ese estado (pendiente_aprobacion,
+    pendiente_validacion, activa)."""
+    if estado:
+        query = {"estado": estado}
+    else:
+        # No completadas: incluye documentos antiguos sin campo 'estado'.
+        query = {"estado": {"$ne": "completada"}, "completada": {"$ne": True}}
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
+    tareas = [t async for t in cursor]
+    return await _resolver_nombres_tareas(tareas)
+
+
+@api_router.get("/tareas-centro/mis-tareas-hoy", response_model=List[TareaCentroConNombres])
+async def mis_tareas_hoy(current_user: dict = Depends(require_approved)):
+    """Cruza las asignaciones de Planificacion de hoy del operario con
+    las tareas pendientes de esos clientes/centros. Si esta asignado a
+    varios sitios el mismo dia, se agregan las tareas de todos."""
+    hoy = date.today().isoformat()
+    asignaciones_cursor = db.asignaciones.find(
+        {"operario_id": current_user["user_id"], "fecha": hoy}
+    )
+    asignaciones = [a async for a in asignaciones_cursor]
+
+    client_ids_hoy = {a["destino_cliente_id"] for a in asignaciones if a.get("destino_cliente_id")}
+    centro_ids_hoy = {a["destino_centro_id"] for a in asignaciones if a.get("destino_centro_id")}
+
+    if not client_ids_hoy and not centro_ids_hoy:
+        return []
+
+    # Si el destino es un centro, tambien hay que resolver su cliente
+    # (para incluir las tareas generales "de todo el cliente")
+    if centro_ids_hoy:
+        async for ce in db.client_locations.find({"id": {"$in": list(centro_ids_hoy)}}):
+            if ce.get("client_id"):
+                client_ids_hoy.add(ce["client_id"])
+
+    query = {
+        # No mostrar las que aun esperan aprobacion del admin, ni las ya
+        # completadas. Sí las activas y las pendientes de validar. Se
+        # incluyen tambien tareas antiguas sin campo 'estado' que no esten
+        # completadas (compatibilidad con datos previos a este cambio).
+        "$and": [
+            {"client_id": {"$in": list(client_ids_hoy)}},
+            {
+                "$or": [
+                    {"estado": {"$in": ["activa", "pendiente_validacion"]}},
+                    {"estado": {"$exists": False}, "completada": {"$ne": True}},
+                ]
+            },
+        ],
+    }
+    cursor = db.tareas_centro.find(query).sort([("prioridad", -1), ("creado_en", 1)])
+    tareas = [t async for t in cursor]
+    # Filtrar: solo tareas generales del cliente (centro_id None) o del
+    # centro concreto al que esta asignado hoy
+    tareas = [
+        t for t in tareas
+        if not t.get("centro_id") or t["centro_id"] in centro_ids_hoy
+    ]
+    return await _resolver_nombres_tareas(tareas)
+
+
+class DestinoHoy(BaseModel):
+    client_id: str
+    client_nombre: str
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None
+
+
+@api_router.get("/tareas-centro/mis-destinos-hoy", response_model=List[DestinoHoy])
+async def mis_destinos_hoy(current_user: dict = Depends(require_approved)):
+    """Los destinos (cliente+centro) a los que esta asignado el operario
+    hoy, ya resueltos con nombre - para que la pantalla de 'anadir tarea
+    rapida' sepa a que sitio ligarla sin que el operario tenga que
+    elegirlo el mismo."""
+    hoy = date.today().isoformat()
+    asignaciones_cursor = db.asignaciones.find(
+        {"operario_id": current_user["user_id"], "fecha": hoy}
+    )
+    asignaciones = [a async for a in asignaciones_cursor]
+
+    resultado = []
+    vistos = set()
+    for a in asignaciones:
+        client_id = a.get("destino_cliente_id")
+        centro_id = a.get("destino_centro_id")
+        if centro_id and not client_id:
+            centro = await db.client_locations.find_one({"id": centro_id})
+            if centro:
+                client_id = centro.get("client_id")
+        if not client_id:
+            continue
+        clave = (client_id, centro_id)
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        cliente = await db.clients.find_one({"id": client_id})
+        centro_nombre = None
+        if centro_id:
+            centro = await db.client_locations.find_one({"id": centro_id})
+            centro_nombre = centro["nombre"] if centro else None
+        resultado.append(
+            DestinoHoy(
+                client_id=client_id,
+                client_nombre=cliente["nombre"] if cliente else "(cliente eliminado)",
+                centro_id=centro_id,
+                centro_nombre=centro_nombre,
+            )
+        )
+    return resultado
+
+
+@api_router.post("/tareas-centro", response_model=TareaCentroConNombres)
+async def crear_tarea_centro(
+    payload: TareaCentroCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if payload.centro_id:
+        centro = await db.client_locations.find_one({"id": payload.centro_id, "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        if centro.get("client_id") != payload.client_id:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente indicado"
+            )
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    now = datetime.now(timezone.utc)
+    estado = "activa" if es_admin else "pendiente_aprobacion"
+
+    # Foto opcional adjunta al proponer la tarea
+    foto_url = None
+    foto_public_id = None
+    if payload.foto:
+        if not _es_logo_base64(payload.foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        foto_url, foto_public_id = await _subir_logo_cloudinary(payload.foto)
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
+        "descripcion": payload.descripcion.strip(),
+        "prioridad": payload.prioridad,
+        "estado": estado,
+        "completada": False,
+        "completada_por": None,
+        "completada_por_nombre": None,
+        "completada_en": None,
+        "marcada_por": None,
+        "marcada_por_nombre": None,
+        "marcada_en": None,
+        "foto_url": foto_url,
+        "foto_public_id": foto_public_id,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.tareas_centro.insert_one(doc)
+
+    # Si la crea un operario, queda pendiente de aprobacion y se avisa a
+    # los administradores (como con las fotos).
+    if not es_admin:
+        resueltas_notif = await _resolver_nombres_tareas([doc])
+        centro_txt = resueltas_notif[0].centro_nombre or resueltas_notif[0].client_nombre
+        await notify_admins(
+            notification_type=NotificationType.TAREA_CENTRO_PROPUESTA,
+            title="Nueva tarea propuesta",
+            message=f"{doc['creado_por_nombre']} ha propuesto una tarea en {centro_txt}.",
+            data={"enlace": "/admin/tareas-centro", "tarea_id": doc["id"]},
+        )
+
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}", response_model=TareaCentroConNombres)
+async def actualizar_tarea_centro(
+    tarea_id: str, payload: TareaCentroUpdate, _: dict = Depends(require_approved)
+):
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if "descripcion" in updates:
+        updates["descripcion"] = updates["descripcion"].strip()
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/completar", response_model=TareaCentroConNombres)
+async def completar_tarea_centro(
+    tarea_id: str,
+    payload: CompletarTareaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """El operario marca la tarea como hecha (adjuntando foto): pasa a
+    'pendiente_validacion' y se avisa al admin, que da el OK final. Si
+    quien la marca es un admin, se completa directamente."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    now = datetime.now(timezone.utc)
+    nombre = usuario["name"] if usuario else "?"
+
+    updates = {
+        "marcada_por": current_user["user_id"],
+        "marcada_por_nombre": nombre,
+        "marcada_en": now,
+        "actualizado_en": now,
+    }
+    if payload.foto:
+        if not _es_logo_base64(payload.foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        url, public_id = await _subir_logo_cloudinary(payload.foto)
+        updates["foto_url"] = url
+        updates["foto_public_id"] = public_id
+
+    if es_admin:
+        # El admin la completa directamente (queda validada).
+        updates["estado"] = "completada"
+        updates["completada"] = True
+        updates["completada_por"] = current_user["user_id"]
+        updates["completada_por_nombre"] = nombre
+        updates["completada_en"] = now
+    else:
+        # El operario la deja pendiente de validacion del admin.
+        updates["estado"] = "pendiente_validacion"
+        updates["completada"] = False
+
+    await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
+
+    if not es_admin:
+        resueltas_notif = await _resolver_nombres_tareas(
+            [{**doc, **updates}]
+        )
+        centro_txt = resueltas_notif[0].centro_nombre or resueltas_notif[0].client_nombre
+        await notify_admins(
+            notification_type=NotificationType.TAREA_CENTRO_VALIDAR,
+            title="Tarea por validar",
+            message=f"{nombre} ha completado una tarea en {centro_txt}. Revisa y valida.",
+            data={"enlace": "/admin/tareas-centro", "tarea_id": tarea_id},
+        )
+
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/aprobar", response_model=TareaCentroConNombres)
+async def aprobar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin aprueba una tarea PROPUESTA por un operario: pasa de
+    'pendiente_aprobacion' a 'activa' (ya disponible para hacerse)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"estado": "activa", "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    # Avisar al operario que la propuso
+    if doc.get("creado_por"):
+        await create_notification(
+            user_id=doc["creado_por"],
+            notification_type=NotificationType.TAREA_CENTRO_RESUELTA,
+            title="Tarea aprobada",
+            message="Tu tarea propuesta ha sido aprobada.",
+            data={"enlace": "/tareas"},
+        )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/validar", response_model=TareaCentroConNombres)
+async def validar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin da el OK final a una tarea que un operario marco como
+    hecha: pasa de 'pendiente_validacion' a 'completada'."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    now = datetime.now(timezone.utc)
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {
+            "$set": {
+                "estado": "completada",
+                "completada": True,
+                "completada_por": doc.get("marcada_por"),
+                "completada_por_nombre": doc.get("marcada_por_nombre"),
+                "completada_en": doc.get("marcada_en") or now,
+                "actualizado_en": now,
+            }
+        },
+    )
+    if doc.get("marcada_por"):
+        await create_notification(
+            user_id=doc["marcada_por"],
+            notification_type=NotificationType.TAREA_CENTRO_RESUELTA,
+            title="Tarea validada",
+            message="La tarea que completaste ha sido validada.",
+            data={"enlace": "/tareas"},
+        )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/rechazar", response_model=TareaCentroConNombres)
+async def rechazar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    """El admin devuelve una tarea marcada a 'activa' (no la da por buena;
+    el operario tendra que rehacerla/re-marcarla)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"estado": "activa", "completada": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/a-incidencia", response_model=TareaCentroConNombres)
+async def convertir_tarea_en_incidencia(
+    tarea_id: str, current_user: dict = Depends(require_admin)
+):
+    """Crea una incidencia en el cliente de la tarea, a partir de la propia
+    tarea. La tarea NO desaparece: se queda y guarda el id de la incidencia
+    generada (para no crear duplicados y dejar constancia en ambos sitios)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    if doc.get("incidencia_id"):
+        raise HTTPException(status_code=400, detail="Esta tarea ya generó una incidencia")
+
+    cliente = await db.clients.find_one({"id": doc["client_id"], "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+
+    # Título de la incidencia: la descripción de la tarea (recortada).
+    titulo = doc["descripcion"][:200]
+    inc = {
+        "id": str(uuid.uuid4()),
+        "client_id": doc["client_id"],
+        "titulo": titulo,
+        "descripcion": f"Generada desde una tarea de {doc.get('creado_por_nombre', '?')}.",
+        "estado": "abierta",
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "cerrado_por_nombre": None,
+        "cerrado_en": None,
+    }
+    await db.incidencias.insert_one(inc)
+
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {"$set": {"incidencia_id": inc["id"], "actualizado_en": now}},
+    )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.put("/tareas-centro/{tarea_id}/reabrir", response_model=TareaCentroConNombres)
+async def reabrir_tarea_centro(tarea_id: str, _: dict = Depends(require_approved)):
+    """Deshace una marca de completada por error, sin perder la foto que
+    hubiera (si se vuelve a completar, la foto se sustituye)."""
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    await db.tareas_centro.update_one(
+        {"id": tarea_id},
+        {
+            "$set": {
+                "completada": False,
+                "completada_por": None,
+                "completada_por_nombre": None,
+                "completada_en": None,
+                "actualizado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    resueltas = await _resolver_nombres_tareas([doc])
+    return resueltas[0]
+
+
+@api_router.delete("/tareas-centro/{tarea_id}")
+async def eliminar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin)):
+    doc = await db.tareas_centro.find_one({"id": tarea_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    if doc.get("foto_public_id"):
+        await _borrar_logo_cloudinary(doc["foto_public_id"])
+    await db.tareas_centro.delete_one({"id": tarea_id})
+    return {"ok": True}
+
+
+# =====================================================================
+# INCIDENCIAS POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Problemas/avisos abiertos de un cliente. Pensado para en el futuro
+# conectarse con el correo (que cualquier email referenciado a ese
+# cliente se archive aqui automaticamente) - por ahora es un registro
+# manual: crear, cerrar/reabrir, borrar.
+# =====================================================================
+
+
+class IncidenciaCreate(BaseModel):
+    client_id: str
+    centro_id: Optional[str] = None
+    titulo: str = Field(..., min_length=1, max_length=200)
+    descripcion: Optional[str] = Field("", max_length=2000)
+
+
+class Incidencia(BaseModel):
+    id: str
+    client_id: str
+    centro_id: Optional[str] = None
+    titulo: str
+    descripcion: Optional[str] = ""
+    estado: str = "abierta"  # abierta | cerrada
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+    cerrado_por_nombre: Optional[str] = None
+    cerrado_en: Optional[datetime] = None
+
+
+@api_router.get("/incidencias", response_model=List[Incidencia])
+async def list_incidencias(
+    client_id: str,
+    centro_id: Optional[str] = None,
+    solo_abiertas: bool = False,
+    _: dict = Depends(require_approved),
+):
+    query = {"client_id": client_id}
+    if centro_id:
+        query["centro_id"] = centro_id
+    if solo_abiertas:
+        query["estado"] = "abierta"
+    cursor = db.incidencias.find(query).sort("creado_en", -1)
+    return [Incidencia(**i) async for i in cursor]
+
+
+@api_router.post("/incidencias", response_model=Incidencia)
+async def crear_incidencia(
+    payload: IncidenciaCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
+        "titulo": payload.titulo.strip(),
+        "descripcion": (payload.descripcion or "").strip(),
+        "estado": "abierta",
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+        "cerrado_por_nombre": None,
+        "cerrado_en": None,
+    }
+    await db.incidencias.insert_one(doc)
+    return Incidencia(**doc)
+
+
+@api_router.put("/incidencias/{incidencia_id}/cerrar", response_model=Incidencia)
+async def cerrar_incidencia(incidencia_id: str, current_user: dict = Depends(require_approved)):
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    await db.incidencias.update_one(
+        {"id": incidencia_id},
+        {
+            "$set": {
+                "estado": "cerrada",
+                "cerrado_por_nombre": usuario["name"] if usuario else "?",
+                "cerrado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    return Incidencia(**doc)
+
+
+@api_router.put("/incidencias/{incidencia_id}/reabrir", response_model=Incidencia)
+async def reabrir_incidencia(incidencia_id: str, _: dict = Depends(require_approved)):
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    await db.incidencias.update_one(
+        {"id": incidencia_id},
+        {"$set": {"estado": "abierta", "cerrado_por_nombre": None, "cerrado_en": None}},
+    )
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    return Incidencia(**doc)
+
+
+@api_router.delete("/incidencias/{incidencia_id}")
+async def eliminar_incidencia(incidencia_id: str, _: dict = Depends(require_admin)):
+    result = await db.incidencias.delete_one({"id": incidencia_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    return {"ok": True}
+
+
+# =====================================================================
+# CONTACTOS DE RESPONSABLES POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Personas de contacto de cada cliente (puede haber varias). Solo admin
+# gestiona (crear/editar/borrar); cualquier aprobado puede consultarlas.
+# =====================================================================
+
+
+class ContactoCreate(BaseModel):
+    client_id: str
+    nombre: str = Field(..., min_length=1, max_length=200)
+    cargo: Optional[str] = Field(None, max_length=150)
+    telefono: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=200)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class ContactoUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    cargo: Optional[str] = Field(None, max_length=150)
+    telefono: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=200)
+    notas: Optional[str] = Field(None, max_length=1000)
+
+
+class Contacto(BaseModel):
+    id: str
+    client_id: str
+    nombre: str
+    cargo: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = ""
+    creado_en: datetime
+
+
+@api_router.get("/contactos", response_model=List[Contacto])
+async def list_contactos(client_id: str, _: dict = Depends(require_approved)):
+    cursor = db.contactos.find({"client_id": client_id}).sort("nombre", 1)
+    return [Contacto(**c) async for c in cursor]
+
+
+@api_router.post("/contactos", response_model=Contacto)
+async def crear_contacto(payload: ContactoCreate, _: dict = Depends(require_admin)):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "nombre": payload.nombre.strip(),
+        "cargo": (payload.cargo or "").strip() or None,
+        "telefono": (payload.telefono or "").strip() or None,
+        "email": (payload.email or "").strip() or None,
+        "notas": payload.notas or "",
+        "creado_en": now,
+    }
+    await db.contactos.insert_one(doc)
+    return Contacto(**doc)
+
+
+@api_router.put("/contactos/{contacto_id}", response_model=Contacto)
+async def actualizar_contacto(
+    contacto_id: str, payload: ContactoUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.contactos.find_one({"id": contacto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        await db.contactos.update_one({"id": contacto_id}, {"$set": updates})
+    doc = await db.contactos.find_one({"id": contacto_id})
+    return Contacto(**doc)
+
+
+@api_router.delete("/contactos/{contacto_id}")
+async def eliminar_contacto(contacto_id: str, _: dict = Depends(require_admin)):
+    result = await db.contactos.delete_one({"id": contacto_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    return {"ok": True}
+
+
+# =====================================================================
+# COMENTARIOS DEL OPERARIO POR CLIENTE (Fase 16)
+# ---------------------------------------------------------------------
+# Notas rapidas con fecha, pensadas para vivir junto a Fotos y Tareas
+# pendientes en el bloque de "Actividad" de la ficha del cliente.
+# Cualquier aprobado escribe; borrar solo admin o quien lo escribio.
+# =====================================================================
+
+
+class ComentarioClienteCreate(BaseModel):
+    client_id: str
+    texto: str = Field(..., min_length=1, max_length=1000)
+
+
+class ComentarioCliente(BaseModel):
+    id: str
+    client_id: str
+    texto: str
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+@api_router.get("/comentarios-cliente", response_model=List[ComentarioCliente])
+async def list_comentarios_cliente(client_id: str, _: dict = Depends(require_approved)):
+    cursor = db.comentarios_cliente.find({"client_id": client_id}).sort("creado_en", -1)
+    return [ComentarioCliente(**c) async for c in cursor]
+
+
+@api_router.post("/comentarios-cliente", response_model=ComentarioCliente)
+async def crear_comentario_cliente(
+    payload: ComentarioClienteCreate, current_user: dict = Depends(require_approved)
+):
+    cliente = await db.clients.find_one({"id": payload.client_id, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": payload.client_id,
+        "texto": payload.texto.strip(),
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.comentarios_cliente.insert_one(doc)
+    return ComentarioCliente(**doc)
+
+
+@api_router.delete("/comentarios-cliente/{comentario_id}")
+async def eliminar_comentario_cliente(
+    comentario_id: str, current_user: dict = Depends(require_approved)
+):
+    doc = await db.comentarios_cliente.find_one({"id": comentario_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Comentario no encontrado")
+    if current_user.get("role") != "admin" and doc["creado_por"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Solo puedes borrar tus propios comentarios")
+    await db.comentarios_cliente.delete_one({"id": comentario_id})
+    return {"ok": True}
+
+
+# =====================================================================
+# PLANIFICACION DE EQUIPO (Fase 7)
+# ---------------------------------------------------------------------
+# Rejilla independiente (no el calendario de vacaciones): dias en filas,
+# destinos (clientes o categorias libres como "Ruta") en columnas, cada
+# celda puede tener varios operarios asignados. Se cruza SIEMPRE contra
+# vacaciones aprobadas antes de asignar - un operario de vacaciones no se
+# puede enviar a trabajar. Escritura solo admin; lectura cualquier
+# aprobado (el operario necesita ver su propia semana).
+# =====================================================================
+
+
+class ColumnaPlanificacionBase(BaseModel):
+    tipo: str = Field(..., pattern=r"^(cliente|centro|libre)$")
+    cliente_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    etiqueta_libre: Optional[str] = Field(None, max_length=50)
+    color_fondo: Optional[str] = Field(None, max_length=20)
+
+
+class ColumnaPlanificacionCreate(ColumnaPlanificacionBase):
+    pass
+
+
+class ColumnaPlanificacion(ColumnaPlanificacionBase):
+    id: str
+    orden: int
+    creado_en: datetime
+
+
+class ColumnaPlanificacionResuelta(BaseModel):
+    id: str
+    tipo: str
+    cliente_id: Optional[str] = None
+    centro_id: Optional[str] = None
+    etiqueta: str
+    cliente_nombre: Optional[str] = Field(
+        None, description="Nombre del cliente dueño del centro, para columnas "
+        "tipo 'centro' - evita confundir centros con el mismo nombre en "
+        "clientes distintos (ej. dos 'Sede Central')."
+    )
+    color_fondo: Optional[str] = None
+    orden: int
+
+
+class AsignacionOut(BaseModel):
+    id: str
+    operario_id: str
+    fecha: str
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+    destino_libre: Optional[str] = None
+
+
+class VacacionSimple(BaseModel):
+    user_id: str
+    fecha: str
+    tipo: Optional[str] = None
+
+
+class RejillaPlanificacion(BaseModel):
+    columnas: List[ColumnaPlanificacionResuelta]
+    asignaciones: List[AsignacionOut]
+    vacaciones: List[VacacionSimple]
+
+
+class TogglePlanificacionPayload(BaseModel):
+    operario_id: str
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+    destino_libre: Optional[str] = Field(None, max_length=50)
+
+
+@api_router.get("/planificacion/columnas", response_model=List[ColumnaPlanificacionResuelta])
+async def list_columnas_planificacion(_: dict = Depends(require_approved)):
+    cursor = db.planificacion_columnas.find({}).sort("orden", 1)
+    columnas = [c async for c in cursor]
+
+    cliente_ids = [c["cliente_id"] for c in columnas if c.get("cliente_id")]
+    centro_ids = [c["centro_id"] for c in columnas if c.get("centro_id")]
+
+    centros_info = {}
+    if centro_ids:
+        async for ce in db.client_locations.find({"id": {"$in": centro_ids}}):
+            centros_info[ce["id"]] = {"nombre": ce["nombre"], "client_id": ce.get("client_id")}
+            if ce.get("client_id"):
+                cliente_ids.append(ce["client_id"])
+
+    clientes_map = {}
+    if cliente_ids:
+        async for cl in db.clients.find({"id": {"$in": cliente_ids}}):
+            clientes_map[cl["id"]] = cl["nombre"]
+
+    resueltas = []
+    for c in columnas:
+        cliente_nombre = None
+        if c.get("centro_id"):
+            info = centros_info.get(c["centro_id"])
+            if info:
+                etiqueta = info["nombre"]
+                cliente_nombre = clientes_map.get(info["client_id"], "(cliente eliminado)")
+            else:
+                etiqueta = "(centro eliminado)"
+        elif c.get("cliente_id"):
+            etiqueta = clientes_map.get(c["cliente_id"], "(cliente eliminado)")
+        else:
+            etiqueta = c.get("etiqueta_libre") or ""
+        resueltas.append(
+            ColumnaPlanificacionResuelta(
+                id=c["id"],
+                tipo=c["tipo"],
+                cliente_id=c.get("cliente_id"),
+                centro_id=c.get("centro_id"),
+                etiqueta=etiqueta,
+                cliente_nombre=cliente_nombre,
+                color_fondo=c.get("color_fondo"),
+                orden=c["orden"],
+            )
+        )
+    return resueltas
+
+
+@api_router.post("/planificacion/columnas", response_model=ColumnaPlanificacionResuelta)
+async def crear_columna_planificacion(
+    payload: ColumnaPlanificacionCreate, _: dict = Depends(require_admin)
+):
+    if payload.tipo == "cliente" and not payload.cliente_id:
+        raise HTTPException(status_code=400, detail="Falta cliente_id")
+    if payload.tipo == "centro" and not payload.centro_id:
+        raise HTTPException(status_code=400, detail="Falta centro_id")
+    if payload.tipo == "libre" and not (payload.etiqueta_libre or "").strip():
+        raise HTTPException(status_code=400, detail="Falta etiqueta_libre")
+
+    ultima = await db.planificacion_columnas.find_one({}, sort=[("orden", -1)])
+    orden = (ultima["orden"] + 1) if ultima else 0
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tipo": payload.tipo,
+        "cliente_id": payload.cliente_id if payload.tipo == "cliente" else None,
+        "centro_id": payload.centro_id if payload.tipo == "centro" else None,
+        "etiqueta_libre": payload.etiqueta_libre.strip() if payload.tipo == "libre" else None,
+        "color_fondo": payload.color_fondo,
+        "orden": orden,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    await db.planificacion_columnas.insert_one(doc)
+
+    etiqueta = payload.etiqueta_libre if payload.tipo == "libre" else "Cliente"
+    cliente_nombre = None
+    if payload.tipo == "cliente":
+        cl = await db.clients.find_one({"id": payload.cliente_id})
+        etiqueta = cl["nombre"] if cl else "(cliente eliminado)"
+    elif payload.tipo == "centro":
+        ce = await db.client_locations.find_one({"id": payload.centro_id})
+        etiqueta = ce["nombre"] if ce else "(centro eliminado)"
+        if ce and ce.get("client_id"):
+            cl = await db.clients.find_one({"id": ce["client_id"]})
+            cliente_nombre = cl["nombre"] if cl else "(cliente eliminado)"
+
+    return ColumnaPlanificacionResuelta(
+        id=doc["id"],
+        tipo=doc["tipo"],
+        cliente_id=doc["cliente_id"],
+        centro_id=doc["centro_id"],
+        etiqueta=etiqueta,
+        cliente_nombre=cliente_nombre,
+        color_fondo=doc["color_fondo"],
+        orden=doc["orden"],
+    )
+
+
+@api_router.delete("/planificacion/columnas/{columna_id}")
+async def eliminar_columna_planificacion(columna_id: str, _: dict = Depends(require_admin)):
+    result = await db.planificacion_columnas.delete_one({"id": columna_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Columna no encontrada")
+    return {"ok": True}
+
+
+@api_router.get("/planificacion/rejilla", response_model=RejillaPlanificacion)
+async def obtener_rejilla_planificacion(
+    desde: str, hasta: str, _: dict = Depends(require_approved)
+):
+    columnas = await list_columnas_planificacion(_)
+
+    asignaciones_cursor = db.asignaciones.find(
+        {"fecha": {"$gte": desde, "$lte": hasta}}
+    )
+    asignaciones = [AsignacionOut(**a) async for a in asignaciones_cursor]
+
+    vacaciones_cursor = db.vacaciones.find(
+        {"fecha": {"$gte": desde, "$lte": hasta}, "status": "approved"}
+    )
+    vacaciones = [
+        VacacionSimple(user_id=v["user_id"], fecha=v["fecha"], tipo=v.get("tipo"))
+        async for v in vacaciones_cursor
+    ]
+
+    return RejillaPlanificacion(columnas=columnas, asignaciones=asignaciones, vacaciones=vacaciones)
+
+
+@api_router.post("/planificacion/celda/toggle")
+async def toggle_celda_planificacion(
+    payload: TogglePlanificacionPayload, current_user: dict = Depends(require_admin)
+):
+    """Un clic = un toggle: si el operario ya esta asignado ese dia+destino,
+    se quita. Si no, se comprueba que no tenga vacaciones aprobadas ese dia
+    y se anade."""
+    if not payload.destino_cliente_id and not payload.destino_centro_id and not payload.destino_libre:
+        raise HTTPException(
+            status_code=400, detail="Falta destino_cliente_id, destino_centro_id o destino_libre"
+        )
+
+    query = {"operario_id": payload.operario_id, "fecha": payload.fecha}
+    if payload.destino_centro_id:
+        query["destino_centro_id"] = payload.destino_centro_id
+    elif payload.destino_cliente_id:
+        query["destino_cliente_id"] = payload.destino_cliente_id
+    else:
+        query["destino_libre"] = payload.destino_libre
+
+    existente = await db.asignaciones.find_one(query)
+    if existente:
+        await db.asignaciones.delete_one({"id": existente["id"]})
+        return {"ok": True, "accion": "removed"}
+
+    vacacion = await db.vacaciones.find_one(
+        {"user_id": payload.operario_id, "fecha": payload.fecha, "status": "approved"}
+    )
+    if vacacion:
+        tipo_txt = "vacaciones aprobadas" if vacacion.get("tipo") == "vacacion" else "un día libre aprobado"
+        raise HTTPException(
+            status_code=409, detail=f"Este operario tiene {tipo_txt} ese día"
+        )
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": payload.operario_id,
+        "fecha": payload.fecha,
+        "destino_cliente_id": payload.destino_cliente_id,
+        "destino_centro_id": payload.destino_centro_id,
+        "destino_libre": payload.destino_libre,
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.asignaciones.insert_one(doc)
+    return {"ok": True, "accion": "added"}
+
+
+# =====================================================================
+# PARTES DE TRABAJO (Fase 5A.2 parte 1)
+# ---------------------------------------------------------------------
+# Modelos WorkOrder + WorkSession con endpoints REST completos.
+#
+# Un WorkOrder es la cabecera del parte asociado a un cliente y
+# opcionalmente a un presupuesto. Puede tener multiples sesiones
+# diarias (WorkSession). Las firmas se anadiran en Fase 5A.3.
+#
+# Denormalizacion consciente:
+# - En work_orders guardamos client_slug y budget_number para no
+#   tener que hacer joins costosos en cada listado. Si el cliente
+#   se renombra, ejecutar un script de recalculo (Fase futura).
+# - Las sesiones NO estan embebidas en el work_order: coleccion
+#   separada work_sessions con work_order_id como referencia. Esto
+#   permite que un parte con muchos dias no crezca sin limite en
+#   un solo documento (limite Mongo: 16MB por documento).
+#
+# Permisos:
+# - Lectura y creacion de partes/sesiones: cualquier usuario aprobado
+#   (los operarios registran su trabajo).
+# - Modificar/borrar parte cerrado: solo admin (via reopen en 5A.3).
+# - Modificar parte propio abierto: cualquier aprobado.
+# =====================================================================
+
+
+ESTADOS_WORK_ORDER = ("abierto", "cerrado", "archivado")
+
+
+class WorkOrderBase(BaseModel):
+    client_id: Optional[str] = Field(
+        None, description="ID del cliente registrado (si lo tiene). Si el cliente aun no "
+        "esta dado de alta, se usa client_libre en su lugar; debe venir exactamente uno de "
+        "los dos al crear."
+    )
+    client_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre del cliente escrito a mano cuando no esta "
+        "registrado todavia. El admin puede vincularlo a un cliente real mas adelante desde "
+        "el propio parte."
+    )
+    centro_id: Optional[str] = Field(
+        None, description="ID del centro registrado (subgrupo del cliente), si aplica. "
+        "Opcional incluso con cliente registrado: no todos los clientes tienen centros."
+    )
+    centro_libre: Optional[str] = Field(
+        None, max_length=200, description="Nombre del centro escrito a mano cuando el "
+        "centro concreto no esta registrado todavia."
+    )
+    budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
+    titulo: str = Field(..., min_length=1, max_length=200)
+    notas: Optional[str] = Field("", max_length=4000)
+    usa_zonas: bool = Field(
+        False,
+        description="Si esta activo, las tareas de cada sesion se pueden asociar a una zona "
+        "(letras A-M, o X para 'sin zona concreta'). Se elige al crear el parte; no todos los "
+        "partes lo necesitan, es opcional caso por caso.",
+    )
+    mes_rejilla: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}$",
+        description="Mes/año que representa la rejilla de zonas, formato 'YYYY-MM'. Se usa "
+        "cuando rejilla_tipo='mensual' (o no se especifica rejilla_tipo, por compatibilidad "
+        "con partes creados antes de que existiera la opcion semanal).",
+    )
+    rejilla_tipo: Optional[str] = Field(
+        None,
+        pattern=r"^(mensual|quincenal|semanal)$",
+        description="Solo aplica si usa_zonas=True: si la rejilla cubre un mes completo o "
+        "una semana concreta (ideal para trabajos puntuales de varios dias, tipicamente 4-5). "
+        "Si no se especifica, se asume 'mensual' (comportamiento historico).",
+    )
+    semana_inicio: Optional[str] = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Lunes de la semana que representa la rejilla, solo cuando "
+        "rejilla_tipo='semanal'.",
+    )
+
+
+class WorkOrderCreate(WorkOrderBase):
+    pass
+
+
+class WorkOrderUpdate(BaseModel):
+    titulo: Optional[str] = Field(None, min_length=1, max_length=200)
+    notas: Optional[str] = Field(None, max_length=4000)
+    budget_template_id: Optional[str] = None
+    estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
+    usa_zonas: Optional[bool] = None
+    mes_rejilla: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
+    rejilla_tipo: Optional[str] = Field(None, pattern=r"^(mensual|quincenal|semanal)$")
+    semana_inicio: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    client_id: Optional[str] = Field(
+        None, description="Solo para vincular un parte de cliente libre a un cliente real "
+        "ya dado de alta (admin). Al establecerlo se resuelve client_slug y se borra "
+        "client_libre."
+    )
+    centro_id: Optional[str] = Field(
+        None, description="Solo para vincular un parte de centro libre a un centro real ya "
+        "dado de alta (admin). Al establecerlo se borra centro_libre."
+    )
+
+
+class WorkOrder(WorkOrderBase):
+    id: str
+    numero: Optional[str] = Field(
+        None, description="Numero correlativo tipo PT-YYYY-MM-DD-NNN, generado al crear el parte"
+    )
+    client_slug: Optional[str] = None
+    budget_number: Optional[str] = None
+    estado: str = "abierto"
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+    cerrado_en: Optional[datetime] = None
+    firma_cliente_token: Optional[str] = Field(
+        None, description="Token del enlace publico de firma (Fase 5A.3 parte 2)."
+    )
+    firma_cliente: Optional[str] = Field(
+        None, max_length=270000, description="PNG en base64 (data URL) de la firma del cliente."
+    )
+    firma_cliente_nombre: Optional[str] = None
+    firma_cliente_en: Optional[datetime] = None
+    firma_habilitada_de_nuevo: bool = Field(
+        False, description="Fase 11: una vez firmado, el cliente NO puede volver a firmar por "
+        "su cuenta. Un operario o admin tiene que habilitarlo explicitamente aqui (un solo "
+        "uso: se desactiva solo en cuanto se registra la firma siguiente)."
+    )
+
+
+class WorkSessionBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    hora_inicio: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    hora_fin: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    operarios_ids: List[str] = Field(default_factory=list)
+    operarios_texto_libre: Optional[str] = Field("", max_length=500)
+    firmante_responsable_id: Optional[str] = None
+    firmante_responsable_texto: Optional[str] = Field("", max_length=200)
+    tareas_ids: List[str] = Field(default_factory=list)
+    tareas_libres: List[str] = Field(default_factory=list)
+    tareas_zonas: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Solo relevante si el parte tiene usa_zonas=True. Mapa tarea_id -> lista de "
+        "hasta 3 zonas ('A'..'M', o ['X'] para sin zona concreta - no se combina con letras "
+        "reales). El frontend garantiza valores validos y el limite de 3; el backend no lo "
+        "restringe para no acoplarse a la lista exacta de letras.",
+    )
+    notas: Optional[str] = Field("", max_length=2000)
+    visibilidad: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Toggles de visibilidad al cliente por campo (Fase 5A.3). Claves: operarios, horas, tareas, notas. Si una clave no esta presente se considera visible.",
+    )
+    firma_responsable: Optional[str] = Field(
+        None,
+        max_length=270000,
+        description="PNG en base64 (data URL) de la firma del operario responsable, capturada en el propio parte.",
+    )
+
+
+class WorkSessionCreate(WorkSessionBase):
+    pass
+
+
+class WorkSessionUpdate(BaseModel):
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    hora_inicio: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    hora_fin: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    operarios_ids: Optional[List[str]] = None
+    operarios_texto_libre: Optional[str] = None
+    firmante_responsable_id: Optional[str] = None
+    firmante_responsable_texto: Optional[str] = None
+    tareas_ids: Optional[List[str]] = None
+    tareas_libres: Optional[List[str]] = None
+    tareas_zonas: Optional[Dict[str, List[str]]] = None
+    notas: Optional[str] = None
+    visibilidad: Optional[Dict[str, bool]] = None
+    firma_responsable: Optional[str] = Field(None, max_length=270000)
+
+
+class WorkSession(WorkSessionBase):
+    id: str
+    work_order_id: str
+    creado_por: str
+    creado_en: datetime
+    actualizado_en: datetime
+    firma_responsable_en: Optional[datetime] = None
+
+
+class WorkOrderWithSessions(WorkOrder):
+    sessions: List[WorkSession] = Field(default_factory=list)
+
+
+class SesionPublica(BaseModel):
+    """Vista de una sesion tal como la ve el cliente, ya filtrada por visibilidad."""
+
+    fecha: str
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    operarios: Optional[List[str]] = None
+    tareas: Optional[List[str]] = None
+    notas: Optional[str] = None
+    firmante: Optional[str] = None
+    firma_responsable: Optional[str] = None
+
+
+class WorkOrderPublicView(BaseModel):
+    """Lo minimo necesario para que el cliente revise y firme, sin exponer
+    IDs internos, datos de otros clientes ni el propio token."""
+
+    numero: Optional[str] = None
+    titulo: str
+    cliente_nombre: str
+    cliente_logo_url: Optional[str] = None
+    centro_nombre: Optional[str] = None
+    estado: str
+    creado_en: datetime
+    sessions: List[SesionPublica]
+    firma_cliente: Optional[str] = None
+    firma_cliente_nombre: Optional[str] = None
+    firma_cliente_en: Optional[datetime] = None
+    firma_habilitada_de_nuevo: bool = False
+
+
+class FirmaClientePayload(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    firma: str = Field(..., max_length=270000)
+
+
+def _horas_de_sesion(hora_inicio: str, hora_fin: str) -> float:
+    """Duracion en horas de una sesion. Devuelve 0 si algo raro."""
+    try:
+        h1, m1 = map(int, hora_inicio.split(":"))
+        h2, m2 = map(int, hora_fin.split(":"))
+        minutos = (h2 * 60 + m2) - (h1 * 60 + m1)
+        if minutos <= 0:
+            return 0.0
+        return round(minutos / 60.0, 2)
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+async def _cargar_cliente_por_id(client_id: str) -> dict:
+    doc = await db.clients.find_one({"id": client_id, "activo": True})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return doc
+
+
+async def _generar_numero_parte(fecha: datetime) -> str:
+    """PT-YYYY-MM-DD-NNN: NNN es el consecutivo del dia, contando los partes
+    que ya tengan numero asignado ese mismo dia. No es transaccional (bajo
+    volumen esperado), pero es estable: una vez asignado, un parte no
+    cambia de numero."""
+    dia = fecha.strftime("%Y-%m-%d")
+    existentes = await db.work_orders.count_documents(
+        {"numero": {"$regex": f"^PT-{dia}-"}}
+    )
+    return f"PT-{dia}-{existentes + 1:03d}"
+
+
+async def _asegurar_numero_parte(doc: dict) -> str:
+    """Los partes creados antes de tener este campo no tienen numero: se les
+    asigna uno la primera vez que se consultan (usando su fecha de creacion
+    original, no la de hoy) y se guarda para que no vuelva a cambiar."""
+    if doc.get("numero"):
+        return doc["numero"]
+    fecha = doc.get("creado_en") or datetime.now(timezone.utc)
+    numero = await _generar_numero_parte(fecha)
+    await db.work_orders.update_one({"id": doc["id"]}, {"$set": {"numero": numero}})
+    doc["numero"] = numero
+    return numero
+
+
+async def _cargar_parte(work_order_id: str) -> dict:
+    doc = await db.work_orders.find_one({"id": work_order_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Parte no encontrado")
+    return doc
+
+
+@api_router.get("/work-orders", response_model=List[WorkOrder])
+async def list_work_orders(
+    client_id: Optional[str] = None,
+    centro_id: Optional[str] = None,
+    estado: Optional[str] = None,
+    sin_cliente: bool = False,
+    _: dict = Depends(require_approved),
+):
+    """Lista de partes con filtros opcionales. sin_cliente=True devuelve
+    los partes de cliente libre (aun sin vincular a un cliente real),
+    para que el admin los revise y complete."""
+    query = {}
+    if sin_cliente:
+        query["client_id"] = None
+    elif client_id:
+        query["client_id"] = client_id
+    if centro_id:
+        query["centro_id"] = centro_id
+    if estado:
+        if estado not in ESTADOS_WORK_ORDER:
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.work_orders.find(query).sort("creado_en", -1)
+    return [WorkOrder(**doc) async for doc in cursor]
+
+
+@api_router.get("/work-orders/{work_order_id}", response_model=WorkOrderWithSessions)
+async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)):
+    """Detalle del parte incluyendo todas sus sesiones ordenadas por fecha."""
+    doc = await _cargar_parte(work_order_id)
+    await _asegurar_numero_parte(doc)
+    sessions_cursor = db.work_sessions.find({"work_order_id": work_order_id}).sort(
+        [("fecha", 1), ("hora_inicio", 1)]
+    )
+    sessions = [WorkSession(**s) async for s in sessions_cursor]
+    return WorkOrderWithSessions(**doc, sessions=sessions)
+
+
+@api_router.post("/work-orders", response_model=WorkOrder)
+async def create_work_order(
+    payload: WorkOrderCreate, current_user: dict = Depends(require_approved)
+):
+    """Crea la cabecera de un parte. Necesita exactamente uno de
+    client_id (cliente registrado) o client_libre (nombre escrito a mano,
+    para cuando el cliente aun no esta dado de alta - el admin lo puede
+    vincular despues). El centro es opcional en ambos casos: si se pasa
+    centro_id debe pertenecer al cliente registrado; si el centro no esta
+    de alta se puede usar centro_libre en su lugar."""
+    if bool(payload.client_id) == bool((payload.client_libre or "").strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="Indica exactamente uno: client_id (cliente registrado) o client_libre",
+        )
+    if payload.centro_id and payload.centro_libre:
+        raise HTTPException(
+            status_code=400, detail="Indica como mucho uno: centro_id o centro_libre"
+        )
+
+    cliente = None
+    if payload.client_id:
+        cliente = await _cargar_cliente_por_id(payload.client_id)
+
+    centro = None
+    if payload.centro_id:
+        centro = await db.client_locations.find_one({"id": payload.centro_id, "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        if cliente and centro.get("client_id") != cliente["id"]:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente indicado"
+            )
+
+    if payload.usa_zonas and payload.rejilla_tipo in ("semanal", "quincenal"):
+        if not payload.semana_inicio:
+            raise HTTPException(
+                status_code=400,
+                detail="Falta semana_inicio para la rejilla semanal/quincenal",
+            )
+        if date.fromisoformat(payload.semana_inicio).weekday() != 0:
+            raise HTTPException(
+                status_code=400, detail="semana_inicio debe ser un lunes"
+            )
+
+    budget_number = None
+    if payload.budget_template_id:
+        bud = await db.budget_templates.find_one({"id": payload.budget_template_id})
+        if not bud:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+        budget_number = bud.get("budget_number")
+
+    now = datetime.now(timezone.utc)
+    numero = await _generar_numero_parte(now)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "numero": numero,
+        "client_id": cliente["id"] if cliente else None,
+        "client_slug": cliente["slug"] if cliente else None,
+        "client_libre": None if cliente else payload.client_libre.strip(),
+        "centro_id": centro["id"] if centro else None,
+        "centro_libre": None if centro else ((payload.centro_libre or "").strip() or None),
+        "budget_template_id": payload.budget_template_id,
+        "budget_number": budget_number,
+        "titulo": payload.titulo.strip(),
+        "notas": (payload.notas or "").strip(),
+        "usa_zonas": payload.usa_zonas,
+        "mes_rejilla": payload.mes_rejilla,
+        "rejilla_tipo": payload.rejilla_tipo if payload.usa_zonas else None,
+        "semana_inicio": payload.semana_inicio if payload.usa_zonas else None,
+        "estado": "abierto",
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+        "cerrado_en": None,
+    }
+    await db.work_orders.insert_one(doc)
+
+    # Avisar a los administradores cuando un OPERARIO crea un parte (si lo
+    # crea el propio admin no tiene sentido auto-notificarse).
+    if current_user.get("role") != UserRole.ADMIN:
+        usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+        nombre = usuario["name"] if usuario else "Un operario"
+        cliente_txt = (
+            cliente["nombre"] if cliente else (payload.client_libre or "").strip()
+        )
+        await notify_admins(
+            notification_type=NotificationType.PARTE_CREADO,
+            title="Nuevo parte de trabajo",
+            message=f"{nombre} ha creado un parte en {cliente_txt or 'un cliente'}.",
+            data={"enlace": f"/work-orders/{doc['id']}", "parte_id": doc["id"]},
+        )
+    return WorkOrder(**doc)
+
+
+@api_router.patch("/work-orders/{work_order_id}", response_model=WorkOrder)
+async def update_work_order(
+    work_order_id: str,
+    payload: WorkOrderUpdate,
+    current_user: dict = Depends(require_approved),
+):
+    """Editar cabecera. Si esta cerrado solo admin puede tocar."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] == "cerrado" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte esta cerrado")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkOrder(**doc)
+
+    if "titulo" in updates and updates["titulo"] is not None:
+        updates["titulo"] = updates["titulo"].strip()
+    if "notas" in updates and updates["notas"] is not None:
+        updates["notas"] = updates["notas"].strip()
+
+    if "budget_template_id" in updates:
+        if updates["budget_template_id"]:
+            bud = await db.budget_templates.find_one({"id": updates["budget_template_id"]})
+            if not bud:
+                raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+            updates["budget_number"] = bud.get("budget_number")
+        else:
+            updates["budget_number"] = None
+
+    if "estado" in updates:
+        if updates["estado"] not in ESTADOS_WORK_ORDER:
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        # Solo admin puede archivar; cerrar sera via /close en 5A.3
+        if updates["estado"] == "archivado" and current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede archivar")
+
+    if "client_id" in updates and updates["client_id"]:
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede vincular el cliente")
+        cliente = await _cargar_cliente_por_id(updates["client_id"])
+        updates["client_slug"] = cliente["slug"]
+        updates["client_libre"] = None
+
+    if "centro_id" in updates and updates["centro_id"]:
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo admin puede vincular el centro")
+        centro = await db.client_locations.find_one({"id": updates["centro_id"], "activo": True})
+        if not centro:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        cliente_del_parte = doc.get("client_id") or updates.get("client_id")
+        if cliente_del_parte and centro.get("client_id") != cliente_del_parte:
+            raise HTTPException(
+                status_code=400, detail="Ese centro no pertenece al cliente de este parte"
+            )
+        updates["centro_libre"] = None
+
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": updates})
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
+@api_router.delete("/work-orders/{work_order_id}")
+async def delete_work_order(
+    work_order_id: str, current_user: dict = Depends(require_approved)
+):
+    """Borrar solo si abierto y sin sesiones. Es hard delete: un parte
+    sin datos no aporta nada. Los partes cerrados nunca se borran."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="Solo se pueden borrar partes abiertos")
+    count = await db.work_sessions.count_documents({"work_order_id": work_order_id})
+    if count > 0:
+        raise HTTPException(status_code=400, detail="El parte tiene sesiones registradas")
+    await db.work_orders.delete_one({"id": work_order_id})
+    return {"ok": True}
+
+
+@api_router.post("/work-orders/{work_order_id}/generar-enlace-firma")
+async def generar_enlace_firma(
+    work_order_id: str, current_user: dict = Depends(require_approved)
+):
+    """Genera (una sola vez) el token del enlace publico de firma del cliente.
+    Si ya existe, se devuelve el mismo para no invalidar enlaces ya compartidos."""
+    doc = await _cargar_parte(work_order_id)
+    token = doc.get("firma_cliente_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        await db.work_orders.update_one(
+            {"id": work_order_id}, {"$set": {"firma_cliente_token": token}}
+        )
+    return {"token": token}
+
+
+async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
+    """Arma la vista publica de un parte: resuelve nombres de operarios/tareas
+    y filtra cada sesion segun su campo visibilidad."""
+    await _asegurar_numero_parte(doc)
+    cliente = await db.clients.find_one({"id": doc["client_id"]}) if doc.get("client_id") else None
+    centro = (
+        await db.client_locations.find_one({"id": doc["centro_id"]})
+        if doc.get("centro_id")
+        else None
+    )
+    cliente_nombre = (
+        (cliente["nombre"] if cliente else None)
+        or doc.get("client_libre")
+        or (centro["nombre"] if centro else None)
+        or ""
+    )
+    sessions_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort(
+        [("fecha", 1), ("hora_inicio", 1)]
+    )
+    sessions = [s async for s in sessions_cursor]
+
+    operario_ids, tarea_ids = set(), set()
+    for s in sessions:
+        operario_ids.update(s.get("operarios_ids", []))
+        tarea_ids.update(s.get("tareas_ids", []))
+        if s.get("firmante_responsable_id"):
+            operario_ids.add(s["firmante_responsable_id"])
+
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    tareas_map = {}
+    if tarea_ids:
+        async for t in db.work_tasks.find(
+            {"id": {"$in": list(tarea_ids)}}, {"_id": 0, "id": 1, "nombre": 1}
+        ):
+            tareas_map[t["id"]] = t["nombre"]
+
+    sessions_publicas = []
+    for s in sessions:
+        vis = s.get("visibilidad") or {}
+        item = {"fecha": s["fecha"]}
+
+        if vis.get("horas", True):
+            item["hora_inicio"] = s["hora_inicio"]
+            item["hora_fin"] = s["hora_fin"]
+
+        if vis.get("operarios", True):
+            nombres = [operarios_map.get(uid, "Operario") for uid in s.get("operarios_ids", [])]
+            libres = s.get("operarios_texto_libre") or ""
+            nombres += [n.strip() for n in libres.split(",") if n.strip()]
+            item["operarios"] = nombres
+
+        if vis.get("tareas", True):
+            item["tareas"] = [
+                tareas_map[tid] for tid in s.get("tareas_ids", []) if tid in tareas_map
+            ]
+
+        if vis.get("notas", True) and s.get("notas"):
+            item["notas"] = s["notas"]
+
+        if s.get("firmante_responsable_id"):
+            item["firmante"] = operarios_map.get(s["firmante_responsable_id"], "Operario")
+        elif s.get("firmante_responsable_texto"):
+            item["firmante"] = s["firmante_responsable_texto"]
+
+        if s.get("firma_responsable"):
+            item["firma_responsable"] = s["firma_responsable"]
+
+        sessions_publicas.append(SesionPublica(**item))
+
+    return WorkOrderPublicView(
+        numero=doc.get("numero"),
+        titulo=doc["titulo"],
+        cliente_nombre=cliente_nombre,
+        cliente_logo_url=cliente.get("logo_url") if cliente else None,
+        centro_nombre=centro["nombre"] if centro else None,
+        estado=doc["estado"],
+        creado_en=doc["creado_en"],
+        sessions=sessions_publicas,
+        firma_cliente=doc.get("firma_cliente"),
+        firma_cliente_nombre=doc.get("firma_cliente_nombre"),
+        firma_cliente_en=doc.get("firma_cliente_en"),
+        firma_habilitada_de_nuevo=doc.get("firma_habilitada_de_nuevo", False),
+    )
+
+
+# --- Enlace publico de firma (Fase 5A.3 parte 2) ---------------------------
+# Sin autenticacion a proposito: el cliente accede via un token largo e
+# impredecible (secrets.token_urlsafe), no via login. No se expone aqui
+# ningun ID interno, dato de otros clientes, ni el propio token.
+
+
+@api_router.get("/public/firma/{token}", response_model=WorkOrderPublicView)
+async def ver_parte_publico(token: str):
+    doc = await db.work_orders.find_one({"firma_cliente_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Enlace no valido")
+    return await _construir_vista_publica(doc)
+
+
+def _puede_firmar(doc: dict) -> bool:
+    """Fase 11: una vez hay firma guardada, solo se puede volver a firmar
+    si un operario/admin lo ha habilitado explicitamente (un solo uso)."""
+    return not doc.get("firma_cliente") or doc.get("firma_habilitada_de_nuevo", False)
+
+
+async def _guardar_firma_cliente(work_order_id: str, payload: "FirmaClientePayload") -> None:
+    await db.work_orders.update_one(
+        {"id": work_order_id},
+        {
+            "$set": {
+                "firma_cliente": payload.firma,
+                "firma_cliente_nombre": payload.nombre.strip(),
+                "firma_cliente_en": datetime.now(timezone.utc),
+                "firma_habilitada_de_nuevo": False,
+            }
+        },
+    )
+
+
+@api_router.post("/public/firma/{token}")
+async def firmar_parte_publico(token: str, payload: FirmaClientePayload):
+    doc = await db.work_orders.find_one({"firma_cliente_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Enlace no valido")
+    if not _puede_firmar(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Este parte ya esta firmado. Pide al operario o administrador que "
+            "habilite una nueva firma si hace falta corregirla.",
+        )
+    await _guardar_firma_cliente(doc["id"], payload)
+    return {"ok": True}
+
+
+@api_router.post("/work-orders/{work_order_id}/firma-presencial")
+async def firmar_parte_presencial(
+    work_order_id: str, payload: FirmaClientePayload, _: dict = Depends(require_approved)
+):
+    """Firma presencial (Fase 11): el operario o admin le pasa su propio
+    movil al cliente para que firme ahi mismo, sin depender del enlace
+    publico remoto. Misma logica de bloqueo que la firma por enlace."""
+    doc = await _cargar_parte(work_order_id)
+    if not _puede_firmar(doc):
+        raise HTTPException(
+            status_code=403,
+            detail="Este parte ya esta firmado. Habilita una nueva firma si hace falta "
+            "corregirla.",
+        )
+    await _guardar_firma_cliente(work_order_id, payload)
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
+@api_router.post("/work-orders/{work_order_id}/habilitar-nueva-firma")
+async def habilitar_nueva_firma(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    """Desbloquea la firma para un unico uso siguiente (Fase 11): ni el
+    cliente por el enlace publico ni nadie mas puede volver a firmar
+    hasta que un operario o admin pase por aqui."""
+    doc = await _cargar_parte(work_order_id)
+    if not doc.get("firma_cliente"):
+        raise HTTPException(status_code=400, detail="Este parte todavia no tiene firma")
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"firma_habilitada_de_nuevo": True}}
+    )
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
+# --- PDF del parte (Fase 5A.3 parte 2b) -------------------------------------
+# Reutiliza _construir_vista_publica: mismo contenido y misma logica de
+# visibilidad que ve el cliente en el enlace publico, asi que nunca pueden
+# desincronizarse. Todo texto dinamico pasa por _p() (escape XML) porque
+# reportlab interpreta Paragraph como markup; sin escapar, un nombre o nota
+# con "&", "<" o ">" rompe la generacion del PDF.
+
+_MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _p(texto: Optional[str]) -> str:
+    return xml_escape(texto or "")
+
+
+def _formatear_fecha_es(fecha_str: str) -> str:
+    try:
+        d = datetime.strptime(fecha_str, "%Y-%m-%d")
+        return f"{d.day} de {_MESES_ES[d.month - 1]} de {d.year}"
+    except (ValueError, TypeError):
+        return fecha_str
+
+
+def _decode_firma_pdf(
+    data_url: Optional[str], max_width_cm: float = 6.0, max_height_cm: float = 6.0
+):
+    if not data_url:
+        return None
+    try:
+        b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+        raw = base64.b64decode(b64)
+        img = RLImage(io.BytesIO(raw))
+        max_w = max_width_cm * cm
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo decodificar una firma para el PDF", exc_info=True)
+        return None
+
+
+_COLOR_MARCA = colors.HexColor("#AF1A1C")
+_COLOR_MARCA_SUAVE = colors.HexColor("#FDF2F2")
+_LOGO_INICIA_PATH = ROOT_DIR / "assets" / "logo_inicia.png"
+
+
+def _logo_inicia_image(max_width_cm: float = 4.2, max_height_cm: float = 1.4):
+    """Logo de la empresa (Inicia Facility Management) para la cabecera del
+    PDF. Si el archivo no esta presente en el deploy, devuelve None y el
+    PDF se genera igualmente (solo sin logo), nunca rompe la generacion."""
+    if not _LOGO_INICIA_PATH.exists():
+        return None
+    try:
+        img = RLImage(str(_LOGO_INICIA_PATH))
+        max_w = max_width_cm * cm
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo cargar el logo de Inicia para el PDF", exc_info=True)
+        return None
+
+
+async def _generar_pdf_parte(vista: WorkOrderPublicView, work_order_id: Optional[str] = None) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        topMargin=1.3 * cm,
+        bottomMargin=1.3 * cm,
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        title=vista.titulo,
+    )
+    styles = getSampleStyleSheet()
+    ANCHO_TOTAL = doc.width
+    SEPARADOR = 0.35 * cm
+
+    numero_style = ParagraphStyle(
+        "NumeroParte", parent=styles["Normal"], fontSize=16, textColor=_COLOR_MARCA,
+        fontName="Helvetica-Bold", alignment=2,
+    )
+    etiqueta_cabecera_style = ParagraphStyle(
+        "EtiquetaCabecera", parent=styles["Normal"], fontSize=8,
+        textColor=colors.HexColor("#64748b"), alignment=2, spaceAfter=2,
+    )
+    seccion_style = ParagraphStyle(
+        "Seccion", parent=styles["Normal"], fontSize=11, textColor=_COLOR_MARCA,
+        fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=6,
+    )
+    badge_etiqueta_style = ParagraphStyle(
+        "BadgeEtiqueta", parent=styles["Normal"], fontSize=7.5,
+        textColor=colors.HexColor("#94a3b8"), spaceAfter=2,
+    )
+    badge_valor_style = ParagraphStyle(
+        "BadgeValor", parent=styles["Normal"], fontSize=11,
+        textColor=colors.HexColor("#0f172a"), fontName="Helvetica-Bold",
+    )
+    campo_etiqueta_style = ParagraphStyle(
+        "CampoEtiqueta", parent=styles["Normal"], fontSize=7.5,
+        textColor=colors.HexColor("#94a3b8"), spaceAfter=1,
+    )
+    campo_valor_style = ParagraphStyle(
+        "CampoValor", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=8, leading=13,
+    )
+    caption_style = ParagraphStyle(
+        "Caption", parent=styles["Normal"], fontSize=8,
+        textColor=colors.HexColor("#64748b"), spaceAfter=6,
+    )
+    legal_style = ParagraphStyle(
+        "Legal", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.HexColor("#475569"),
+    )
+    footer_style = ParagraphStyle(
+        "Footer", parent=styles["Normal"], fontSize=9,
+        textColor=colors.white, fontName="Helvetica-Bold", alignment=1,
+    )
+
+    def _caja_borde(contenido, ancho=None, color_borde=colors.HexColor("#e2e8f0"), fondo=colors.white):
+        t = Table([[contenido]], colWidths=[ancho])
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BOX", (0, 0), (-1, -1), 0.75, color_borde),
+                    ("BACKGROUND", (0, 0), (-1, -1), fondo),
+                    ("TOPPADDING", (0, 0), (-1, -1), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ]
+            )
+        )
+        return t
+
+    # --- Cabecera: logo + numero de parte ---------------------------------
+    logo_img = _logo_inicia_image()
+    bloque_derecha = [
+        Paragraph("PARTE DE TRABAJO", etiqueta_cabecera_style),
+        Paragraph(_p(vista.numero or "—"), numero_style),
+    ]
+    cabecera = Table(
+        [[logo_img or Paragraph("INICIA", numero_style), bloque_derecha]],
+        colWidths=[9 * cm, None],
+    )
+    cabecera.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+
+    story = [
+        cabecera,
+        Spacer(1, 10),
+        HRFlowable(width="100%", color=colors.HexColor("#e2e8f0"), thickness=1),
+        Spacer(1, 14),
+    ]
+
+    # --- Badges: Cliente/Centro (con logo), Estado, Fecha ------------------
+    cliente_logo_img = _decode_firma_pdf(vista.cliente_logo_url, max_width_cm=2.2, max_height_cm=1.0)
+    nombre_cliente_centro = vista.cliente_nombre or "—"
+    if vista.centro_nombre and vista.centro_nombre != vista.cliente_nombre:
+        nombre_cliente_centro = f"{nombre_cliente_centro} · {vista.centro_nombre}"
+
+    bloque_cliente = [Paragraph("CLIENTE / CENTRO", badge_etiqueta_style)]
+    if cliente_logo_img:
+        bloque_cliente.append(cliente_logo_img)
+        bloque_cliente.append(Spacer(1, 2))
+    bloque_cliente.append(Paragraph(_p(nombre_cliente_centro), badge_valor_style))
+
+    bloque_estado = [
+        Paragraph("ESTADO", badge_etiqueta_style),
+        Paragraph(_p(vista.estado.upper()), badge_valor_style),
+    ]
+    bloque_fecha = [
+        Paragraph("FECHA DEL PARTE", badge_etiqueta_style),
+        Paragraph(_p(_formatear_fecha_es(vista.creado_en.strftime("%Y-%m-%d"))), badge_valor_style),
+    ]
+
+    ANCHO_BADGE = (ANCHO_TOTAL - 2 * SEPARADOR) / 3
+
+    fila_badges = Table(
+        [[
+            _caja_borde(bloque_cliente, ancho=ANCHO_BADGE, fondo=_COLOR_MARCA_SUAVE),
+            "",
+            _caja_borde(bloque_estado, ancho=ANCHO_BADGE),
+            "",
+            _caja_borde(bloque_fecha, ancho=ANCHO_BADGE),
+        ]],
+        colWidths=[ANCHO_BADGE, SEPARADOR, ANCHO_BADGE, SEPARADOR, ANCHO_BADGE],
+    )
+    fila_badges.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(fila_badges)
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("DETALLE DEL TRABAJO", seccion_style))
+
+    if not vista.sessions:
+        story.append(Paragraph("Todavía no hay sesiones registradas en este parte.", campo_valor_style))
+
+    for s in vista.sessions:
+        columna_izquierda = []
+        columna_izquierda.append(Paragraph("FECHA", campo_etiqueta_style))
+        columna_izquierda.append(Paragraph(_p(_formatear_fecha_es(s.fecha)), campo_valor_style))
+        if s.hora_inicio and s.hora_fin:
+            columna_izquierda.append(Paragraph("HORARIO", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(f"{s.hora_inicio} - {s.hora_fin}"), campo_valor_style))
+        if s.operarios:
+            columna_izquierda.append(Paragraph("OPERARIOS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(", ".join(s.operarios)), campo_valor_style))
+        if s.tareas:
+            columna_izquierda.append(Paragraph("TAREAS REALIZADAS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(", ".join(s.tareas)), campo_valor_style))
+        if s.notas:
+            columna_izquierda.append(Paragraph("NOTAS", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(s.notas), campo_valor_style))
+        if s.firmante:
+            columna_izquierda.append(Paragraph("RESPONSABLE DE LA JORNADA", campo_etiqueta_style))
+            columna_izquierda.append(Paragraph(_p(s.firmante), campo_valor_style))
+
+        ANCHO_IZQ_SESION = ANCHO_TOTAL * 0.56
+        ANCHO_DER_SESION = ANCHO_TOTAL - ANCHO_IZQ_SESION - SEPARADOR
+
+        firma_img = _decode_firma_pdf(s.firma_responsable, max_width_cm=5.5, max_height_cm=4.5)
+        bloque_firma_operario = [Paragraph("FIRMA DEL OPERARIO", seccion_style)]
+        if firma_img:
+            bloque_firma_operario.append(firma_img)
+        else:
+            bloque_firma_operario.append(Paragraph("Pendiente de firma.", caption_style))
+
+        fila_sesion = Table(
+            [[
+                columna_izquierda,
+                "",
+                _caja_borde(bloque_firma_operario, ancho=ANCHO_DER_SESION, color_borde=_COLOR_MARCA),
+            ]],
+            colWidths=[ANCHO_IZQ_SESION, SEPARADOR, ANCHO_DER_SESION],
+        )
+        fila_sesion.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(fila_sesion)
+        story.append(Spacer(1, 10))
+        story.append(HRFlowable(width="100%", color=colors.HexColor("#f1f5f9"), thickness=0.5))
+        story.append(Spacer(1, 10))
+
+    # --- Firma del cliente --------------------------------------------------
+    story.append(Paragraph("FIRMA DEL CLIENTE", seccion_style))
+    if vista.firma_cliente:
+        fecha_txt = (
+            vista.firma_cliente_en.strftime("%d/%m/%Y %H:%M") if vista.firma_cliente_en else ""
+        )
+        story.append(
+            Paragraph(f"Firmado por {_p(vista.firma_cliente_nombre)} el {fecha_txt}", caption_style)
+        )
+        firma_cliente_img = _decode_firma_pdf(vista.firma_cliente, max_width_cm=15.0, max_height_cm=5.0)
+        contenido_firma_cliente = [firma_cliente_img] if firma_cliente_img else [
+            Paragraph("Pendiente de firma.", caption_style)
+        ]
+        story.append(_caja_borde(contenido_firma_cliente, ancho=ANCHO_TOTAL))
+        story.append(Spacer(1, 10))
+        story.append(
+            Paragraph(
+                "✓ Este documento tiene validez legal y confirma la realización de los "
+                "trabajos descritos.",
+                legal_style,
+            )
+        )
+    else:
+        story.append(_caja_borde([Paragraph("Pendiente de firma.", caption_style)], ancho=ANCHO_TOTAL))
+
+    story.append(Spacer(1, 18))
+    pie = Table(
+        [[Paragraph(f"GENERADO EL {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}", footer_style)]],
+        colWidths=[ANCHO_TOTAL],
+    )
+    pie.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    # Sección de fotografías del parte (si tiene fotos), antes del pie.
+    try:
+        if work_order_id:
+            elementos_fotos = await _seccion_fotos_pdf(work_order_id, styles)
+            for el in elementos_fotos:
+                story.append(el)
+    except Exception:
+        logger.warning("No se pudieron añadir fotos al PDF del parte", exc_info=True)
+
+    story.append(pie)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+async def _descargar_imagen_pdf(
+    url: Optional[str], max_width_cm: float = 16.0, max_height_cm: float = 16.0
+):
+    """Descarga una imagen por URL (ej. el mapa de zonas en Cloudinary, no es
+    base64) y la devuelve como Image de reportlab, escalada para caber tanto
+    en ancho como en alto (una imagen muy vertical desbordaba la pagina si
+    solo se limitaba el ancho). A diferencia de _decode_firma_pdf (que
+    decodifica base64), esta hace una peticion HTTP."""
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client_http:
+            resp = await client_http.get(url)
+            resp.raise_for_status()
+        img = RLImage(io.BytesIO(resp.content))
+        max_w = max_width_cm * cm
+        max_h = max_height_cm * cm
+        ratio = min(max_w / img.drawWidth, max_h / img.drawHeight, 1.0)
+        img.drawWidth *= ratio
+        img.drawHeight *= ratio
+        return img
+    except Exception:
+        logger.warning("No se pudo descargar la imagen del mapa de zonas", exc_info=True)
+        return None
+
+
+async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -> list:
+    """Genera los elementos (flowables) de una seccion 'Fotografias' con las
+    fotos del parte, en una cuadricula de 3 columnas. Devuelve [] si no hay
+    fotos. Limita a max_fotos para que el PDF no sea enorme."""
+    fotos_docs = [
+        f
+        async for f in db.fotos.find({"work_order_id": work_order_id}).sort("creado_en", 1)
+    ]
+    if not fotos_docs:
+        return []
+    fotos_docs = fotos_docs[:max_fotos]
+
+    titulo_style = ParagraphStyle(
+        "TituloFotos", parent=estilos["Normal"], fontSize=11,
+        textColor=_COLOR_MARCA, fontName="Helvetica-Bold", spaceAfter=8,
+    )
+
+    # Descargar cada imagen escalada a un tamaño de miniatura homogéneo.
+    celdas = []
+    for f in fotos_docs:
+        img = await _descargar_imagen_pdf(f.get("url"), max_width_cm=5.2, max_height_cm=5.2)
+        celdas.append(img if img else Paragraph("(imagen no disponible)", estilos["Normal"]))
+
+    # Organizar en filas de 3 columnas
+    filas = []
+    for i in range(0, len(celdas), 3):
+        fila = celdas[i:i + 3]
+        while len(fila) < 3:
+            fila.append("")  # rellenar la última fila
+        filas.append(fila)
+
+    tabla = Table(filas, colWidths=[5.7 * cm, 5.7 * cm, 5.7 * cm])
+    tabla.setStyle(
+        TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ])
+    )
+
+    return [Spacer(1, 16), Paragraph("Fotografías", titulo_style), tabla]
+
+
+async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
+    """PDF especifico para partes con usa_zonas=True (Fase 6/9): reproduce
+    la plantilla de "control de calidad" del cliente - logo, cabecera en
+    color, cuadrante tarea x dia con las letras de zona REALES (no solo
+    X), mapa de zonas a la derecha, y observaciones debajo. Sustituye por
+    completo al informe de sesiones (_generar_pdf_parte) para este tipo de
+    parte: el cliente no necesita ver duracion, operarios ni firmas aqui."""
+    if doc.get("rejilla_tipo") == "semanal" and doc.get("semana_inicio"):
+        dias = _dias_de_semana(doc["semana_inicio"])
+        _d_ini, _d_fin = date.fromisoformat(dias[0]), date.fromisoformat(dias[-1])
+        year = _d_fin.year
+        periodo_label = "SEMANA"
+        periodo_txt = f"{_d_ini.day} - {_d_fin.day} {_MESES_ES[_d_fin.month - 1]} {_d_fin.year}"
+    elif doc.get("rejilla_tipo") == "quincenal" and doc.get("semana_inicio"):
+        dias = _dias_de_quincena(doc["semana_inicio"])
+        _d_ini, _d_fin = date.fromisoformat(dias[0]), date.fromisoformat(dias[-1])
+        year = _d_fin.year
+        periodo_label = "QUINCENA"
+        periodo_txt = f"{_d_ini.day} {_MESES_ES[_d_ini.month - 1]} - {_d_fin.day} {_MESES_ES[_d_fin.month - 1]} {_d_fin.year}"
+    elif doc.get("mes_rejilla"):
+        year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+        dias = _dias_del_mes(year, month)
+        periodo_label = "MES"
+        periodo_txt = _MESES_ES[month - 1].capitalize()
+    else:
+        year, month = doc["creado_en"].year, doc["creado_en"].month
+        dias = _dias_del_mes(year, month)
+        periodo_label = "MES"
+        periodo_txt = _MESES_ES[month - 1].capitalize()
+
+    tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    tareas = [t async for t in tareas_cursor]
+
+    await _migrar_celdas_desde_sesiones_si_hace_falta(doc["id"])
+
+    # {(tarea_id, fecha): "B" o "B,C" ...} - letras reales, tal cual estan
+    # marcadas en la rejilla (X se muestra igual, es un valor mas).
+    celdas_texto = {}
+    celdas_cursor = db.rejilla_celdas.find({"work_order_id": doc["id"]})
+    async for c in celdas_cursor:
+        if c.get("zonas"):
+            celdas_texto[(c["tarea_id"], c["fecha"])] = ",".join(c["zonas"])
+
+    # Observaciones por dia: las notas por dia (nuevo sistema del parte de
+    # mantenimiento) y, por compatibilidad, las notas de sesiones antiguas
+    # que pudiera haber (partes viejos migrados).
+    observaciones = []  # [(fecha, nota)]
+    notas_cursor = db.rejilla_notas.find({"work_order_id": doc["id"]})
+    async for n in notas_cursor:
+        if n.get("texto"):
+            observaciones.append((n["fecha"], n["texto"]))
+    sesiones_cursor = db.work_sessions.find({"work_order_id": doc["id"]}).sort("fecha", 1)
+    async for s in sesiones_cursor:
+        if s.get("notas"):
+            observaciones.append((s["fecha"], s["notas"]))
+    observaciones.sort(key=lambda x: x[0])
+
+    ANCHO_PAGINA = landscape(A4)[0]
+    MARGEN = 1.2 * cm
+
+    buffer = io.BytesIO()
+    pdf_doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        topMargin=MARGEN,
+        bottomMargin=MARGEN,
+        leftMargin=MARGEN,
+        rightMargin=MARGEN,
+        title=doc["titulo"],
+    )
+    styles = getSampleStyleSheet()
+    titulo_banner_style = ParagraphStyle(
+        "TituloBanner", parent=styles["Heading1"], fontSize=14, alignment=1,
+        textColor=colors.HexColor("#7f1d1d"), leading=16,
+    )
+    anio_style = ParagraphStyle(
+        "Anio", parent=styles["Normal"], fontSize=11, alignment=2,
+        textColor=colors.HexColor("#7f1d1d"),
+    )
+    label_style = ParagraphStyle(
+        "Label", parent=styles["Normal"], fontSize=9, fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#334155"),
+    )
+    valor_style = ParagraphStyle(
+        "Valor", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#0f172a")
+    )
+    seccion_style = ParagraphStyle(
+        "Seccion", parent=styles["Heading3"], fontSize=10, spaceBefore=0, spaceAfter=4,
+        textColor=colors.HexColor("#334155"),
+    )
+    normal_style = ParagraphStyle("NormalP", parent=styles["Normal"], fontSize=8, leading=10)
+    tarea_style = ParagraphStyle("TareaP", parent=styles["Normal"], fontSize=7.5, leading=9)
+    obs_style = ParagraphStyle("ObsP", parent=styles["Normal"], fontSize=8, leading=11)
+
+    story = []
+
+    # Logo del cliente (si tiene), centrado arriba
+    logo_img = await _descargar_imagen_pdf(
+        cliente.get("logo_url") if cliente else None, max_width_cm=5.0, max_height_cm=2.2
+    )
+    if logo_img:
+        logo_tabla = Table([[logo_img]], colWidths=[ANCHO_PAGINA - 2 * MARGEN])
+        logo_tabla.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+        story.append(logo_tabla)
+        story.append(Spacer(1, 6))
+
+    # Cabecera: banner de titulo + año
+    banner = Table(
+        [[Paragraph("CONTROL DE CALIDAD DEL SERVICIO DE JARDINERÍA", titulo_banner_style),
+          Paragraph(str(year), anio_style)]],
+        colWidths=[ANCHO_PAGINA - 2 * MARGEN - 3 * cm, 3 * cm],
+    )
+    banner.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fbdcdc")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (0, 0), 10),
+                ("RIGHTPADDING", (1, 0), (1, 0), 10),
+            ]
+        )
+    )
+    story.append(banner)
+    story.append(Spacer(1, 1))
+
+    # Fila CLIENTE / MES o SEMANA segun el tipo de rejilla
+    info_fila = Table(
+        [[
+            Paragraph("CLIENTE", label_style),
+            Paragraph(_p(cliente["nombre"]) if cliente else "", valor_style),
+            Paragraph(periodo_label, label_style),
+            Paragraph(_p(periodo_txt), valor_style),
+        ]],
+        colWidths=[2.4 * cm, ANCHO_PAGINA - 2 * MARGEN - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
+    )
+    info_fila.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#e2e8f0")),
+                ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(info_fila)
+    story.append(Spacer(1, 8))
+
+    # --- Columna izquierda: cuadrante + observaciones ---
+    ANCHO_DERECHA = 8.5 * cm
+    ANCHO_IZQUIERDA = ANCHO_PAGINA - 2 * MARGEN - ANCHO_DERECHA - 0.6 * cm
+
+    cabecera = [Paragraph("Tareas\nrealizadas", label_style)] + [
+        str(int(d.split("-")[2])) for d in dias
+    ]
+    filas_tabla = [cabecera]
+    for t in tareas:
+        fila = [Paragraph(_p(t["nombre"]), tarea_style)]
+        for fecha in dias:
+            fila.append(celdas_texto.get((t["id"], fecha), ""))
+        filas_tabla.append(fila)
+
+    ancho_nombre = 3.4 * cm
+    ancho_dia = (ANCHO_IZQUIERDA - ancho_nombre) / len(dias)
+    tabla_grid = Table(
+        filas_tabla,
+        colWidths=[ancho_nombre] + [ancho_dia] * len(dias),
+        repeatRows=1,
+    )
+    tabla_grid.setStyle(
+        TableStyle(
+            [
+                ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#cbd5e1")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#94a3b8")),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("FONTNAME", (1, 1), (-1, -1), "Helvetica-Bold"),
+                ("TEXTCOLOR", (1, 1), (-1, -1), colors.HexColor("#1e3a8a")),
+            ]
+        )
+    )
+
+    # Observaciones e incidencias, en un recuadro con titulo resaltado
+    obs_filas = [[Paragraph("OBSERVACIONES E INCIDENCIAS", seccion_style)]]
+    if observaciones:
+        for fecha, nota in observaciones:
+            obs_filas.append(
+                [Paragraph(f"<b>{_formatear_fecha_es(fecha)}:</b> {_p(nota)}", obs_style)]
+            )
+    else:
+        obs_filas.append([Paragraph("Sin observaciones registradas este mes.", obs_style)])
+    tabla_obs = Table(obs_filas, colWidths=[ANCHO_IZQUIERDA])
+    tabla_obs.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#dbeafe")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+
+    columna_izquierda = [tabla_grid, Spacer(1, 8), tabla_obs]
+
+    # --- Columna derecha: mapa de zonas ---
+    # Altura maxima ajustada para que quepa en una sola pagina apaisada:
+    # la pagina util mide ~18.6cm de alto: cabecera (logo+banner+datos del
+    # cliente) ya ocupa ~5cm, así que el mapa no puede pasar de ~11cm o se
+    # desborda a una segunda pagina.
+    mapa_img = await _descargar_imagen_pdf(
+        cliente.get("mapa_zonas_url") if cliente else None,
+        max_width_cm=ANCHO_DERECHA / cm - 0.4,
+        max_height_cm=11.0,
+    )
+    columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style)]
+    if mapa_img:
+        columna_derecha.append(mapa_img)
+    else:
+        columna_derecha.append(
+            Paragraph("(el cliente no tiene un mapa de zonas subido todavía)", normal_style)
+        )
+
+    layout_dos_columnas = Table(
+        [[columna_izquierda, columna_derecha]],
+        colWidths=[ANCHO_IZQUIERDA, ANCHO_DERECHA],
+    )
+    layout_dos_columnas.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (1, 0), (1, 0), 0.6, colors.HexColor("#94a3b8")),
+                ("TOPPADDING", (1, 0), (1, 0), 6),
+                ("LEFTPADDING", (1, 0), (1, 0), 8),
+            ]
+        )
+    )
+    story.append(layout_dos_columnas)
+
+    # Sección de fotografías del parte (si tiene fotos).
+    try:
+        elementos_fotos = await _seccion_fotos_pdf(doc["id"], styles)
+        for el in elementos_fotos:
+            story.append(el)
+    except Exception:
+        logger.warning("No se pudieron añadir fotos al PDF de rejilla", exc_info=True)
+
+    pdf_doc.build(story)
+    return buffer.getvalue()
+
+
+@api_router.get("/work-orders/{work_order_id}/pdf")
+async def descargar_pdf_parte(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc.get("usa_zonas"):
+        cliente = await db.clients.find_one({"id": doc["client_id"]})
+        pdf_bytes = await _generar_pdf_rejilla_zonas(doc, cliente)
+    else:
+        vista = await _construir_vista_publica(doc)
+        pdf_bytes = await _generar_pdf_parte(vista, work_order_id=doc["id"])
+    filename = f"{(doc.get('numero') or doc['id'][:8])}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# --- Sesiones -------------------------------------------------------------
+
+
+@api_router.post("/work-orders/{work_order_id}/sessions", response_model=WorkSession)
+async def create_session(
+    work_order_id: str,
+    payload: WorkSessionCreate,
+    current_user: dict = Depends(require_approved),
+):
+    """Anadir una sesion diaria al parte. Solo si el parte esta abierto."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+
+    now = datetime.now(timezone.utc)
+    session_doc = {
+        "id": str(uuid.uuid4()),
+        "work_order_id": work_order_id,
+        **payload.model_dump(),
+        "creado_por": current_user.get("id") or current_user.get("email") or "?",
+        "creado_en": now,
+        "actualizado_en": now,
+        "firma_responsable_en": now if payload.firma_responsable else None,
+    }
+    await db.work_sessions.insert_one(session_doc)
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": now}}
+    )
+    return WorkSession(**session_doc)
+
+
+@api_router.patch(
+    "/work-orders/{work_order_id}/sessions/{session_id}", response_model=WorkSession
+)
+async def update_session(
+    work_order_id: str,
+    session_id: str,
+    payload: WorkSessionUpdate,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    session_doc = await db.work_sessions.find_one(
+        {"id": session_id, "work_order_id": work_order_id}
+    )
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Sesion no encontrada")
+
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return WorkSession(**session_doc)
+    if "firma_responsable" in updates:
+        updates["firma_responsable_en"] = (
+            datetime.now(timezone.utc) if updates["firma_responsable"] else None
+        )
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    await db.work_sessions.update_one({"id": session_id}, {"$set": updates})
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": updates["actualizado_en"]}}
+    )
+    session_doc = await db.work_sessions.find_one({"id": session_id})
+    return WorkSession(**session_doc)
+
+
+@api_router.delete("/work-orders/{work_order_id}/sessions/{session_id}")
+async def delete_session(
+    work_order_id: str,
+    session_id: str,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    result = await db.work_sessions.delete_one(
+        {"id": session_id, "work_order_id": work_order_id}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Sesion no encontrada")
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"actualizado_en": datetime.now(timezone.utc)}}
+    )
+    return {"ok": True}
+
+
+# =====================================================================
+# REJILLA DE ZONAS (Fase 6 - zonas del jardin)
+# ---------------------------------------------------------------------
+# Interfaz principal de edicion para partes con usa_zonas=True: en vez de
+# crear sesiones "pesadas" (hora, operarios, firmante...) para anotar
+# tarea+zona de un dia, aqui se edita celda a celda como en el Excel
+# original. Por debajo sigue usando work_sessions (una sesion "ligera"
+# por dia con horas 00:00-00:00 si no habia ya una), para no duplicar el
+# modelo de datos ni el calculo de horas totales del parte.
+# =====================================================================
+
+
+class CeldaRejilla(BaseModel):
+    tarea_id: str
+    fecha: str
+    zonas: List[str]
+
+
+class FilaRejillaZonas(BaseModel):
+    tarea_id: str
+    tarea_nombre: str
+
+
+class RejillaZonas(BaseModel):
+    dias: List[str]
+    tareas: List[FilaRejillaZonas]
+    celdas: List[CeldaRejilla]
+
+
+class CeldaRejillaPayload(BaseModel):
+    tarea_id: str
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    zonas: Optional[List[str]] = Field(
+        None,
+        max_length=3,
+        description="Hasta 3 de 'A'..'M', o ['X']. None/lista vacia = quitar la tarea de ese dia.",
+    )
+
+
+def _dias_del_mes(year: int, month: int) -> List[str]:
+    """Todas las fechas ISO del mes dado (year, month), en orden."""
+    primer_dia = date(year, month, 1)
+    siguiente_mes = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    ultimo_dia = siguiente_mes - timedelta(days=1)
+    dias = []
+    d = primer_dia
+    while d <= ultimo_dia:
+        dias.append(d.isoformat())
+        d += timedelta(days=1)
+    return dias
+
+
+def _dias_de_semana(lunes_iso: str) -> List[str]:
+    """Los 7 dias ISO de la semana que empieza en el lunes dado (Fase 10:
+    rejilla semanal, para trabajos puntuales de varios dias)."""
+    lunes = date.fromisoformat(lunes_iso)
+    return [(lunes + timedelta(days=i)).isoformat() for i in range(7)]
+
+
+def _dias_de_quincena(lunes_iso: str) -> List[str]:
+    """Los 14 dias ISO de la quincena (dos semanas) que empieza en el lunes
+    dado. Para mantenimientos con periodicidad quincenal."""
+    lunes = date.fromisoformat(lunes_iso)
+    return [(lunes + timedelta(days=i)).isoformat() for i in range(14)]
+
+
+async def _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id: str) -> None:
+    """Compatibilidad con partes creados antes de este cambio: si la
+    rejilla usaba sesiones auto-creadas para guardar las zonas, se migran
+    una sola vez a la coleccion dedicada rejilla_celdas. Se marca con un
+    flag en el propio parte (no basta con mirar si ya hay celdas: en
+    cuanto se usa la rejilla normalmente ya habria alguna, y se saltaria
+    la migracion de lo antiguo por error)."""
+    parte = await db.work_orders.find_one({"id": work_order_id})
+    if parte and parte.get("rejilla_migrada"):
+        return
+    now = datetime.now(timezone.utc)
+    cursor = db.work_sessions.find({"work_order_id": work_order_id})
+    async for s in cursor:
+        for tarea_id, zonas in (s.get("tareas_zonas") or {}).items():
+            if zonas:
+                existente = await db.rejilla_celdas.find_one(
+                    {"work_order_id": work_order_id, "tarea_id": tarea_id, "fecha": s["fecha"]}
+                )
+                if not existente:
+                    await db.rejilla_celdas.insert_one(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "work_order_id": work_order_id,
+                            "tarea_id": tarea_id,
+                            "fecha": s["fecha"],
+                            "zonas": zonas,
+                            "actualizado_en": now,
+                        }
+                    )
+    await db.work_orders.update_one(
+        {"id": work_order_id}, {"$set": {"rejilla_migrada": True}}
+    )
+
+
+@api_router.get("/work-orders/{work_order_id}/rejilla-zonas", response_model=RejillaZonas)
+async def obtener_rejilla_zonas(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    doc = await _cargar_parte(work_order_id)
+    if not doc.get("usa_zonas"):
+        raise HTTPException(status_code=400, detail="Este parte no usa zonas")
+
+    if doc.get("rejilla_tipo") == "semanal" and doc.get("semana_inicio"):
+        dias = _dias_de_semana(doc["semana_inicio"])
+    elif doc.get("rejilla_tipo") == "quincenal" and doc.get("semana_inicio"):
+        dias = _dias_de_quincena(doc["semana_inicio"])
+    elif doc.get("mes_rejilla"):
+        year, month = (int(x) for x in doc["mes_rejilla"].split("-"))
+        dias = _dias_del_mes(year, month)
+    else:
+        year, month = doc["creado_en"].year, doc["creado_en"].month
+        dias = _dias_del_mes(year, month)
+
+    tareas_cursor = db.work_tasks.find({"activo": True}).sort([("orden", 1), ("nombre", 1)])
+    tareas = [
+        FilaRejillaZonas(tarea_id=t["id"], tarea_nombre=t["nombre"])
+        async for t in tareas_cursor
+    ]
+
+    await _migrar_celdas_desde_sesiones_si_hace_falta(work_order_id)
+
+    celdas = []
+    celdas_cursor = db.rejilla_celdas.find({"work_order_id": work_order_id})
+    async for c in celdas_cursor:
+        if c.get("zonas"):
+            celdas.append(CeldaRejilla(tarea_id=c["tarea_id"], fecha=c["fecha"], zonas=c["zonas"]))
+
+    return RejillaZonas(dias=dias, tareas=tareas, celdas=celdas)
+
+
+@api_router.put("/work-orders/{work_order_id}/rejilla-zonas/celda")
+async def actualizar_celda_rejilla(
+    work_order_id: str,
+    payload: CeldaRejillaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Marca/quita una zona en la rejilla para una tarea+dia. Vive en su
+    propia coleccion (rejilla_celdas), independiente de las sesiones: no
+    se crea ninguna sesion automatica al usar la rejilla. Si se quiere que
+    una anotacion aparezca en 'Observaciones e incidencias' del PDF, hay
+    que abrir una sesion a mano para ese dia (boton de siempre en el
+    parte) y escribir la nota ahi - eso sigue funcionando igual."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    if not doc.get("usa_zonas"):
+        raise HTTPException(status_code=400, detail="Este parte no usa zonas")
+
+    now = datetime.now(timezone.utc)
+    existente = await db.rejilla_celdas.find_one(
+        {"work_order_id": work_order_id, "tarea_id": payload.tarea_id, "fecha": payload.fecha}
+    )
+
+    if not payload.zonas:
+        if existente:
+            await db.rejilla_celdas.delete_one({"id": existente["id"]})
+        return {"ok": True}
+
+    if existente:
+        await db.rejilla_celdas.update_one(
+            {"id": existente["id"]},
+            {"$set": {"zonas": payload.zonas, "actualizado_en": now}},
+        )
+    else:
+        await db.rejilla_celdas.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "work_order_id": work_order_id,
+                "tarea_id": payload.tarea_id,
+                "fecha": payload.fecha,
+                "zonas": payload.zonas,
+                "actualizado_en": now,
+            }
+        )
+
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": {"actualizado_en": now}})
+    return {"ok": True}
+
+
+# --- Notas por dia (parte de mantenimiento / rejilla) ---------------------
+# Anotaciones libres asociadas a un dia concreto de la rejilla, sin pasar
+# por sesiones. Viven en su propia coleccion rejilla_notas.
+
+class NotaDiaRejilla(BaseModel):
+    fecha: str
+    texto: str
+
+
+class NotaDiaRejillaPayload(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    texto: str = Field("", max_length=2000)
+
+
+@api_router.get(
+    "/work-orders/{work_order_id}/rejilla-notas", response_model=List[NotaDiaRejilla]
+)
+async def obtener_notas_dia_rejilla(
+    work_order_id: str, _: dict = Depends(require_approved)
+):
+    await _cargar_parte(work_order_id)
+    notas = []
+    cursor = db.rejilla_notas.find({"work_order_id": work_order_id})
+    async for n in cursor:
+        if n.get("texto"):
+            notas.append(NotaDiaRejilla(fecha=n["fecha"], texto=n["texto"]))
+    notas.sort(key=lambda x: x.fecha)
+    return notas
+
+
+@api_router.put("/work-orders/{work_order_id}/rejilla-notas")
+async def guardar_nota_dia_rejilla(
+    work_order_id: str,
+    payload: NotaDiaRejillaPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Crea/actualiza/borra la nota de un dia. Texto vacio = borrar."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+
+    now = datetime.now(timezone.utc)
+    texto = payload.texto.strip()
+    existente = await db.rejilla_notas.find_one(
+        {"work_order_id": work_order_id, "fecha": payload.fecha}
+    )
+
+    if not texto:
+        if existente:
+            await db.rejilla_notas.delete_one({"id": existente["id"]})
+        return {"ok": True}
+
+    if existente:
+        await db.rejilla_notas.update_one(
+            {"id": existente["id"]},
+            {"$set": {"texto": texto, "actualizado_en": now}},
+        )
+    else:
+        await db.rejilla_notas.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "work_order_id": work_order_id,
+                "fecha": payload.fecha,
+                "texto": texto,
+                "actualizado_en": now,
+            }
+        )
+
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": {"actualizado_en": now}})
+    return {"ok": True}
+
+
+# --- Endpoints ficha del cliente ------------------------------------------
+
+
+@api_router.get(
+    "/clients/{slug}/work-orders", response_model=List[WorkOrder]
+)
+async def list_client_work_orders(slug: str, _: dict = Depends(require_approved)):
+    """Lista de partes del cliente, mas recientes primero."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cursor = db.work_orders.find({"client_id": cliente["id"]}).sort("creado_en", -1)
+    return [WorkOrder(**doc) async for doc in cursor]
+
+
+@api_router.get("/clients/{slug}/work-orders/summary")
+async def client_work_orders_summary(slug: str, _: dict = Depends(require_approved)):
+    """Totales del cliente: contador por estado + horas acumuladas."""
+    slug = _validate_slug(slug)
+    cliente = await db.clients.find_one({"slug": slug, "activo": True})
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    counters = {"abierto": 0, "cerrado": 0, "archivado": 0}
+    ids_por_estado: dict = {"abierto": [], "cerrado": [], "archivado": []}
+    async for doc in db.work_orders.find(
+        {"client_id": cliente["id"]}, {"id": 1, "estado": 1}
+    ):
+        estado = doc.get("estado", "abierto")
+        if estado in counters:
+            counters[estado] += 1
+            ids_por_estado[estado].append(doc["id"])
+
+    todos_ids = ids_por_estado["abierto"] + ids_por_estado["cerrado"] + ids_por_estado["archivado"]
+    total_horas = 0.0
+    if todos_ids:
+        async for s in db.work_sessions.find(
+            {"work_order_id": {"$in": todos_ids}},
+            {"hora_inicio": 1, "hora_fin": 1},
+        ):
+            total_horas += _horas_de_sesion(
+                s.get("hora_inicio", ""), s.get("hora_fin", "")
+            )
+
+    return {
+        "total": sum(counters.values()),
+        "abiertos": counters["abierto"],
+        "cerrados": counters["cerrado"],
+        "archivados": counters["archivado"],
+        "total_horas": round(total_horas, 2),
+    }
+
+
+# =====================================================================
+# VEHICULOS (Fase 9 parte 1)
+# ---------------------------------------------------------------------
+# Datos por vehiculo (matricula, marca/modelo, año, kilometraje) con
+# fechas de ITV y proxima revision (el frontend calcula la alerta igual
+# que con las revisiones medicas de usuarios: mismo umbral de 30 dias).
+# Las averias son un historial aparte, no una fecha unica - se pueden ir
+# anadiendo y marcando como resueltas.
+# =====================================================================
+
+
+class VehiculoBase(BaseModel):
+    matricula: str = Field(..., min_length=1, max_length=20)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio: Optional[int] = Field(None, ge=1950, le=2100)
+    kilometraje: Optional[int] = Field(None, ge=0)
+    fecha_itv: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    fecha_proxima_revision: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    operario_asignado_id: Optional[str] = None
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class VehiculoCreate(VehiculoBase):
+    pass
+
+
+class VehiculoUpdate(BaseModel):
+    matricula: Optional[str] = Field(None, min_length=1, max_length=20)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio: Optional[int] = Field(None, ge=1950, le=2100)
+    kilometraje: Optional[int] = Field(None, ge=0)
+    fecha_itv: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    fecha_proxima_revision: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    operario_asignado_id: Optional[str] = None
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Vehiculo(VehiculoBase):
+    id: str
+    activo: bool = True
+    fotos: List[str] = Field(default_factory=list)
+    fotos_public_ids: List[str] = Field(default_factory=list)
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class FotoVehiculoPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+
+class RegistroKmBase(BaseModel):
+    mes: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    kilometros: int = Field(..., ge=0)
+
+
+class RegistroKmCreate(RegistroKmBase):
+    pass
+
+
+class RegistroKm(RegistroKmBase):
+    id: str
+    vehiculo_id: str
+    creado_en: datetime
+
+
+class AveriaVehiculoBase(BaseModel):
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    descripcion: str = Field(..., min_length=1, max_length=1000)
+
+
+class AveriaVehiculoCreate(AveriaVehiculoBase):
+    pass
+
+
+class AveriaVehiculo(AveriaVehiculoBase):
+    id: str
+    vehiculo_id: str
+    resuelta: bool = False
+    fecha_resolucion: Optional[str] = None
+    creado_por: str
+    creado_en: datetime
+
+
+@api_router.get("/vehiculos", response_model=List[Vehiculo])
+async def list_vehiculos(_: dict = Depends(require_approved)):
+    cursor = db.vehiculos.find({"activo": True}).sort("matricula", 1)
+    return [Vehiculo(**v) async for v in cursor]
+
+
+@api_router.post("/vehiculos", response_model=Vehiculo)
+async def crear_vehiculo(payload: VehiculoCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "activo": True,
+        "fotos": [],
+        "fotos_public_ids": [],
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.vehiculos.insert_one(doc)
+    return Vehiculo(**doc)
+
+
+@api_router.get("/vehiculos/{vehiculo_id}", response_model=Vehiculo)
+async def obtener_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    return Vehiculo(**doc)
+
+
+@api_router.put("/vehiculos/{vehiculo_id}", response_model=Vehiculo)
+async def actualizar_vehiculo(
+    vehiculo_id: str, payload: VehiculoUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.vehiculos.update_one({"id": vehiculo_id}, {"$set": updates})
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}")
+async def eliminar_vehiculo(vehiculo_id: str, _: dict = Depends(require_admin)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/fotos", response_model=Vehiculo)
+async def anadir_foto_vehiculo(
+    vehiculo_id: str, payload: FotoVehiculoPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    fotos = doc.get("fotos", []) + [url]
+    fotos_ids = doc.get("fotos_public_ids", []) + [public_id]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}/fotos/{indice}", response_model=Vehiculo)
+async def eliminar_foto_vehiculo(
+    vehiculo_id: str, indice: int, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    fotos = doc.get("fotos", [])
+    fotos_ids = doc.get("fotos_public_ids", [])
+    if indice < 0 or indice >= len(fotos):
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    public_id = fotos_ids[indice] if indice < len(fotos_ids) else None
+    await _borrar_logo_cloudinary(public_id)
+    fotos.pop(indice)
+    if indice < len(fotos_ids):
+        fotos_ids.pop(indice)
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    return Vehiculo(**doc)
+
+
+# --- Documentacion del vehiculo (PDF o imagen) ----------------------------
+# Permiso de circulacion, ficha tecnica, ITV, seguro, etc. Cada documento
+# guarda su url, el public_id de Cloudinary, el tipo (image/pdf) y un
+# nombre descriptivo.
+
+class DocumentoVehiculoPayload(BaseModel):
+    archivo: str = Field(..., description="Data-URI base64 (imagen o PDF)")
+    nombre: str = Field(..., min_length=1, max_length=200)
+
+
+class DocumentoVehiculo(BaseModel):
+    id: str
+    nombre: str
+    url: str
+    tipo: str  # image | pdf
+    creado_en: datetime
+
+
+@api_router.get(
+    "/vehiculos/{vehiculo_id}/documentos", response_model=List[DocumentoVehiculo]
+)
+async def list_documentos_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    documentos = doc.get("documentos", [])
+    return [DocumentoVehiculo(**d) for d in documentos]
+
+
+@api_router.post(
+    "/vehiculos/{vehiculo_id}/documentos", response_model=DocumentoVehiculo
+)
+async def anadir_documento_vehiculo(
+    vehiculo_id: str, payload: DocumentoVehiculoPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    url, public_id, resource_type = await _subir_documento_cloudinary(
+        payload.archivo, "inicia-gestion/vehiculos-docs"
+    )
+    tipo = "image" if resource_type == "image" else "pdf"
+    nuevo = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre.strip(),
+        "url": url,
+        "public_id": public_id,
+        "resource_type": resource_type,
+        "tipo": tipo,
+        "creado_en": datetime.now(timezone.utc),
+    }
+    documentos = doc.get("documentos", []) + [nuevo]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"documentos": documentos, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return DocumentoVehiculo(**nuevo)
+
+
+@api_router.delete("/vehiculos/{vehiculo_id}/documentos/{documento_id}")
+async def eliminar_documento_vehiculo(
+    vehiculo_id: str, documento_id: str, _: dict = Depends(require_admin)
+):
+    doc = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    documentos = doc.get("documentos", [])
+    objetivo = next((d for d in documentos if d["id"] == documento_id), None)
+    if not objetivo:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_documento_cloudinary(
+        objetivo.get("public_id"), objetivo.get("resource_type", "image")
+    )
+    documentos = [d for d in documentos if d["id"] != documento_id]
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"documentos": documentos, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/vehiculos/{vehiculo_id}/kilometros", response_model=List[RegistroKm])
+async def list_kilometros_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    cursor = db.km_vehiculo.find({"vehiculo_id": vehiculo_id}).sort("mes", -1)
+    return [RegistroKm(**r) async for r in cursor]
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/kilometros", response_model=RegistroKm)
+async def registrar_km_vehiculo(
+    vehiculo_id: str, payload: RegistroKmCreate, _: dict = Depends(require_admin)
+):
+    """Registro mensual de kilometraje (control de kms/mes). Un mes solo
+    puede tener un registro: si ya existe, se actualiza (upsert) en vez
+    de duplicarlo."""
+    vehiculo = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    existente = await db.km_vehiculo.find_one({"vehiculo_id": vehiculo_id, "mes": payload.mes})
+    now = datetime.now(timezone.utc)
+    if existente:
+        await db.km_vehiculo.update_one(
+            {"id": existente["id"]}, {"$set": {"kilometros": payload.kilometros}}
+        )
+        doc = await db.km_vehiculo.find_one({"id": existente["id"]})
+    else:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "vehiculo_id": vehiculo_id,
+            "mes": payload.mes,
+            "kilometros": payload.kilometros,
+            "creado_en": now,
+        }
+        await db.km_vehiculo.insert_one(doc)
+    # Mantener tambien el kilometraje "actual" del vehiculo sincronizado
+    # con el ultimo registro mensual introducido, para el resto de la app
+    await db.vehiculos.update_one(
+        {"id": vehiculo_id},
+        {"$set": {"kilometraje": payload.kilometros, "actualizado_en": now}},
+    )
+    return RegistroKm(**doc)
+
+
+@api_router.delete("/km-vehiculo/{registro_id}")
+async def eliminar_registro_km(registro_id: str, _: dict = Depends(require_admin)):
+    result = await db.km_vehiculo.delete_one({"id": registro_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    return {"ok": True}
+
+
+@api_router.get("/vehiculos/{vehiculo_id}/averias", response_model=List[AveriaVehiculo])
+async def list_averias_vehiculo(vehiculo_id: str, _: dict = Depends(require_approved)):
+    cursor = db.averias_vehiculo.find({"vehiculo_id": vehiculo_id}).sort("fecha", -1)
+    return [AveriaVehiculo(**a) async for a in cursor]
+
+
+@api_router.post("/vehiculos/{vehiculo_id}/averias", response_model=AveriaVehiculo)
+async def crear_averia_vehiculo(
+    vehiculo_id: str,
+    payload: AveriaVehiculoCreate,
+    current_user: dict = Depends(require_approved),
+):
+    vehiculo = await db.vehiculos.find_one({"id": vehiculo_id})
+    if not vehiculo:
+        raise HTTPException(status_code=404, detail="Vehículo no encontrado")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "vehiculo_id": vehiculo_id,
+        "fecha": payload.fecha,
+        "descripcion": payload.descripcion.strip(),
+        "resuelta": False,
+        "fecha_resolucion": None,
+        "creado_por": current_user["user_id"],
+        "creado_en": now,
+    }
+    await db.averias_vehiculo.insert_one(doc)
+    return AveriaVehiculo(**doc)
+
+
+@api_router.put("/averias-vehiculo/{averia_id}/resolver", response_model=AveriaVehiculo)
+async def resolver_averia_vehiculo(
+    averia_id: str, _: dict = Depends(require_approved)
+):
+    doc = await db.averias_vehiculo.find_one({"id": averia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Avería no encontrada")
+    hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    nuevo_estado = not doc.get("resuelta", False)
+    await db.averias_vehiculo.update_one(
+        {"id": averia_id},
+        {"$set": {"resuelta": nuevo_estado, "fecha_resolucion": hoy if nuevo_estado else None}},
+    )
+    doc = await db.averias_vehiculo.find_one({"id": averia_id})
+    return AveriaVehiculo(**doc)
+
+
+@api_router.delete("/averias-vehiculo/{averia_id}")
+async def eliminar_averia_vehiculo(averia_id: str, _: dict = Depends(require_admin)):
+    result = await db.averias_vehiculo.delete_one({"id": averia_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Avería no encontrada")
+    return {"ok": True}
+
+
+# =====================================================================
+# MAQUINARIA Y HERRAMIENTAS (Fase 9 parte 2)
+# ---------------------------------------------------------------------
+# Datos por maquina/herramienta (ubicacion actual, año de fabricacion,
+# estado, fotos) mas un historial unico de averias/arreglos/revisiones
+# (a diferencia de vehiculos, aqui se pidio explicitamente distinguir
+# esos 3 tipos de entrada, asi que el historial lleva un campo 'tipo').
+# =====================================================================
+
+_ESTADO_MAQUINARIA_PATTERN = r"^(operativo|en_reparacion|fuera_servicio)$"
+_TIPO_HISTORIAL_PATTERN = r"^(averia|arreglo|revision)$"
+
+
+class MaquinariaBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
+    ubicacion_actual: Optional[str] = Field(None, max_length=200)
+    estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
+    notas: Optional[str] = Field("", max_length=2000)
+
+
+class MaquinariaCreate(MaquinariaBase):
+    pass
+
+
+class MaquinariaUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    modelo: Optional[str] = Field(None, max_length=100)
+    anio_fabricacion: Optional[int] = Field(None, ge=1950, le=2100)
+    ubicacion_actual: Optional[str] = Field(None, max_length=200)
+    estado: Optional[str] = Field(None, pattern=_ESTADO_MAQUINARIA_PATTERN)
+    notas: Optional[str] = Field(None, max_length=2000)
+    activo: Optional[bool] = None
+
+
+class Maquinaria(MaquinariaBase):
+    id: str
+    activo: bool = True
+    fotos: List[str] = Field(default_factory=list)
+    fotos_public_ids: List[str] = Field(default_factory=list)
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+class FotoMaquinariaPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto")
+
+
+class HistorialMaquinariaBase(BaseModel):
+    tipo: str = Field(..., pattern=_TIPO_HISTORIAL_PATTERN)
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    descripcion: str = Field(..., min_length=1, max_length=1000)
+
+
+class HistorialMaquinariaCreate(HistorialMaquinariaBase):
+    pass
+
+
+class HistorialMaquinaria(HistorialMaquinariaBase):
+    id: str
+    maquinaria_id: str
+    creado_por: str
+    creado_en: datetime
+
+
+@api_router.get("/maquinaria", response_model=List[Maquinaria])
+async def list_maquinaria(_: dict = Depends(require_approved)):
+    cursor = db.maquinaria.find({"activo": True}).sort("nombre", 1)
+    return [Maquinaria(**m) async for m in cursor]
+
+
+@api_router.post("/maquinaria", response_model=Maquinaria)
+async def crear_maquinaria(payload: MaquinariaCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "activo": True,
+        "fotos": [],
+        "fotos_public_ids": [],
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.maquinaria.insert_one(doc)
+    return Maquinaria(**doc)
+
+
+@api_router.get("/maquinaria/{maquinaria_id}", response_model=Maquinaria)
+async def obtener_maquinaria(maquinaria_id: str, _: dict = Depends(require_approved)):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    return Maquinaria(**doc)
+
+
+@api_router.put("/maquinaria/{maquinaria_id}", response_model=Maquinaria)
+async def actualizar_maquinaria(
+    maquinaria_id: str, payload: MaquinariaUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.maquinaria.update_one({"id": maquinaria_id}, {"$set": updates})
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.delete("/maquinaria/{maquinaria_id}")
+async def eliminar_maquinaria(maquinaria_id: str, _: dict = Depends(require_admin)):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/maquinaria/{maquinaria_id}/fotos", response_model=Maquinaria)
+async def anadir_foto_maquinaria(
+    maquinaria_id: str, payload: FotoMaquinariaPayload, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    fotos = doc.get("fotos", []) + [url]
+    fotos_ids = doc.get("fotos_public_ids", []) + [public_id]
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.delete("/maquinaria/{maquinaria_id}/fotos/{indice}", response_model=Maquinaria)
+async def eliminar_foto_maquinaria(
+    maquinaria_id: str, indice: int, _: dict = Depends(require_admin)
+):
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    fotos = doc.get("fotos", [])
+    fotos_ids = doc.get("fotos_public_ids", [])
+    if indice < 0 or indice >= len(fotos):
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    public_id = fotos_ids[indice] if indice < len(fotos_ids) else None
+    await _borrar_logo_cloudinary(public_id)
+    fotos.pop(indice)
+    if indice < len(fotos_ids):
+        fotos_ids.pop(indice)
+    await db.maquinaria.update_one(
+        {"id": maquinaria_id},
+        {"$set": {"fotos": fotos, "fotos_public_ids": fotos_ids, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.maquinaria.find_one({"id": maquinaria_id})
+    return Maquinaria(**doc)
+
+
+@api_router.get(
+    "/maquinaria/{maquinaria_id}/historial", response_model=List[HistorialMaquinaria]
+)
+async def list_historial_maquinaria(maquinaria_id: str, _: dict = Depends(require_approved)):
+    cursor = db.historial_maquinaria.find({"maquinaria_id": maquinaria_id}).sort("fecha", -1)
+    return [HistorialMaquinaria(**h) async for h in cursor]
+
+
+@api_router.post(
+    "/maquinaria/{maquinaria_id}/historial", response_model=HistorialMaquinaria
+)
+async def crear_historial_maquinaria(
+    maquinaria_id: str,
+    payload: HistorialMaquinariaCreate,
+    current_user: dict = Depends(require_approved),
+):
+    maquina = await db.maquinaria.find_one({"id": maquinaria_id})
+    if not maquina:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "maquinaria_id": maquinaria_id,
+        "tipo": payload.tipo,
+        "fecha": payload.fecha,
+        "descripcion": payload.descripcion.strip(),
+        "creado_por": current_user["user_id"],
+        "creado_en": now,
+    }
+    await db.historial_maquinaria.insert_one(doc)
+    return HistorialMaquinaria(**doc)
+
+
+@api_router.delete("/historial-maquinaria/{historial_id}")
+async def eliminar_historial_maquinaria(historial_id: str, _: dict = Depends(require_admin)):
+    result = await db.historial_maquinaria.delete_one({"id": historial_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return {"ok": True}
+
+
+# =====================================================================
+# ROPA (Fase 9 parte 3)
+# ---------------------------------------------------------------------
+# Stock de ropa de trabajo: cada prenda (polo, pantalon, botas...) tiene
+# un desglose de tallas con su cantidad en stock. Las tallas van
+# embebidas en la propia prenda (no hace falta una coleccion aparte para
+# algo tan simple), y hay un ajuste rapido +/-1 para el dia a dia
+# (entregar o devolver una prenda) ademas del editor completo de tallas.
+# =====================================================================
+
+
+class TallaStock(BaseModel):
+    talla: str = Field(..., min_length=1, max_length=20)
+    cantidad: int = Field(0, ge=0)
+
+
+class PrendaBase(BaseModel):
+    nombre: str = Field(..., min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    notas: Optional[str] = Field("", max_length=1000)
+
+
+class PrendaCreate(PrendaBase):
+    tallas: List[TallaStock] = Field(default_factory=list)
+
+
+class PrendaUpdate(BaseModel):
+    nombre: Optional[str] = Field(None, min_length=1, max_length=200)
+    marca: Optional[str] = Field(None, max_length=100)
+    notas: Optional[str] = Field(None, max_length=1000)
+    activo: Optional[bool] = None
+
+
+class TallasUpdatePayload(BaseModel):
+    tallas: List[TallaStock]
+
+
+class AjustarStockPayload(BaseModel):
+    delta: int = Field(..., description="+1 para anadir, -1 para descontar (o cualquier valor)")
+
+
+class Prenda(PrendaBase):
+    id: str
+    activo: bool = True
+    tallas: List[TallaStock] = Field(default_factory=list)
+    creado_en: datetime
+    actualizado_en: datetime
+
+
+@api_router.get("/ropa", response_model=List[Prenda])
+async def list_ropa(_: dict = Depends(require_approved)):
+    cursor = db.ropa.find({"activo": True}).sort("nombre", 1)
+    return [Prenda(**p) async for p in cursor]
+
+
+@api_router.post("/ropa", response_model=Prenda)
+async def crear_prenda(payload: PrendaCreate, _: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": payload.nombre,
+        "marca": payload.marca,
+        "notas": payload.notas,
+        "activo": True,
+        "tallas": [t.model_dump() for t in payload.tallas],
+        "creado_en": now,
+        "actualizado_en": now,
+    }
+    await db.ropa.insert_one(doc)
+    return Prenda(**doc)
+
+
+@api_router.get("/ropa/{prenda_id}", response_model=Prenda)
+async def obtener_prenda(prenda_id: str, _: dict = Depends(require_approved)):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    return Prenda(**doc)
+
+
+@api_router.put("/ropa/{prenda_id}", response_model=Prenda)
+async def actualizar_prenda(
+    prenda_id: str, payload: PrendaUpdate, _: dict = Depends(require_admin)
+):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    updates = payload.model_dump(exclude_unset=True)
+    if updates:
+        updates["actualizado_en"] = datetime.now(timezone.utc)
+        await db.ropa.update_one({"id": prenda_id}, {"$set": updates})
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+@api_router.delete("/ropa/{prenda_id}")
+async def eliminar_prenda(prenda_id: str, _: dict = Depends(require_admin)):
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.put("/ropa/{prenda_id}/tallas", response_model=Prenda)
+async def actualizar_tallas_prenda(
+    prenda_id: str, payload: TallasUpdatePayload, _: dict = Depends(require_admin)
+):
+    """Reemplaza el desglose completo de tallas (editor de tabla: se
+    manda la lista entera tal como queda tras editar)."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {
+            "$set": {
+                "tallas": [t.model_dump() for t in payload.tallas],
+                "actualizado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+@api_router.put("/ropa/{prenda_id}/tallas/{talla}/ajustar", response_model=Prenda)
+async def ajustar_stock_talla(
+    prenda_id: str,
+    talla: str,
+    payload: AjustarStockPayload,
+    _: dict = Depends(require_approved),
+):
+    """Ajuste rapido del dia a dia (+1 al devolver, -1 al entregar una
+    prenda), sin tener que abrir el editor completo de tallas. La
+    cantidad nunca baja de 0."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    tallas = doc.get("tallas", [])
+    encontrada = False
+    for t in tallas:
+        if t["talla"] == talla:
+            t["cantidad"] = max(0, t["cantidad"] + payload.delta)
+            encontrada = True
+            break
+    if not encontrada:
+        raise HTTPException(status_code=404, detail="Talla no encontrada en esta prenda")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+class EstablecerStockPayload(BaseModel):
+    cantidad: int = Field(..., ge=0)
+
+
+@api_router.put("/ropa/{prenda_id}/tallas/{talla}/establecer", response_model=Prenda)
+async def establecer_stock_talla(
+    prenda_id: str,
+    talla: str,
+    payload: EstablecerStockPayload,
+    _: dict = Depends(require_admin),
+):
+    """Fija directamente el numero de existencias de una talla (ej. al
+    llegar un pedido de central y saber ya el total nuevo), en vez de ir
+    sumando de uno en uno con el ajuste rapido."""
+    doc = await db.ropa.find_one({"id": prenda_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No encontrada")
+    tallas = doc.get("tallas", [])
+    encontrada = False
+    for t in tallas:
+        if t["talla"] == talla:
+            t["cantidad"] = payload.cantidad
+            encontrada = True
+            break
+    if not encontrada:
+        raise HTTPException(status_code=404, detail="Talla no encontrada en esta prenda")
+    await db.ropa.update_one(
+        {"id": prenda_id},
+        {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    doc = await db.ropa.find_one({"id": prenda_id})
+    return Prenda(**doc)
+
+
+# --- Pedido de ropa a proveedor (genera un PDF, no afecta al stock) -------
+
+class LineaPedidoRopa(BaseModel):
+    prenda: str = Field(..., min_length=1, max_length=200)
+    talla: Optional[str] = Field("", max_length=40)
+    cantidad: int = Field(..., gt=0)
+
+
+class PedidoRopaPayload(BaseModel):
+    proveedor_nombre: Optional[str] = Field("", max_length=200)
+    proveedor_contacto: Optional[str] = Field("", max_length=200)
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    notas: Optional[str] = Field("", max_length=1000)
+    lineas: List[LineaPedidoRopa] = Field(default_factory=list)
+
+
+@api_router.post("/ropa/pedido-pdf")
+async def generar_pedido_ropa_pdf(
+    payload: PedidoRopaPayload, _: dict = Depends(require_admin)
+):
+    """Genera un PDF con el pedido de ropa para enviar al proveedor. No
+    modifica el stock: es solo el documento."""
+    if not payload.lineas:
+        raise HTTPException(status_code=400, detail="El pedido no tiene líneas")
+    pdf_bytes = _generar_pdf_pedido_ropa(payload)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="pedido-ropa.pdf"'},
+    )
+
+
+def _generar_pdf_pedido_ropa(payload: PedidoRopaPayload) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm, title="Pedido de ropa",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    normal = ParagraphStyle("N", parent=styles["Normal"], fontSize=10, leading=14)
+    label = ParagraphStyle(
+        "L", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#64748b")
+    )
+    celda = ParagraphStyle("C", parent=styles["Normal"], fontSize=9.5, leading=12)
+    celda_h = ParagraphStyle(
+        "CH", parent=styles["Normal"], fontSize=9.5, textColor=colors.white,
+        fontName="Helvetica-Bold",
+    )
+
+    story = []
+    logo_img = _logo_inicia_image()
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph("Pedido de ropa de trabajo", titulo_style))
+
+    # Fecha
+    fecha_txt = ""
+    if payload.fecha:
+        try:
+            fecha_txt = datetime.strptime(payload.fecha, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            fecha_txt = payload.fecha
+    else:
+        fecha_txt = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    story.append(Paragraph(f"Fecha: {fecha_txt}", label))
+    story.append(Spacer(1, 12))
+
+    # Datos del proveedor
+    if payload.proveedor_nombre or payload.proveedor_contacto:
+        story.append(Paragraph("Proveedor", label))
+        if payload.proveedor_nombre:
+            story.append(Paragraph(_p(payload.proveedor_nombre), normal))
+        if payload.proveedor_contacto:
+            story.append(Paragraph(_p(payload.proveedor_contacto), normal))
+        story.append(Spacer(1, 14))
+
+    # Tabla de líneas
+    filas = [[
+        Paragraph("Prenda", celda_h),
+        Paragraph("Talla", celda_h),
+        Paragraph("Cantidad", celda_h),
+    ]]
+    total = 0
+    for ln in payload.lineas:
+        total += ln.cantidad
+        filas.append([
+            Paragraph(_p(ln.prenda), celda),
+            Paragraph(_p(ln.talla or "—"), celda),
+            Paragraph(str(ln.cantidad), celda),
+        ])
+    filas.append([
+        Paragraph("", celda),
+        Paragraph("Total", celda_h),
+        Paragraph(str(total), celda_h),
+    ])
+
+    tabla = Table(filas, colWidths=[10.5 * cm, 3.5 * cm, 3.5 * cm], repeatRows=1)
+    tabla.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+            ("BACKGROUND", (1, -1), (-1, -1), _COLOR_MARCA),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f8fafc")]),
+        ])
+    )
+    story.append(tabla)
+
+    # Notas
+    if payload.notas and payload.notas.strip():
+        story.append(Spacer(1, 16))
+        story.append(Paragraph("Observaciones", label))
+        story.append(Paragraph(_p(payload.notas.strip()), normal))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+# =====================================================================
+# SOLICITUDES DE ROPA (Fase 9 parte 6)
+# ---------------------------------------------------------------------
+# Un operario pide una prenda+talla al admin desde el dashboard; el
+# admin aprueba (descuenta del stock de Ropa, misma logica que el
+# ajuste rapido +/-) o rechaza (no toca el stock). Notificaciones en
+# ambas direcciones via el sistema ya existente.
+# =====================================================================
+
+_ESTADO_SOLICITUD_ROPA_PATTERN = r"^(pendiente|aprobada|rechazada)$"
+
+
+class SolicitudRopaCreate(BaseModel):
+    prenda_id: str
+    talla: str = Field(..., min_length=1, max_length=20)
+    cantidad: int = Field(1, ge=1, le=20)
+    notas: Optional[str] = Field("", max_length=500)
+
+
+class SolicitudRopa(BaseModel):
+    id: str
+    operario_id: str
+    prenda_id: str
+    talla: str
+    cantidad: int
+    notas: Optional[str] = ""
+    estado: str = Field("pendiente", pattern=_ESTADO_SOLICITUD_ROPA_PATTERN)
+    resuelta_por: Optional[str] = None
+    resuelta_en: Optional[datetime] = None
+    creado_en: datetime
+
+
+class SolicitudRopaConNombres(SolicitudRopa):
+    operario_nombre: str
+    prenda_nombre: str
+
+
+@api_router.get("/solicitudes-ropa", response_model=List[SolicitudRopaConNombres])
+async def list_solicitudes_ropa(
+    estado: Optional[str] = None,
+    mias: bool = False,
+    current_user: dict = Depends(require_approved),
+):
+    query = {}
+    if mias:
+        query["operario_id"] = current_user["user_id"]
+    if estado:
+        if not re.match(_ESTADO_SOLICITUD_ROPA_PATTERN, estado):
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.solicitudes_ropa.find(query).sort("creado_en", -1)
+    solicitudes = [s async for s in cursor]
+
+    operario_ids = {s["operario_id"] for s in solicitudes}
+    prenda_ids = {s["prenda_id"] for s in solicitudes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+    prendas_map = {}
+    if prenda_ids:
+        async for p in db.ropa.find({"id": {"$in": list(prenda_ids)}}):
+            prendas_map[p["id"]] = p["nombre"]
+
+    return [
+        SolicitudRopaConNombres(
+            **s,
+            operario_nombre=operarios_map.get(s["operario_id"], "Operario"),
+            prenda_nombre=prendas_map.get(s["prenda_id"], "(prenda eliminada)"),
+        )
+        for s in solicitudes
+    ]
+
+
+@api_router.post("/solicitudes-ropa", response_model=SolicitudRopa)
+async def crear_solicitud_ropa(
+    payload: SolicitudRopaCreate, current_user: dict = Depends(require_approved)
+):
+    prenda = await db.ropa.find_one({"id": payload.prenda_id, "activo": True})
+    if not prenda:
+        raise HTTPException(status_code=404, detail="Prenda no encontrada")
+    if not any(t["talla"] == payload.talla for t in prenda.get("tallas", [])):
+        raise HTTPException(status_code=400, detail="Esa talla no existe para esta prenda")
+
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "prenda_id": payload.prenda_id,
+        "talla": payload.talla,
+        "cantidad": payload.cantidad,
+        "notas": payload.notas,
+        "estado": "pendiente",
+        "resuelta_por": None,
+        "resuelta_en": None,
+        "creado_en": now,
+    }
+    await db.solicitudes_ropa.insert_one(doc)
+
+    await notify_admins(
+        notification_type=NotificationType.SOLICITUD_ROPA,
+        title=f"{current_user.get('name', 'Un operario')} pidió ropa",
+        message=f"{prenda['nombre']} talla {payload.talla} x{payload.cantidad}",
+        data={"solicitud_id": doc["id"]},
+    )
+
+    return SolicitudRopa(**doc)
+
+
+@api_router.put("/solicitudes-ropa/{solicitud_id}/aprobar", response_model=SolicitudRopa)
+async def aprobar_solicitud_ropa(
+    solicitud_id: str, current_user: dict = Depends(require_admin)
+):
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    prenda = await db.ropa.find_one({"id": doc["prenda_id"]})
+    if prenda:
+        tallas = prenda.get("tallas", [])
+        for t in tallas:
+            if t["talla"] == doc["talla"]:
+                t["cantidad"] = max(0, t["cantidad"] - doc["cantidad"])
+                break
+        await db.ropa.update_one(
+            {"id": prenda["id"]},
+            {"$set": {"tallas": tallas, "actualizado_en": datetime.now(timezone.utc)}},
+        )
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_ropa.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "aprobada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_ROPA_RESUELTA,
+        title="Tu solicitud de ropa fue aprobada",
+        message=f"{prenda['nombre'] if prenda else ''} talla {doc['talla']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    return SolicitudRopa(**doc)
+
+
+@api_router.put("/solicitudes-ropa/{solicitud_id}/rechazar", response_model=SolicitudRopa)
+async def rechazar_solicitud_ropa(
+    solicitud_id: str, current_user: dict = Depends(require_admin)
+):
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_ropa.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "rechazada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_ROPA_RESUELTA,
+        title="Tu solicitud de ropa fue rechazada",
+        message=f"Talla {doc['talla']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_ropa.find_one({"id": solicitud_id})
+    return SolicitudRopa(**doc)
+
+
+# =====================================================================
+# PREVENCION (Fase 18)
+# ---------------------------------------------------------------------
+# Apartado propio en el menu del operario con todo lo relacionado con
+# prevencion de riesgos laborales: avisos de parada por clima adverso,
+# solicitud de material EPI, fecha del ultimo reconocimiento medico
+# (ya vive en el propio usuario, ver fecha_ultima_revision_medica),
+# protocolo de actuacion en caso de baja (mutua) y subida de
+# justificantes medicos. Los documentos de prevencion ya firmados se
+# consultan filtrando /documentos-firma?categoria=prevencion.
+# =====================================================================
+
+_MOTIVO_AVISO_CLIMA_PATTERN = r"^(altas_temperaturas|bajas_temperaturas|lluvia|viento|nieve|otro)$"
+
+
+class AvisoClimatologicoCreate(BaseModel):
+    motivo: str = Field(..., pattern=_MOTIVO_AVISO_CLIMA_PATTERN)
+    descripcion: Optional[str] = Field("", max_length=1000)
+    fecha_inicio: str = Field(..., description="YYYY-MM-DD")
+    fecha_fin: Optional[str] = Field(None, description="YYYY-MM-DD, vacio si es solo el dia de inicio")
+
+
+class AvisoClimatologico(BaseModel):
+    id: str
+    motivo: str
+    descripcion: Optional[str] = ""
+    fecha_inicio: str
+    fecha_fin: Optional[str] = None
+    activo: bool = True
+    creado_por: str
+    creado_por_nombre: str
+    creado_en: datetime
+
+
+@api_router.get("/avisos-clima", response_model=List[AvisoClimatologico])
+async def list_avisos_clima(solo_activos: bool = False, _: dict = Depends(require_approved)):
+    query = {"activo": True} if solo_activos else {}
+    cursor = db.avisos_clima.find(query).sort("creado_en", -1)
+    return [AvisoClimatologico(**a) async for a in cursor]
+
+
+@api_router.post("/avisos-clima", response_model=AvisoClimatologico)
+async def crear_aviso_clima(
+    payload: AvisoClimatologicoCreate, current_user: dict = Depends(require_admin)
+):
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "motivo": payload.motivo,
+        "descripcion": payload.descripcion,
+        "fecha_inicio": payload.fecha_inicio,
+        "fecha_fin": payload.fecha_fin,
+        "activo": True,
+        "creado_por": current_user["user_id"],
+        "creado_por_nombre": usuario["name"] if usuario else "?",
+        "creado_en": now,
+    }
+    await db.avisos_clima.insert_one(doc)
+
+    _MOTIVO_TEXTOS = {
+        "altas_temperaturas": "altas temperaturas",
+        "bajas_temperaturas": "bajas temperaturas",
+        "lluvia": "lluvia",
+        "viento": "viento",
+        "nieve": "nieve",
+        "otro": "inclemencias climatológicas",
+    }
+    motivo_texto = _MOTIVO_TEXTOS.get(payload.motivo, "inclemencias climatológicas")
+    mensaje = f"Se suspende el trabajo por {motivo_texto} desde el {payload.fecha_inicio}"
+    if payload.fecha_fin:
+        mensaje += f" hasta el {payload.fecha_fin}"
+    mensaje += "."
+    await notify_all_approved(
+        notification_type=NotificationType.AVISO_CLIMATOLOGICO,
+        title="Aviso: parada por clima adverso ⛈️",
+        message=mensaje,
+        data={"aviso_id": doc["id"]},
+    )
+    return AvisoClimatologico(**doc)
+
+
+@api_router.put("/avisos-clima/{aviso_id}/desactivar", response_model=AvisoClimatologico)
+async def desactivar_aviso_clima(aviso_id: str, _: dict = Depends(require_admin)):
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Aviso no encontrado")
+    await db.avisos_clima.update_one({"id": aviso_id}, {"$set": {"activo": False}})
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    return AvisoClimatologico(**doc)
+
+
+@api_router.delete("/avisos-clima/{aviso_id}")
+async def eliminar_aviso_clima(aviso_id: str, _: dict = Depends(require_admin)):
+    doc = await db.avisos_clima.find_one({"id": aviso_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Aviso no encontrado")
+    await db.avisos_clima.delete_one({"id": aviso_id})
+    return {"ok": True}
+
+
+# --- Solicitudes de material EPI --------------------------------------
+
+_ESTADO_SOLICITUD_EPI_PATTERN = r"^(pendiente|aprobada|rechazada)$"
+
+# Catalogo orientativo (el frontend lo usa para el desplegable); se guarda
+# como texto libre por si hace falta un tipo que no esta en la lista.
+EPI_TIPOS_SUGERIDOS = [
+    "casco", "gafas_proteccion", "mascarilla", "guantes",
+    "chaleco_alta_visibilidad", "botas_seguridad", "protector_auditivo",
+    "arnes", "otro",
+]
+
+
+class SolicitudEPICreate(BaseModel):
+    tipo: str = Field(..., min_length=1, max_length=100)
+    cantidad: int = Field(1, ge=1, le=20)
+    notas: Optional[str] = Field("", max_length=500)
+
+
+class SolicitudEPI(BaseModel):
+    id: str
+    operario_id: str
+    tipo: str
+    cantidad: int
+    notas: Optional[str] = ""
+    estado: str = Field("pendiente", pattern=_ESTADO_SOLICITUD_EPI_PATTERN)
+    resuelta_por: Optional[str] = None
+    resuelta_en: Optional[datetime] = None
+    creado_en: datetime
+
+
+class SolicitudEPIConNombre(SolicitudEPI):
+    operario_nombre: str
+
+
+@api_router.get("/solicitudes-epi", response_model=List[SolicitudEPIConNombre])
+async def list_solicitudes_epi(
+    estado: Optional[str] = None,
+    mias: bool = False,
+    current_user: dict = Depends(require_approved),
+):
+    query = {}
+    if mias:
+        query["operario_id"] = current_user["user_id"]
+    if estado:
+        if not re.match(_ESTADO_SOLICITUD_EPI_PATTERN, estado):
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+    cursor = db.solicitudes_epi.find(query).sort("creado_en", -1)
+    solicitudes = [s async for s in cursor]
+
+    operario_ids = {s["operario_id"] for s in solicitudes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        SolicitudEPIConNombre(**s, operario_nombre=operarios_map.get(s["operario_id"], "Operario"))
+        for s in solicitudes
+    ]
+
+
+@api_router.post("/solicitudes-epi", response_model=SolicitudEPI)
+async def crear_solicitud_epi(
+    payload: SolicitudEPICreate, current_user: dict = Depends(require_approved)
+):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "tipo": payload.tipo,
+        "cantidad": payload.cantidad,
+        "notas": payload.notas,
+        "estado": "pendiente",
+        "resuelta_por": None,
+        "resuelta_en": None,
+        "creado_en": now,
+    }
+    await db.solicitudes_epi.insert_one(doc)
+
+    await notify_admins(
+        notification_type=NotificationType.SOLICITUD_EPI,
+        title=f"{current_user.get('name', 'Un operario')} pidió material EPI",
+        message=f"{payload.tipo} x{payload.cantidad}",
+        data={"solicitud_id": doc["id"]},
+    )
+    return SolicitudEPI(**doc)
+
+
+@api_router.put("/solicitudes-epi/{solicitud_id}/aprobar", response_model=SolicitudEPI)
+async def aprobar_solicitud_epi(solicitud_id: str, current_user: dict = Depends(require_admin)):
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_epi.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "aprobada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_EPI_RESUELTA,
+        title="Tu solicitud de material EPI fue aprobada",
+        message=f"{doc['tipo']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    return SolicitudEPI(**doc)
+
+
+@api_router.put("/solicitudes-epi/{solicitud_id}/rechazar", response_model=SolicitudEPI)
+async def rechazar_solicitud_epi(solicitud_id: str, current_user: dict = Depends(require_admin)):
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if doc["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Esta solicitud ya se resolvió")
+
+    now = datetime.now(timezone.utc)
+    await db.solicitudes_epi.update_one(
+        {"id": solicitud_id},
+        {"$set": {"estado": "rechazada", "resuelta_por": current_user["user_id"], "resuelta_en": now}},
+    )
+    await create_notification(
+        user_id=doc["operario_id"],
+        notification_type=NotificationType.SOLICITUD_EPI_RESUELTA,
+        title="Tu solicitud de material EPI fue rechazada",
+        message=f"{doc['tipo']} x{doc['cantidad']}",
+        data={"solicitud_id": solicitud_id},
+    )
+    doc = await db.solicitudes_epi.find_one({"id": solicitud_id})
+    return SolicitudEPI(**doc)
+
+
+# --- Configuracion de Prevencion (protocolo de baja / mutua) ----------
+# Documento unico (id fijo "prevencion") editable por el admin, de solo
+# lectura para el resto: protocolo a seguir en caso de baja y enlace a
+# los centros de la mutua para ser atendido.
+
+class ConfiguracionPrevencionUpdate(BaseModel):
+    protocolo_baja: Optional[str] = Field(None, max_length=5000)
+    protocolo_accidente: Optional[str] = Field(None, max_length=5000)
+    mutua_nombre: Optional[str] = Field(None, max_length=200)
+    mutua_url: Optional[str] = Field(None, max_length=500)
+    mutua_telefono: Optional[str] = Field(None, max_length=50)
+
+
+@api_router.get("/configuracion/prevencion")
+async def obtener_configuracion_prevencion(_: dict = Depends(require_approved)):
+    doc = await db.configuracion.find_one({"id": "prevencion"}, {"_id": 0})
+    if not doc:
+        return {
+            "id": "prevencion",
+            "protocolo_baja": "",
+            "protocolo_accidente": "",
+            "mutua_nombre": "",
+            "mutua_url": "",
+            "mutua_telefono": "",
+        }
+    # Rellenar campos que puedan faltar en documentos antiguos
+    doc.setdefault("protocolo_accidente", "")
+    doc.setdefault("mutua_telefono", "")
+    return doc
+
+
+@api_router.put("/configuracion/prevencion")
+async def actualizar_configuracion_prevencion(
+    payload: ConfiguracionPrevencionUpdate, current_user: dict = Depends(require_admin)
+):
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates["actualizado_en"] = datetime.now(timezone.utc)
+    updates["actualizado_por"] = current_user["user_id"]
+    await db.configuracion.update_one(
+        {"id": "prevencion"}, {"$set": updates, "$setOnInsert": {"id": "prevencion"}}, upsert=True
+    )
+    doc = await db.configuracion.find_one({"id": "prevencion"}, {"_id": 0})
+    return doc
+
+
+# --- Justificantes medicos ---------------------------------------------
+# Fotos de justificantes de baja medica o de asistencia sanitaria a un
+# familiar, subidas por el propio operario. Reutiliza el mismo helper
+# generico de subida a Cloudinary que usan logos/fotos de perfil.
+
+class JustificanteMedicoCreate(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto del justificante")
+    descripcion: Optional[str] = Field("", max_length=300)
+
+
+class JustificanteMedico(BaseModel):
+    id: str
+    operario_id: str
+    url: str
+    public_id: Optional[str] = None
+    descripcion: Optional[str] = ""
+    creado_en: datetime
+
+
+class JustificanteMedicoConNombre(JustificanteMedico):
+    operario_nombre: str
+
+
+@api_router.get("/justificantes-medicos", response_model=List[JustificanteMedicoConNombre])
+async def list_justificantes_medicos(mias: bool = False, current_user: dict = Depends(require_approved)):
+    query = {}
+    if mias or current_user.get("role") not in (UserRole.ADMIN,):
+        # Un operario normal solo ve los suyos, sea cual sea el valor de
+        # 'mias'; solo un admin puede pedir el listado completo.
+        query["operario_id"] = current_user["user_id"]
+    cursor = db.justificantes_medicos.find(query).sort("creado_en", -1)
+    justificantes = [j async for j in cursor]
+
+    operario_ids = {j["operario_id"] for j in justificantes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        JustificanteMedicoConNombre(
+            **j, operario_nombre=operarios_map.get(j["operario_id"], "Operario")
+        )
+        for j in justificantes
+    ]
+
+
+@api_router.post("/justificantes-medicos", response_model=JustificanteMedico)
+async def subir_justificante_medico(
+    payload: JustificanteMedicoCreate, current_user: dict = Depends(require_approved)
+):
+    if not _es_logo_base64(payload.imagen):
+        raise HTTPException(status_code=400, detail="Formato de imagen no válido")
+    url, public_id = await _subir_logo_cloudinary(payload.imagen)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "url": url,
+        "public_id": public_id,
+        "descripcion": payload.descripcion,
+        "creado_en": now,
+    }
+    await db.justificantes_medicos.insert_one(doc)
+
+    usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    await notify_admins(
+        notification_type=NotificationType.JUSTIFICANTE_MEDICO,
+        title=f"{usuario['name'] if usuario else 'Un operario'} subió un justificante médico",
+        message=payload.descripcion or "Sin descripción",
+        data={"justificante_id": doc["id"]},
+    )
+    return JustificanteMedico(**doc)
+
+
+@api_router.delete("/justificantes-medicos/{justificante_id}")
+async def eliminar_justificante_medico(justificante_id: str, current_user: dict = Depends(require_approved)):
+    doc = await db.justificantes_medicos.find_one({"id": justificante_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Justificante no encontrado")
+    es_propio = doc["operario_id"] == current_user["user_id"]
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    if not es_propio and not es_admin:
+        raise HTTPException(status_code=403, detail="No puedes borrar este justificante")
+    await _borrar_logo_cloudinary(doc.get("public_id"))
+    await db.justificantes_medicos.delete_one({"id": justificante_id})
+    return {"ok": True}
+
+
+# =====================================================================
+# FICHAJE (Fase 19)
+# ---------------------------------------------------------------------
+# Sistema de fichaje muy simple: el operario marca entrada/salida, se
+# guarda su geolocalizacion en ese momento, y el sitio desde donde ficha
+# (un cliente/centro registrado, o el estandar "Inicia Madrid" para
+# cuando trabaja desde la oficina). Sin turnos ni calculo de horas: solo
+# el registro de eventos, para que el admin pueda revisarlos.
+# =====================================================================
+
+_TIPO_FICHAJE_PATTERN = r"^(entrada|salida)$"
+_DESTINO_FICHAJE_PATTERN = r"^(cliente|estandar)$"
+
+
+class FichajeCreate(BaseModel):
+    tipo: str = Field(..., pattern=_TIPO_FICHAJE_PATTERN)
+    latitud: Optional[float] = Field(None, ge=-90, le=90)
+    longitud: Optional[float] = Field(None, ge=-180, le=180)
+    precision_metros: Optional[float] = Field(None, ge=0)
+    destino_tipo: str = Field(..., pattern=_DESTINO_FICHAJE_PATTERN)
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+
+
+class Fichaje(BaseModel):
+    id: str
+    operario_id: str
+    tipo: str
+    fecha_hora: datetime
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    precision_metros: Optional[float] = None
+    destino_tipo: str
+    destino_nombre: str
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+
+    @field_validator("fecha_hora")
+    @classmethod
+    def _forzar_utc(cls, v: datetime) -> datetime:
+        # Mongo guarda los datetime sin zona horaria (naive) aunque se
+        # guarden en UTC; al leerlos de vuelta pierden el "+00:00" y, si
+        # se serializan asi, el navegador los interpreta como hora LOCAL
+        # en vez de UTC, desplazando cualquier calculo en vivo (como el
+        # contador de jornada) por el huso horario del usuario.
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class FichajeConOperario(Fichaje):
+    operario_nombre: str
+
+
+@api_router.post("/fichajes", response_model=Fichaje)
+async def crear_fichaje(payload: FichajeCreate, current_user: dict = Depends(require_approved)):
+    if payload.destino_tipo == "estandar":
+        destino_nombre = "Inicia Madrid"
+    else:
+        if not payload.destino_cliente_id:
+            raise HTTPException(status_code=400, detail="Selecciona un cliente")
+        cliente = await db.clients.find_one({"id": payload.destino_cliente_id}, {"_id": 0})
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        destino_nombre = cliente["nombre"]
+        if payload.destino_centro_id:
+            centro = await db.client_locations.find_one(
+                {"id": payload.destino_centro_id}, {"_id": 0}
+            )
+            if centro:
+                destino_nombre = f"{destino_nombre} · {centro['nombre']}"
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "tipo": payload.tipo,
+        "fecha_hora": datetime.now(timezone.utc),
+        "latitud": payload.latitud,
+        "longitud": payload.longitud,
+        "precision_metros": payload.precision_metros,
+        "destino_tipo": payload.destino_tipo,
+        "destino_nombre": destino_nombre,
+        "destino_cliente_id": payload.destino_cliente_id if payload.destino_tipo == "cliente" else None,
+        "destino_centro_id": payload.destino_centro_id if payload.destino_tipo == "cliente" else None,
+    }
+    await db.fichajes.insert_one(doc)
+    return Fichaje(**doc)
+
+
+@api_router.get("/fichajes/hoy")
+async def fichajes_de_hoy(current_user: dict = Depends(require_approved)):
+    hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    inicio = datetime.fromisoformat(f"{hoy}T00:00:00+00:00")
+    fin = inicio + timedelta(days=1)
+    cursor = db.fichajes.find(
+        {
+            "operario_id": current_user["user_id"],
+            "fecha_hora": {"$gte": inicio, "$lt": fin},
+        }
+    ).sort("fecha_hora", 1)
+    fichajes = [Fichaje(**f) async for f in cursor]
+    estado = "dentro" if fichajes and fichajes[-1].tipo == "entrada" else "fuera"
+    return {"fichajes": fichajes, "estado": estado}
+
+
+@api_router.get("/admin/fichajes", response_model=List[FichajeConOperario])
+async def list_fichajes_admin(
+    fecha: Optional[str] = None,
+    operario_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    query = {}
+    if fecha:
+        try:
+            inicio = datetime.fromisoformat(f"{fecha}T00:00:00+00:00")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Fecha invalida")
+        fin = inicio + timedelta(days=1)
+        query["fecha_hora"] = {"$gte": inicio, "$lt": fin}
+    if operario_id:
+        query["operario_id"] = operario_id
+
+    cursor = db.fichajes.find(query).sort("fecha_hora", -1)
+    fichajes = [f async for f in cursor]
+
+    operario_ids = {f["operario_id"] for f in fichajes}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        FichajeConOperario(**f, operario_nombre=operarios_map.get(f["operario_id"], "Operario"))
+        for f in fichajes
+    ]
+
+
+@api_router.get("/admin/fichajes/pdf")
+async def descargar_pdf_fichajes(
+    operario_id: str, mes: str, _: dict = Depends(require_admin)
+):
+    """Informe mensual de fichajes de un operario: dia, hora, tipo, destino
+    y ubicacion (enlace a Google Maps). mes en formato YYYY-MM."""
+    if not re.match(r"^\d{4}-\d{2}$", mes):
+        raise HTTPException(status_code=400, detail="Formato de mes invalido (usa YYYY-MM)")
+    anio, mes_num = int(mes[:4]), int(mes[5:7])
+    inicio = datetime(anio, mes_num, 1, tzinfo=timezone.utc)
+    fin = (
+        datetime(anio + 1, 1, 1, tzinfo=timezone.utc)
+        if mes_num == 12
+        else datetime(anio, mes_num + 1, 1, tzinfo=timezone.utc)
+    )
+
+    usuario = await db.users.find_one({"user_id": operario_id}, {"_id": 0})
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Operario no encontrado")
+
+    cursor = db.fichajes.find(
+        {"operario_id": operario_id, "fecha_hora": {"$gte": inicio, "$lt": fin}}
+    ).sort("fecha_hora", 1)
+    fichajes = [f async for f in cursor]
+
+    pdf_bytes = _generar_pdf_fichajes(usuario, mes, fichajes)
+    filename = f"fichajes-{usuario.get('name', 'operario').replace(' ', '_')}-{mes}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _generar_pdf_fichajes(usuario: dict, mes: str, fichajes: List[dict]) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.5 * cm, rightMargin=1.5 * cm, title=f"Fichajes {mes}",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=14,
+    )
+    celda_style = ParagraphStyle("Celda", parent=styles["Normal"], fontSize=8.5, leading=11)
+    celda_header_style = ParagraphStyle(
+        "CeldaHeader", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.white, fontName="Helvetica-Bold",
+    )
+    link_style = ParagraphStyle(
+        "Link", parent=styles["Normal"], fontSize=8.5, textColor=colors.HexColor("#4f46e5")
+    )
+
+    logo_img = _logo_inicia_image(max_width_cm=3.5, max_height_cm=1.1)
+    story = []
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph(f"Informe de fichajes · {_p(usuario.get('name'))}", titulo_style))
+    story.append(Paragraph(f"Mes: {mes} · {len(fichajes)} registro(s)", subtitulo_style))
+
+    if not fichajes:
+        story.append(Paragraph("No hay fichajes registrados este mes.", celda_style))
+    else:
+        filas = [[
+            Paragraph("Día", celda_header_style),
+            Paragraph("Hora", celda_header_style),
+            Paragraph("Tipo", celda_header_style),
+            Paragraph("Destino", celda_header_style),
+            Paragraph("Ubicación", celda_header_style),
+        ]]
+        for f in fichajes:
+            fh = f["fecha_hora"]
+            dia_txt = fh.strftime("%d/%m/%Y")
+            hora_txt = fh.strftime("%H:%M")
+            tipo_txt = "Entrada" if f["tipo"] == "entrada" else "Salida"
+            destino_txt = _p(f.get("destino_nombre", ""))
+            if f.get("latitud") is not None and f.get("longitud") is not None:
+                maps_url = f"https://www.google.com/maps?q={f['latitud']},{f['longitud']}"
+                ubicacion_cell = Paragraph(f'<a href="{maps_url}">Ver zona aprox.</a>', link_style)
+            else:
+                ubicacion_cell = Paragraph("Sin ubicación", celda_style)
+            filas.append([
+                Paragraph(dia_txt, celda_style),
+                Paragraph(hora_txt, celda_style),
+                Paragraph(tipo_txt, celda_style),
+                Paragraph(destino_txt, celda_style),
+                ubicacion_cell,
+            ])
+
+        tabla = Table(
+            filas,
+            colWidths=[2.6 * cm, 1.8 * cm, 2.2 * cm, 6.5 * cm, 3.4 * cm],
+            repeatRows=1,
+        )
+        tabla.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ]
+            )
+        )
+        story.append(tabla)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+
+
+# =====================================================================
+# PAGOS EXTRA (Fase 20): horas extra y pluses de toxicidad/penosidad
+# ---------------------------------------------------------------------
+# El operario envia una solicitud (horas extra O plus), indicando centro,
+# tipo de trabajo (tarea del catalogo o texto libre), dia, cantidad y el
+# subtipo/tarifa. El importe se calcula con las tarifas fijas, salvo la
+# opcion "variable" en la que lo pone a mano. El admin revisa, puede
+# modificar cualquier campo (incluido el importe) y acepta o rechaza.
+# =====================================================================
+
+# Tarifas fijas (euros)
+TARIFA_HORA_EXTRA_NORMAL = 19.01
+TARIFA_HORA_EXTRA_FESTIVO = 27.70
+TARIFA_PLUS_POR_HORA = 1.92
+TARIFA_PLUS_POR_DIA = 14.42
+
+_CATEGORIA_PAGO_PATTERN = r"^(horas_extra|plus)$"
+# horas extra: normal | festivo | variable
+# plus: hora | dia | variable
+_SUBTIPO_PAGO_PATTERN = r"^(normal|festivo|hora|dia|variable)$"
+_ESTADO_PAGO_PATTERN = r"^(pendiente|aceptado|rechazado)$"
+
+
+def _calcular_importe_pago(categoria: str, subtipo: str, cantidad: float,
+                           importe_manual: Optional[float]) -> float:
+    """Calcula el importe segun la tarifa. Para 'variable' usa el importe
+    introducido a mano (total, no por unidad)."""
+    if subtipo == "variable":
+        return round(importe_manual or 0.0, 2)
+    if categoria == "horas_extra":
+        tarifa = TARIFA_HORA_EXTRA_NORMAL if subtipo == "normal" else TARIFA_HORA_EXTRA_FESTIVO
+        return round(tarifa * cantidad, 2)
+    # plus
+    tarifa = TARIFA_PLUS_POR_HORA if subtipo == "hora" else TARIFA_PLUS_POR_DIA
+    return round(tarifa * cantidad, 2)
+
+
+class PagoExtraCreate(BaseModel):
+    categoria: str = Field(..., pattern=_CATEGORIA_PAGO_PATTERN)
+    subtipo: str = Field(..., pattern=_SUBTIPO_PAGO_PATTERN)
+    client_id: Optional[str] = None
+    client_nombre: Optional[str] = None  # texto libre si no hay cliente registrado
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None  # texto libre si no hay centro registrado
+    tarea_id: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None  # texto libre del tipo de trabajo
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    cantidad: float = Field(..., gt=0)  # nº de horas, o nº de dias
+    importe_manual: Optional[float] = Field(None, ge=0)  # solo para subtipo "variable"
+    nota: Optional[str] = None
+    # --- Cuestionario de toxicidad/penosidad (solo categoria "plus") ---
+    tox_tipo_trabajo: Optional[str] = None  # fitosanitario | altura | glorieta | motosierra | otro
+    tox_producto: Optional[str] = None  # herbicida | fungicida | insecticida | otro
+    tox_producto_detalle: Optional[str] = None  # si tox_producto == "otro"
+    tox_zona: Optional[str] = None  # zona trabajada (letras o texto libre)
+    tox_hora_inicio: Optional[str] = None  # "HH:MM"
+    tox_hora_fin: Optional[str] = None  # "HH:MM"
+    tox_foto: Optional[str] = None  # data-URI base64 (se sube a Cloudinary)
+
+
+class PagoExtraUpdate(BaseModel):
+    """Edicion por parte del admin antes/al aceptar."""
+    subtipo: Optional[str] = Field(None, pattern=_SUBTIPO_PAGO_PATTERN)
+    centro_nombre: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None
+    fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    cantidad: Optional[float] = Field(None, gt=0)
+    importe: Optional[float] = Field(None, ge=0)  # el admin puede fijar el importe final directamente
+    nota_admin: Optional[str] = None
+
+
+class PagoExtra(BaseModel):
+    id: str
+    operario_id: str
+    categoria: str
+    subtipo: str
+    client_id: Optional[str] = None
+    client_nombre: Optional[str] = None
+    centro_id: Optional[str] = None
+    centro_nombre: Optional[str] = None
+    tarea_id: Optional[str] = None
+    trabajo_descripcion: Optional[str] = None
+    fecha: str
+    cantidad: float
+    importe: float
+    nota: Optional[str] = None
+    nota_admin: Optional[str] = None
+    estado: str
+    creado_en: datetime
+    resuelto_en: Optional[datetime] = None
+    # Cuestionario de toxicidad/penosidad
+    tox_tipo_trabajo: Optional[str] = None
+    tox_producto: Optional[str] = None
+    tox_producto_detalle: Optional[str] = None
+    tox_zona: Optional[str] = None
+    tox_hora_inicio: Optional[str] = None
+    tox_hora_fin: Optional[str] = None
+    tox_foto_url: Optional[str] = None
+
+    @field_validator("creado_en", "resuelto_en")
+    @classmethod
+    def _forzar_utc_pago(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is not None and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+
+class PagoExtraConOperario(PagoExtra):
+    operario_nombre: str
+
+
+async def _resolver_nombre_trabajo(tarea_id: Optional[str], descripcion: Optional[str]) -> Optional[str]:
+    """Nombre legible del tipo de trabajo: la tarea del catalogo si se
+    eligio una, o el texto libre."""
+    if tarea_id:
+        tarea = await db.work_tasks.find_one({"id": tarea_id}, {"_id": 0, "nombre": 1})
+        if tarea:
+            return tarea["nombre"]
+    return descripcion
+
+
+@api_router.post("/pagos-extra", response_model=PagoExtra)
+async def crear_pago_extra(payload: PagoExtraCreate, current_user: dict = Depends(require_approved)):
+    # Coherencia categoria <-> subtipo
+    subtipos_validos = {
+        "horas_extra": {"normal", "festivo", "variable"},
+        "plus": {"hora", "dia", "variable"},
+    }
+    if payload.subtipo not in subtipos_validos[payload.categoria]:
+        raise HTTPException(status_code=400, detail="El tipo no corresponde con la categoría")
+    if payload.subtipo == "variable" and payload.importe_manual is None:
+        raise HTTPException(status_code=400, detail="Indica el importe para el precio variable")
+
+    # Nombre del centro: registrado o texto libre
+    centro_nombre = payload.centro_nombre
+    if payload.centro_id:
+        centro = await db.client_locations.find_one({"id": payload.centro_id}, {"_id": 0})
+        if centro:
+            centro_nombre = centro["nombre"]
+
+    # Nombre del cliente: registrado o texto libre
+    client_nombre = payload.client_nombre
+    if payload.client_id:
+        cliente = await db.clients.find_one({"id": payload.client_id}, {"_id": 0})
+        if cliente:
+            client_nombre = cliente["nombre"]
+
+    trabajo_desc = await _resolver_nombre_trabajo(payload.tarea_id, payload.trabajo_descripcion)
+    importe = _calcular_importe_pago(
+        payload.categoria, payload.subtipo, payload.cantidad, payload.importe_manual
+    )
+
+    # Foto del cuestionario de toxicidad (si viene)
+    tox_foto_url = None
+    if payload.tox_foto:
+        if not _es_logo_base64(payload.tox_foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        tox_foto_url, _ = await _subir_logo_cloudinary(payload.tox_foto)
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": current_user["user_id"],
+        "categoria": payload.categoria,
+        "subtipo": payload.subtipo,
+        "client_id": payload.client_id,
+        "client_nombre": client_nombre,
+        "centro_id": payload.centro_id,
+        "centro_nombre": centro_nombre,
+        "tarea_id": payload.tarea_id,
+        "trabajo_descripcion": trabajo_desc,
+        "fecha": payload.fecha,
+        "cantidad": payload.cantidad,
+        "importe": importe,
+        "nota": payload.nota,
+        "nota_admin": None,
+        "estado": "pendiente",
+        "creado_en": datetime.now(timezone.utc),
+        "resuelto_en": None,
+        "tox_tipo_trabajo": payload.tox_tipo_trabajo,
+        "tox_producto": payload.tox_producto,
+        "tox_producto_detalle": payload.tox_producto_detalle,
+        "tox_zona": payload.tox_zona,
+        "tox_hora_inicio": payload.tox_hora_inicio,
+        "tox_hora_fin": payload.tox_hora_fin,
+        "tox_foto_url": tox_foto_url,
+    }
+    await db.pagos_extra.insert_one(doc)
+
+    # Notificar a los administradores
+    etiqueta = "Horas extra" if payload.categoria == "horas_extra" else "Plus"
+    await notify_admins(
+        notification_type=NotificationType.PAGO_EXTRA,
+        title="Nuevo pago extra",
+        message=f"{current_user['name']} ha enviado una solicitud de {etiqueta.lower()} ({importe:.2f} €).",
+        data={"enlace": "/admin/pagos-extra", "pago_id": doc["id"]},
+    )
+    return PagoExtra(**doc)
+
+
+@api_router.get("/pagos-extra/mios", response_model=List[PagoExtra])
+async def mis_pagos_extra(current_user: dict = Depends(require_approved)):
+    cursor = db.pagos_extra.find({"operario_id": current_user["user_id"]}).sort("creado_en", -1)
+    return [PagoExtra(**p) async for p in cursor]
+
+
+@api_router.delete("/pagos-extra/{pago_id}")
+async def borrar_mi_pago_extra(pago_id: str, current_user: dict = Depends(require_approved)):
+    """El operario puede retirar una solicitud suya que siga pendiente."""
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if pago["operario_id"] != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="No es tu solicitud")
+    if pago["estado"] != "pendiente":
+        raise HTTPException(status_code=400, detail="Solo se pueden retirar solicitudes pendientes")
+    await db.pagos_extra.delete_one({"id": pago_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/pagos-extra", response_model=List[PagoExtraConOperario])
+async def list_pagos_extra_admin(
+    estado: Optional[str] = None,
+    categoria: Optional[str] = None,
+    current_user: dict = Depends(require_budgets),
+):
+    query = {}
+    # Facturación solo puede ver pagos ya aceptados por el administrador,
+    # independientemente del filtro que pida (defensa en el servidor).
+    if current_user.get("role") == "facturacion":
+        query["estado"] = "aceptado"
+    elif estado:
+        query["estado"] = estado
+    if categoria:
+        query["categoria"] = categoria
+    cursor = db.pagos_extra.find(query).sort("creado_en", -1)
+    pagos = [p async for p in cursor]
+
+    operario_ids = {p["operario_id"] for p in pagos}
+    operarios_map = {}
+    if operario_ids:
+        async for u in db.users.find(
+            {"user_id": {"$in": list(operario_ids)}}, {"_id": 0, "user_id": 1, "name": 1}
+        ):
+            operarios_map[u["user_id"]] = u["name"]
+
+    return [
+        PagoExtraConOperario(**p, operario_nombre=operarios_map.get(p["operario_id"], "Operario"))
+        for p in pagos
+    ]
+
+
+@api_router.patch("/admin/pagos-extra/{pago_id}", response_model=PagoExtra)
+async def editar_pago_extra_admin(
+    pago_id: str, payload: PagoExtraUpdate, _: dict = Depends(require_admin)
+):
+    """El admin modifica campos de la solicitud. Si cambia datos que
+    afectan al importe (subtipo/cantidad) y NO fija un importe a mano, se
+    recalcula automaticamente con las tarifas."""
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    cambios = payload.model_dump(exclude_unset=True)
+    nuevo_subtipo = cambios.get("subtipo", pago["subtipo"])
+    nueva_cantidad = cambios.get("cantidad", pago["cantidad"])
+
+    for campo in ("subtipo", "centro_nombre", "trabajo_descripcion", "fecha", "cantidad", "nota_admin"):
+        if campo in cambios:
+            pago[campo] = cambios[campo]
+
+    if "importe" in cambios and cambios["importe"] is not None:
+        # El admin fija el importe final a mano
+        pago["importe"] = round(cambios["importe"], 2)
+    elif "subtipo" in cambios or "cantidad" in cambios:
+        # Recalcular con tarifas si el subtipo no es variable
+        if nuevo_subtipo != "variable":
+            pago["importe"] = _calcular_importe_pago(
+                pago["categoria"], nuevo_subtipo, nueva_cantidad, None
+            )
+
+    await db.pagos_extra.update_one({"id": pago_id}, {"$set": pago})
+    return PagoExtra(**pago)
+
+
+@api_router.post("/admin/pagos-extra/{pago_id}/resolver", response_model=PagoExtra)
+async def resolver_pago_extra_admin(
+    pago_id: str, aceptar: bool, _: dict = Depends(require_admin)
+):
+    pago = await db.pagos_extra.find_one({"id": pago_id}, {"_id": 0})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    pago["estado"] = "aceptado" if aceptar else "rechazado"
+    pago["resuelto_en"] = datetime.now(timezone.utc)
+    await db.pagos_extra.update_one(
+        {"id": pago_id},
+        {"$set": {"estado": pago["estado"], "resuelto_en": pago["resuelto_en"]}},
+    )
+
+    # Si se acepta un plus de toxicidad cuyo trabajo es aplicacion de
+    # fitosanitario, se genera automaticamente el registro oficial (por
+    # cliente, producto, zona, dia y horario). Solo aplicaciones aceptadas.
+    if (
+        aceptar
+        and pago.get("categoria") == "plus"
+        and pago.get("tox_tipo_trabajo") == "fitosanitario"
+    ):
+        ya = await db.registro_fitosanitarios.find_one({"pago_extra_id": pago_id})
+        if not ya:
+            producto = pago.get("tox_producto") or "?"
+            if producto == "otro" and pago.get("tox_producto_detalle"):
+                producto = pago["tox_producto_detalle"]
+            await db.registro_fitosanitarios.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "pago_extra_id": pago_id,
+                    "client_id": pago.get("client_id"),
+                    "client_nombre": pago.get("client_nombre") or "?",
+                    "centro_nombre": pago.get("centro_nombre"),
+                    "producto": producto,
+                    "zona": pago.get("tox_zona"),
+                    "fecha": pago.get("fecha"),
+                    "hora_inicio": pago.get("tox_hora_inicio"),
+                    "hora_fin": pago.get("tox_hora_fin"),
+                    "foto_url": pago.get("tox_foto_url"),
+                    "operario_id": pago.get("operario_id"),
+                    "creado_en": datetime.now(timezone.utc),
+                }
+            )
+
+    # Notificar al operario
+    etiqueta = "aceptada" if aceptar else "rechazada"
+    await create_notification(
+        user_id=pago["operario_id"],
+        notification_type=NotificationType.PAGO_EXTRA_RESUELTO,
+        title="Pago extra " + etiqueta,
+        message=f"Tu solicitud de {pago['importe']:.2f} € ha sido {etiqueta}.",
+        data={"enlace": "/pagos-extra", "pago_id": pago_id},
+    )
+    return PagoExtra(**pago)
+
+
+# --- Registro oficial de aplicacion de fitosanitarios ---------------------
+# Se alimenta automaticamente al aceptar un plus de toxicidad cuyo trabajo
+# es aplicacion de fitosanitario. Lo consulta el admin en Prevencion.
+
+class RegistroFitosanitario(BaseModel):
+    id: str
+    client_nombre: str
+    centro_nombre: Optional[str] = None
+    producto: str
+    zona: Optional[str] = None
+    fecha: str
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    foto_url: Optional[str] = None
+    operario_nombre: Optional[str] = None
+    creado_en: datetime
+
+
+@api_router.get("/admin/registro-fitosanitarios", response_model=List[RegistroFitosanitario])
+async def list_registro_fitosanitarios(
+    client_id: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    query = {}
+    if client_id:
+        query["client_id"] = client_id
+    # Filtro por rango de fechas (la fecha se guarda como texto YYYY-MM-DD,
+    # que ordena y compara bien lexicograficamente).
+    if desde or hasta:
+        query["fecha"] = {}
+        if desde:
+            query["fecha"]["$gte"] = desde
+        if hasta:
+            query["fecha"]["$lte"] = hasta
+    cursor = db.registro_fitosanitarios.find(query).sort("fecha", -1)
+    registros = [r async for r in cursor]
+    # Resolver nombre del operario
+    op_ids = {r.get("operario_id") for r in registros if r.get("operario_id")}
+    nombres = {}
+    if op_ids:
+        async for u in db.users.find({"user_id": {"$in": list(op_ids)}}):
+            nombres[u["user_id"]] = u["name"]
+    salida = []
+    for r in registros:
+        salida.append(
+            RegistroFitosanitario(
+                id=r["id"],
+                client_nombre=r.get("client_nombre") or "?",
+                centro_nombre=r.get("centro_nombre"),
+                producto=r.get("producto") or "?",
+                zona=r.get("zona"),
+                fecha=r.get("fecha") or "",
+                hora_inicio=r.get("hora_inicio"),
+                hora_fin=r.get("hora_fin"),
+                foto_url=r.get("foto_url"),
+                operario_nombre=nombres.get(r.get("operario_id")),
+                creado_en=r.get("creado_en") or datetime.now(timezone.utc),
+            )
+        )
+    return salida
+
+
+@api_router.get("/admin/registro-fitosanitarios/pdf")
+async def descargar_pdf_fitosanitarios(
+    client_id: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Registro oficial de aplicacion de fitosanitarios en PDF, con los
+    mismos filtros que el listado (cliente y rango de fechas)."""
+    query = {}
+    cliente_nombre = None
+    if client_id:
+        query["client_id"] = client_id
+        cli = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if cli:
+            cliente_nombre = cli.get("nombre")
+    if desde or hasta:
+        query["fecha"] = {}
+        if desde:
+            query["fecha"]["$gte"] = desde
+        if hasta:
+            query["fecha"]["$lte"] = hasta
+    cursor = db.registro_fitosanitarios.find(query).sort("fecha", 1)
+    registros = [r async for r in cursor]
+    op_ids = {r.get("operario_id") for r in registros if r.get("operario_id")}
+    nombres = {}
+    if op_ids:
+        async for u in db.users.find({"user_id": {"$in": list(op_ids)}}):
+            nombres[u["user_id"]] = u["name"]
+
+    pdf_bytes = _generar_pdf_fitosanitarios(registros, nombres, cliente_nombre, desde, hasta)
+    filename = "registro-fitosanitarios.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _generar_pdf_fitosanitarios(
+    registros: list, nombres: dict, cliente_nombre: Optional[str],
+    desde: Optional[str], hasta: Optional[str],
+) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4), topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm, title="Registro de fitosanitarios",
+    )
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], fontSize=16, textColor=_COLOR_MARCA, spaceAfter=2
+    )
+    subtitulo_style = ParagraphStyle(
+        "Subtitulo", parent=styles["Normal"], fontSize=10,
+        textColor=colors.HexColor("#64748b"), spaceAfter=14,
+    )
+    celda_style = ParagraphStyle("Celda", parent=styles["Normal"], fontSize=8.5, leading=11)
+    celda_header_style = ParagraphStyle(
+        "CeldaHeader", parent=styles["Normal"], fontSize=8.5,
+        textColor=colors.white, fontName="Helvetica-Bold",
+    )
+
+    logo_img = _logo_inicia_image(max_width_cm=3.5, max_height_cm=1.1)
+    story = []
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
+    story.append(Paragraph("Registro de aplicación de fitosanitarios", titulo_style))
+
+    partes_sub = []
+    if cliente_nombre:
+        partes_sub.append(f"Cliente: {_p(cliente_nombre)}")
+    if desde:
+        partes_sub.append(f"Desde: {desde}")
+    if hasta:
+        partes_sub.append(f"Hasta: {hasta}")
+    partes_sub.append(f"{len(registros)} registro(s)")
+    story.append(Paragraph(" · ".join(partes_sub), subtitulo_style))
+
+    if not registros:
+        story.append(Paragraph("No hay aplicaciones registradas para estos filtros.", celda_style))
+    else:
+        filas = [[
+            Paragraph("Fecha", celda_header_style),
+            Paragraph("Cliente", celda_header_style),
+            Paragraph("Centro", celda_header_style),
+            Paragraph("Producto", celda_header_style),
+            Paragraph("Zona", celda_header_style),
+            Paragraph("Horario", celda_header_style),
+            Paragraph("Operario", celda_header_style),
+        ]]
+        for r in registros:
+            fecha_txt = ""
+            if r.get("fecha"):
+                try:
+                    fecha_txt = datetime.strptime(r["fecha"], "%Y-%m-%d").strftime("%d/%m/%Y")
+                except Exception:
+                    fecha_txt = r["fecha"]
+            horario = ""
+            if r.get("hora_inicio") or r.get("hora_fin"):
+                horario = f"{r.get('hora_inicio') or '?'}–{r.get('hora_fin') or '?'}"
+            filas.append([
+                Paragraph(fecha_txt, celda_style),
+                Paragraph(_p(r.get("client_nombre", "")), celda_style),
+                Paragraph(_p(r.get("centro_nombre") or "—"), celda_style),
+                Paragraph(_p(r.get("producto", "")), celda_style),
+                Paragraph(_p(r.get("zona") or "—"), celda_style),
+                Paragraph(horario, celda_style),
+                Paragraph(_p(nombres.get(r.get("operario_id"), "—")), celda_style),
+            ])
+
+        tabla = Table(
+            filas,
+            colWidths=[2.4 * cm, 5.0 * cm, 4.5 * cm, 3.5 * cm, 4.5 * cm, 2.6 * cm, 4.0 * cm],
+            repeatRows=1,
+        )
+        tabla.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), _COLOR_MARCA),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ]
+            )
+        )
+        story.append(tabla)
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+# =====================================================================
+# IMPORTACION TEMPORAL DE MAQUINARIA (listado INICIA 2023)
+# ---------------------------------------------------------------------
+# Endpoint de un solo uso para volcar el inventario de 36 maquinas del
+# Excel de 2023. Crea cada ficha con el MISMO formato que la creacion
+# manual, mas su historial de averias. Es idempotente: si ya existen
+# maquinas activas, NO vuelve a insertarlas, para no duplicar si se
+# llama dos veces. Una vez usado, este bloque se puede retirar.
+# =====================================================================
+
+_MAQUINARIA_SEED_2023 = [
+        ('Cortacésped Izy GCVx 145', 'Honda', 'Izy GCVx 145', 'Hospital Torrejon ardoz', 'Nº serie: 1157091', []),
+        ('Cortacésped Izy', 'Honda', 'Izy', 'Hospital La zarzuela', 'Nº serie: 1562886', [('averia', '2023-07-11', 'Se acelera - Puesta a punto')]),
+        ('Cortacésped Briggs & stratton 575IS', 'Sterwins', 'Briggs & stratton 575IS', 'Ruta', 'Nº serie: PLM2-46B140ES.4. Sterwins 46 cm. Arranque con bateria', [('averia', '2022-11-09', 'No arranca - Cambio de bateria')]),
+        ('Cortasetos HS 81 R', 'Stihl', 'HS 81 R', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Jueves. Nº serie: 177108607', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'Sede sanitas', 'Día habitual de revisión: Jueves. Nº serie: 179107369', []),
+        ('Cortasetos HSA 56', 'Stihl', 'HSA 56', 'Ikea alcorcon', 'Día habitual de revisión: Jueves. Nº serie: 444513210. ELECTRICO', []),
+        ('Cortasetos HS 45', 'Stihl', 'HS 45', 'Moraleja/Zarzuela', 'Día habitual de revisión: Viernes. Nº serie: 516553463', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'CC Alegra', 'Día habitual de revisión: Viernes. Nº serie: 189441387', []),
+        ('Cortasetos HS 82 R', 'Stihl', 'HS 82 R', 'Style outlet Rozas', 'Día habitual de revisión: Viernes. Nº serie: 189441384', []),
+        ('Desbrozadora FS 260 C', 'Stihl', 'FS 260 C', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Domingo. Nº serie: 190687210', []),
+        ('Desbrozadora FS 131/R', 'Stihl', 'FS 131/R', 'Aemet barajas', 'Día habitual de revisión: Domingo. Nº serie: 519262582', [('averia', None, 'GRIPADA - Se llevo a arreglar pero el costo era muy alto (fecha desconocida)')]),
+        ('Desbrozadora FSA 60 R', 'Stihl', 'FSA 60 R', 'Ikea alcorcon', 'Día habitual de revisión: Lunes. Nº serie: 447060725. ELECTRICO', []),
+        ('Desbrozadora FS 131', 'Stihl', 'FS 131', 'CC Alegra', 'Día habitual de revisión: Lunes. Nº serie: 525067178', []),
+        ('Desbrozadora FS 131', 'Stihl', 'FS 131', 'Style outlet Rozas', 'Día habitual de revisión: Martes. Nº serie: 525067167', []),
+        ('Sopladora BG 56', 'Stihl', 'BG 56', 'Hospital Torrejon ardoz', 'Día habitual de revisión: Miercoles. Nº serie: 504422778', []),
+        ('Sopladora SH 66 C', 'Stihl', 'SH 66 C', 'Sede sanitas', 'Día habitual de revisión: Miercoles. Nº serie: 299852536', []),
+        ('Sopladora BR 450', 'Stihl', 'BR 450', 'Moraleja/Zarzuela', 'Día habitual de revisión: Jueves. Nº serie: 531116233', []),
+        ('Sopladora BGA 57', 'Stihl', 'BGA 57', 'Ikea alcorcon', 'Día habitual de revisión: Jueves. Nº serie: 445531887. ELECTRICO', []),
+        ('Sopladora GB 322', 'MC Culloch', 'GB 322', 'Style outlet Rozas', 'Día habitual de revisión: Jueves. Nº serie: 967683501', []),
+        ('Sopladora BR 430', 'Stihl', 'BR 430', 'CC Alegra', 'Día habitual de revisión: Jueves. Nº serie: 524110829', []),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Ruta', 'Día habitual de revisión: Sabado. Nº serie: 520612629', [('averia', '2023-02-07', 'Se acelera - Ajustar ralenti')]),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Moraleja/Zarzuela', 'Día habitual de revisión: Sabado. Nº serie: 513736690', [('averia', '2023-05-01', 'Tornillo de la barra partido - Arreglo de tornillo de la barra (mes de mayo, día aproximado)'), ('averia', '2023-06-05', 'Al acelerar se apaga - Ajuste de ralenti y carburador')]),
+        ('Motor multiuso KM KM 111 R CombiEngine', 'Stihl', 'KM 111 R CombiEngine', 'Sede sanitas', 'Día habitual de revisión: Domingo. Nº serie: 520612234', []),
+        ('Motosierra MS 193 T', 'Stihl', 'MS 193 T', 'CC Alegra', 'Día habitual de revisión: Martes. Nº serie: 516553463', []),
+        ('Motosierra MS 251 C', 'Stihl', 'MS 251 C', 'Hospital torrejon ardoz', 'Día habitual de revisión: Martes. Nº serie: 188487266', []),
+        ('Motosierra MS 251', 'Stihl', 'MS 251', 'Style outlet Rozas', 'Día habitual de revisión: Miercoles. Nº serie: 189404142', []),
+        ('Accesorio KM Desbrozadora', 'Stihl', 'Desbrozadora', 'Moraleja/Zarzuela', 'Día habitual de revisión: Jueves', []),
+        ('Accesorio KM', 'Stihl', None, 'Ruta', 'Día habitual de revisión: Viernes', []),
+        ('Accesorio KM Sopladora', 'Stihl', 'Sopladora', 'Ruta', 'Día habitual de revisión: Viernes', []),
+        ('Accesorio KM Cortasetos', 'Stihl', 'Cortasetos', 'Moraleja/Zarzuela', 'Día habitual de revisión: Sabado', [('averia', '2023-02-07', 'Espadin sin filo - Afilar espadin y engrasado')]),
+        ('Accesorio KM', 'Stihl', None, 'sede sanitas', 'Día habitual de revisión: Sabado', []),
+        ('Accesorio KM', 'Stihl', None, 'Ruta', 'Día habitual de revisión: Sabado', []),
+        ('Accesorio KM Motosierra', 'Stihl', 'Motosierra', 'Sede sanitas', 'Día habitual de revisión: Domingo', []),
+        ('Accesorio KM Alargador', 'Stihl', 'Alargador', 'Sede sanitas', 'Día habitual de revisión: Domingo', []),
+        ('Accesorio KM Alargador', 'Stihl', 'Alargador', 'Ruta', 'Día habitual de revisión: Domingo', []),
+        ('Otros Multi accesorio motor 43 cc', 'Sterwins', 'Multi accesorio motor 43 cc', 'Sede sanitas', 'Día habitual de revisión: Lunes. Nº serie (dañado en el Excel original, revisar): 2078870010121899999232', []),
+]
+
+
+@api_router.post("/admin/borrar-todas-maquinas")
+async def borrar_todas_maquinas(_: dict = Depends(require_admin)):
+    """Marca como inactivas TODAS las maquinas activas de golpe (soft
+    delete, igual que el borrado individual). Pensado para limpiar antes
+    de reimportar el listado."""
+    result = await db.maquinaria.update_many(
+        {"activo": True},
+        {"$set": {"activo": False, "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"borradas": result.modified_count}
+
+
+@api_router.post("/admin/importar-maquinaria-2023")
+async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
+    # Idempotencia: si ya hay maquinaria activa, no hacemos nada para
+    # evitar duplicados accidentales al pulsar dos veces.
+    existentes = await db.maquinaria.count_documents({"activo": True})
+    if existentes > 0:
+        return {
+            "importadas": 0,
+            "historial": 0,
+            "mensaje": f"Ya hay {existentes} maquinas en la app. No se ha importado nada para evitar duplicados. Si aun asi quieres importar, borra primero las existentes.",
+        }
+
+    now = datetime.now(timezone.utc)
+    total_maq = 0
+    total_hist = 0
+    for nombre, marca, modelo, ubicacion, notas, historial in _MAQUINARIA_SEED_2023:
+        maq_id = str(uuid.uuid4())
+        doc = {
+            "id": maq_id,
+            "nombre": nombre,
+            "marca": marca,
+            "modelo": modelo,
+            "anio_fabricacion": None,
+            "ubicacion_actual": ubicacion,
+            "estado": "operativo",
+            "notas": notas or "",
+            "activo": True,
+            "fotos": [],
+            "fotos_public_ids": [],
+            "creado_en": now,
+            "actualizado_en": now,
+        }
+        await db.maquinaria.insert_one(doc)
+        total_maq += 1
+
+        for tipo, fecha_iso, descripcion in historial:
+            hist_doc = {
+                "id": str(uuid.uuid4()),
+                "maquinaria_id": maq_id,
+                "tipo": tipo,
+                "fecha": fecha_iso or now.strftime("%Y-%m-%d"),
+                "descripcion": descripcion,
+                "creado_por": "importacion_2023",
+                "creado_en": now,
+            }
+            await db.historial_maquinaria.insert_one(hist_doc)
+            total_hist += 1
+
+    return {
+        "importadas": total_maq,
+        "historial": total_hist,
+        "mensaje": f"Importadas {total_maq} maquinas y {total_hist} registros de historial.",
+    }
+
+
+# Include the router in the main app
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def on_startup():
+    # Auto-siembra de datos base al arrancar (idempotente).
+    await seed_clients_if_empty()
+    await seed_work_tasks_if_empty()
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
