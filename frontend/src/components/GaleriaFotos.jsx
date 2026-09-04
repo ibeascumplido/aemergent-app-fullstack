@@ -63,6 +63,9 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
   const [operarios, setOperarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fotoAmpliada, setFotoAmpliada] = useState(null);
+  const [editandoAnotacion, setEditandoAnotacion] = useState(false);
+  const [textoAnotacion, setTextoAnotacion] = useState("");
+  const [guardandoAnotacion, setGuardandoAnotacion] = useState(false);
 
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
@@ -112,6 +115,33 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
     } catch (err) {
       console.error("Error eliminando foto:", err);
       toast.error("Error al eliminar la foto");
+    }
+  };
+
+  const abrirEdicionAnotacion = () => {
+    setTextoAnotacion(fotoAmpliada.anotacion || "");
+    setEditandoAnotacion(true);
+  };
+
+  const guardarAnotacion = async () => {
+    setGuardandoAnotacion(true);
+    try {
+      await axios.put(`${API}/fotos/${fotoAmpliada.id}/anotacion`, {
+        anotacion: textoAnotacion,
+      });
+      // Actualizar en memoria: la foto ampliada y la lista
+      const nuevaAnot = textoAnotacion.trim();
+      setFotoAmpliada((prev) => ({ ...prev, anotacion: nuevaAnot }));
+      setFotos((prev) =>
+        prev.map((f) => (f.id === fotoAmpliada.id ? { ...f, anotacion: nuevaAnot } : f))
+      );
+      setEditandoAnotacion(false);
+      toast.success("Anotación guardada");
+    } catch (err) {
+      console.error("Error guardando anotación:", err);
+      toast.error("No se pudo guardar");
+    } finally {
+      setGuardandoAnotacion(false);
     }
   };
 
@@ -314,12 +344,12 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
       {fotoAmpliada && (
         <div
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => setFotoAmpliada(null)}
+          onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); }}
           data-testid="foto-pantalla-completa"
         >
           <button
             type="button"
-            onClick={() => setFotoAmpliada(null)}
+            onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); }}
             className="absolute top-4 right-4 text-white/80 hover:text-white z-10"
             aria-label="Cerrar"
           >
@@ -350,10 +380,54 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
                 </span>
               )}
             </div>
-            {fotoAmpliada.anotacion && (
-              <p className="text-sm text-white bg-white/10 rounded-lg px-3 py-2 max-w-lg text-center whitespace-pre-wrap">
-                {fotoAmpliada.anotacion}
-              </p>
+            {editandoAnotacion ? (
+              <div className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+                <textarea
+                  value={textoAnotacion}
+                  onChange={(e) => setTextoAnotacion(e.target.value)}
+                  rows={3}
+                  placeholder="Escribe una anotación..."
+                  className="w-full rounded-lg p-2 text-sm text-slate-900"
+                  data-testid="anotacion-edit-textarea"
+                />
+                <div className="flex gap-2 justify-end mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditandoAnotacion(false)}
+                    className="px-3 py-1.5 rounded-lg text-sm text-white/80 hover:text-white"
+                    disabled={guardandoAnotacion}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={guardarAnotacion}
+                    disabled={guardandoAnotacion}
+                    className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-700 text-white"
+                    data-testid="anotacion-guardar-btn"
+                  >
+                    {guardandoAnotacion ? "Guardando..." : "Guardar"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="w-full max-w-lg flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                {fotoAmpliada.anotacion && (
+                  <p className="text-sm text-white bg-white/10 rounded-lg px-3 py-2 w-full text-center whitespace-pre-wrap">
+                    {fotoAmpliada.anotacion}
+                  </p>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={abrirEdicionAnotacion}
+                    className="text-xs text-white/70 hover:text-white underline"
+                    data-testid="anotacion-editar-btn"
+                  >
+                    {fotoAmpliada.anotacion ? "Editar anotación" : "Añadir anotación"}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
