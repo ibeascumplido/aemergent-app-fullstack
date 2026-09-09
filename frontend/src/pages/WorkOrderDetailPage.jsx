@@ -56,6 +56,7 @@ import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import SessionDialog from "@/components/SessionDialog";
 import GaleriaFotos from "@/components/GaleriaFotos";
+import AnadirFotosParte from "@/components/AnadirFotosParte";
 import SignaturePad from "@/components/SignaturePad";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -98,6 +99,7 @@ const WorkOrderDetailPage = () => {
 
   const [parte, setParte] = useState(null);
   const [cliente, setCliente] = useState(null);
+  const [recargaFotos, setRecargaFotos] = useState(0);
   const [centro, setCentro] = useState(null);
   const [presupuestos, setPresupuestos] = useState([]);
   const [operariosCatalogo, setOperariosCatalogo] = useState([]);
@@ -1012,7 +1014,16 @@ const WorkOrderDetailPage = () => {
         </div>
       </div>
 
-      <GaleriaFotos workOrderId={id} titulo="Fotos del parte" />
+      <div className="flex items-center justify-between mb-2 mt-2">
+        <p className="text-sm font-semibold text-slate-900">Fotos del parte</p>
+        <AnadirFotosParte
+          workOrderId={id}
+          clientId={cliente?.id || parte.client_id}
+          clientSlug={cliente?.slug}
+          onCambioFotos={() => setRecargaFotos((n) => n + 1)}
+        />
+      </div>
+      <GaleriaFotos key={recargaFotos} workOrderId={id} titulo="" />
 
       {/* Notas del parte */}
       {parte.notas && (
