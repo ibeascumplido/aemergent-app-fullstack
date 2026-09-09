@@ -3246,6 +3246,11 @@ class FotoCreatePayload(BaseModel):
         description="Agrupa varias fotos tomadas en la misma sesion (generado por el "
         "frontend), para poder clasificarlas todas a la vez despues.",
     )
+    # Al subir una foto directamente asociada a un destino (p. ej. desde
+    # dentro de un parte), se pueden pasar estos campos ya rellenos.
+    work_order_id: Optional[str] = None
+    client_id: Optional[str] = None
+    centro_id: Optional[str] = None
 
 
 class FotoClasificarPayload(BaseModel):
@@ -3416,10 +3421,11 @@ async def subir_foto(
         "fecha": None,
         "audio_url": None,
         "audio_public_id": None,
-        "client_id": None,
-        "work_order_id": None,
+        "client_id": payload.client_id,
+        "centro_id": payload.centro_id,
+        "work_order_id": payload.work_order_id,
         "creado_en": now,
-        "clasificado_en": None,
+        "clasificado_en": now if payload.client_id else None,
     }
     # Notificar al admin solo en la PRIMERA foto de cada lote, para no
     # generar una notificacion por cada foto de una misma tanda.
@@ -3669,6 +3675,33 @@ async def editar_anotacion_foto(
     )
     doc = await db.fotos.find_one({"id": foto_id})
     return Foto(**doc)
+
+
+class AsociarFotosPartePayload(BaseModel):
+    foto_ids: List[str]
+
+
+@api_router.put("/work-orders/{work_order_id}/asociar-fotos")
+async def asociar_fotos_parte(
+    work_order_id: str, payload: AsociarFotosPartePayload, _: dict = Depends(require_approved)
+):
+    """Asocia una o varias fotos ya existentes a un parte de trabajo (las
+    que el usuario elige desde 'sin clasificar' o desde las del cliente)."""
+    parte = await db.work_orders.find_one({"id": work_order_id})
+    if not parte:
+        raise HTTPException(status_code=404, detail="Parte no encontrado")
+    if not payload.foto_ids:
+        return {"asociadas": 0}
+    now = datetime.now(timezone.utc)
+    result = await db.fotos.update_many(
+        {"id": {"$in": payload.foto_ids}},
+        {"$set": {
+            "work_order_id": work_order_id,
+            "client_id": parte.get("client_id"),
+            "clasificado_en": now,
+        }},
+    )
+    return {"asociadas": result.modified_count}
 
 
 # =====================================================================
