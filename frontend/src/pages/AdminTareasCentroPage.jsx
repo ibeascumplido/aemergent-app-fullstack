@@ -10,6 +10,7 @@ import {
   ThumbsUp,
   MapPin,
   AlertTriangle,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,21 @@ const AdminTareasCentroPage = () => {
     } catch (err) {
       console.error(`Error en ${endpoint}:`, err);
       toast.error(err?.response?.data?.detail || "No se pudo completar la acción");
+    } finally {
+      setProcesando(null);
+    }
+  };
+
+  const eliminarTarea = async (tareaId) => {
+    if (!window.confirm("¿Eliminar esta tarea? No se puede deshacer.")) return;
+    setProcesando(tareaId);
+    try {
+      await axios.delete(`${API}/tareas-centro/${tareaId}`);
+      toast.success("Tarea eliminada");
+      await cargar();
+    } catch (err) {
+      console.error("Error eliminando tarea:", err);
+      toast.error("No se pudo eliminar");
     } finally {
       setProcesando(null);
     }
@@ -265,6 +281,16 @@ const AdminTareasCentroPage = () => {
                       </span>
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => eliminarTarea(t.id)}
+                    disabled={procesando === t.id}
+                    className="ml-auto text-slate-300 hover:text-red-500 p-1 self-center"
+                    title="Eliminar tarea"
+                    data-testid={`eliminar-tarea-${t.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </CardContent>
             </Card>
