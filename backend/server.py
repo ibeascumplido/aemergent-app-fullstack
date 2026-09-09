@@ -49,6 +49,7 @@ from reportlab.platypus import (
     HRFlowable,
     Table,
     TableStyle,
+    PageBreak,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -6066,7 +6067,9 @@ async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -
         ])
     )
 
-    return [Spacer(1, 16), Paragraph("Fotografías", titulo_style), tabla]
+    # Todas las fotos van juntas a partir de una página nueva, para que la
+    # primera página quede solo con los datos y anotaciones del parte.
+    return [PageBreak(), Paragraph("Fotografías", titulo_style), Spacer(1, 8), tabla]
 
 
 async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
