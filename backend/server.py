@@ -4426,6 +4426,7 @@ async def convertir_tarea_en_incidencia(
     inc = {
         "id": str(uuid.uuid4()),
         "client_id": doc["client_id"],
+        "centro_id": doc.get("centro_id"),
         "titulo": titulo,
         "descripcion": f"Generada desde una tarea de {doc.get('creado_por_nombre', '?')}.",
         "estado": "abierta",
