@@ -3559,9 +3559,17 @@ async def list_fotos(
     if operario_id:
         query["operario_id"] = operario_id
 
+    # Nunca mostrar en las vistas normales las fotos que están en la papelera.
+    query["borrada"] = {"$ne": True}
+
     cursor = db.fotos.find(query).sort("creado_en", -1)
     fotos = [f async for f in cursor]
+    return await _resolver_nombres_fotos(fotos)
 
+
+async def _resolver_nombres_fotos(fotos: list) -> List[FotoConNombres]:
+    """Adjunta a cada foto los nombres de operario, cliente, centro y parte
+    (a partir de sus IDs), para las bandejas del admin."""
     operario_ids = {f["operario_id"] for f in fotos}
     client_ids = {f["client_id"] for f in fotos if f.get("client_id")}
     wo_ids = {f["work_order_id"] for f in fotos if f.get("work_order_id")}
@@ -3578,7 +3586,6 @@ async def list_fotos(
         async for cl in db.clients.find({"id": {"$in": list(client_ids)}}):
             clientes_map[cl["id"]] = cl["nombre"]
 
-    # Nombres de centro (client_locations)
     centro_ids = {f.get("centro_id") for f in fotos if f.get("centro_id")}
     centros_map = {}
     if centro_ids:
@@ -3628,10 +3635,49 @@ async def clasificar_foto(
 
 @api_router.delete("/fotos/{foto_id}")
 async def eliminar_foto(foto_id: str, _: dict = Depends(require_admin)):
+    """Borrado SUAVE: la foto va a la papelera (borrada=True), no se
+    elimina de verdad. Se puede recuperar o borrar definitivamente desde
+    la papelera. El archivo de Cloudinary NO se toca todavia."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await db.fotos.update_one(
+        {"id": foto_id},
+        {"$set": {"borrada": True, "borrada_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/fotos/papelera", response_model=List[FotoConNombres])
+async def list_fotos_papelera(_: dict = Depends(require_admin)):
+    """Fotos en la papelera (borradas pero recuperables)."""
+    cursor = db.fotos.find({"borrada": True}).sort("borrada_en", -1)
+    fotos = [f async for f in cursor]
+    return await _resolver_nombres_fotos(fotos)
+
+
+@api_router.put("/fotos/{foto_id}/recuperar")
+async def recuperar_foto(foto_id: str, _: dict = Depends(require_admin)):
+    """Saca una foto de la papelera (vuelve a estar disponible)."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    await db.fotos.update_one(
+        {"id": foto_id}, {"$set": {"borrada": False}, "$unset": {"borrada_en": ""}}
+    )
+    return {"ok": True}
+
+
+@api_router.delete("/fotos/{foto_id}/definitivo")
+async def eliminar_foto_definitivo(foto_id: str, _: dict = Depends(require_admin)):
+    """Borrado DEFINITIVO desde la papelera: elimina el registro y el
+    archivo de Cloudinary. Irreversible."""
     doc = await db.fotos.find_one({"id": foto_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Foto no encontrada")
     await _borrar_logo_cloudinary(doc.get("public_id"))
+    if doc.get("audio_public_id"):
+        await _borrar_documento_cloudinary(doc["audio_public_id"], "video")
     await db.fotos.delete_one({"id": foto_id})
     return {"ok": True}
 
