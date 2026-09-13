@@ -8757,6 +8757,82 @@ async def editar_pago_extra_admin(
     return PagoExtra(**pago)
 
 
+class AsignarPagoExtraPayload(BaseModel):
+    operario_id: str
+    categoria: str = Field(..., pattern=_CATEGORIA_PAGO_PATTERN)
+    subtipo: str = Field("variable", pattern=_SUBTIPO_PAGO_PATTERN)
+    cantidad: float = Field(1, gt=0)
+    importe_manual: Optional[float] = Field(None, ge=0)
+    fecha: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    nota: Optional[str] = None
+
+
+@api_router.post("/admin/pagos-extra/asignar", response_model=PagoExtra)
+async def asignar_pago_extra_admin(
+    payload: AsignarPagoExtraPayload, current_user: dict = Depends(require_admin)
+):
+    """El admin asigna un pago extra directamente a un trabajador. Queda
+    ACEPTADO al momento (no requiere solicitud del operario) y se le avisa."""
+    operario = await db.users.find_one({"user_id": payload.operario_id}, {"_id": 0})
+    if not operario:
+        raise HTTPException(status_code=404, detail="Trabajador no encontrado")
+
+    importe = _calcular_importe_pago(
+        payload.categoria, payload.subtipo, payload.cantidad, payload.importe_manual
+    )
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "operario_id": payload.operario_id,
+        "categoria": payload.categoria,
+        "subtipo": payload.subtipo,
+        "client_id": None,
+        "client_nombre": None,
+        "centro_id": None,
+        "centro_nombre": None,
+        "tarea_id": None,
+        "trabajo_descripcion": None,
+        "fecha": payload.fecha,
+        "cantidad": payload.cantidad,
+        "importe": importe,
+        "nota": payload.nota,
+        "nota_admin": "Asignado por el administrador",
+        "estado": "aceptado",
+        "creado_en": now,
+        "resuelto_en": now,
+        "asignado_por_admin": True,
+        "tox_tipo_trabajo": None,
+        "tox_producto": None,
+        "tox_producto_detalle": None,
+        "tox_zona": None,
+        "tox_hora_inicio": None,
+        "tox_hora_fin": None,
+        "tox_foto_url": None,
+    }
+    await db.pagos_extra.insert_one(doc)
+
+    await create_notification(
+        user_id=payload.operario_id,
+        notification_type=NotificationType.PAGO_EXTRA_RESUELTO,
+        title="Pago extra asignado",
+        message=f"El administrador te ha asignado un pago de {importe:.2f} €.",
+        data={"enlace": "/pagos-extra"},
+    )
+    return PagoExtra(**doc)
+
+
+@api_router.delete("/admin/pagos-extra/{pago_id}")
+async def borrar_pago_extra_admin(pago_id: str, _: dict = Depends(require_admin)):
+    """Elimina un pago extra por completo (cualquier estado)."""
+    pago = await db.pagos_extra.find_one({"id": pago_id})
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    # Si generó un registro de fitosanitarios, quitarlo también
+    await db.registro_fitosanitarios.delete_many({"pago_extra_id": pago_id})
+    await db.pagos_extra.delete_one({"id": pago_id})
+    return {"ok": True}
+
+
 @api_router.post("/admin/pagos-extra/{pago_id}/resolver", response_model=PagoExtra)
 async def resolver_pago_extra_admin(
     pago_id: str, aceptar: bool, _: dict = Depends(require_admin)
