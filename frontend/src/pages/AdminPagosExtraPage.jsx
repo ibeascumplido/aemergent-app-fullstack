@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { Euro, Clock, Biohazard, Check, X, Pencil, Users } from "lucide-react";
+import { Euro, Clock, Biohazard, Check, X, Pencil, Users, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,6 +72,20 @@ const AdminPagosExtraPage = () => {
   const [editNotaAdmin, setEditNotaAdmin] = useState("");
   const [guardando, setGuardando] = useState(false);
 
+  // Asignar pago directamente
+  const [operarios, setOperarios] = useState([]);
+  const [asignarOpen, setAsignarOpen] = useState(false);
+  const [asigOperario, setAsigOperario] = useState("");
+  const [asigModo, setAsigModo] = useState("libre"); // "libre" | "tipo"
+  const [asigCategoria, setAsigCategoria] = useState("horas_extra");
+  const [asigSubtipo, setAsigSubtipo] = useState("normal");
+  const [asigCantidad, setAsigCantidad] = useState("");
+  const [asigImporte, setAsigImporte] = useState("");
+  const [asigFecha, setAsigFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [asigNota, setAsigNota] = useState("");
+  const [asignando, setAsignando] = useState(false);
+  const [aBorrar, setABorrar] = useState(null);
+
   const cargar = useCallback(async () => {
     setLoading(true);
     try {
@@ -90,6 +104,91 @@ const AdminPagosExtraPage = () => {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Cargar operarios para el selector de asignación (solo admin)
+  useEffect(() => {
+    if (!isAdmin) return;
+    axios
+      .get(`${API}/users/operarios`)
+      .then((res) => setOperarios(res.data || []))
+      .catch(() => {});
+  }, [isAdmin]);
+
+  // Ejecuta el borrado cuando se confirma (aBorrar pasa a tener un pago)
+  useEffect(() => {
+    if (aBorrar) borrarPago();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aBorrar]);
+
+  const abrirAsignar = () => {
+    setAsigOperario("");
+    setAsigModo("libre");
+    setAsigCategoria("horas_extra");
+    setAsigSubtipo("normal");
+    setAsigCantidad("");
+    setAsigImporte("");
+    setAsigFecha(new Date().toISOString().slice(0, 10));
+    setAsigNota("");
+    setAsignarOpen(true);
+  };
+
+  const asignarPago = async () => {
+    if (!asigOperario) {
+      toast.error("Elige un trabajador");
+      return;
+    }
+    const payload = {
+      operario_id: asigOperario,
+      fecha: asigFecha,
+      nota: asigNota.trim() || null,
+    };
+    if (asigModo === "libre") {
+      const imp = parseFloat(asigImporte);
+      if (!imp || imp <= 0) {
+        toast.error("Indica un importe válido");
+        return;
+      }
+      payload.categoria = "horas_extra";
+      payload.subtipo = "variable";
+      payload.cantidad = 1;
+      payload.importe_manual = imp;
+    } else {
+      const cant = parseFloat(asigCantidad);
+      if (!cant || cant <= 0) {
+        toast.error("Indica la cantidad");
+        return;
+      }
+      payload.categoria = asigCategoria;
+      payload.subtipo = asigSubtipo;
+      payload.cantidad = cant;
+    }
+    setAsignando(true);
+    try {
+      await axios.post(`${API}/admin/pagos-extra/asignar`, payload);
+      toast.success("Pago asignado");
+      setAsignarOpen(false);
+      await cargar();
+    } catch (err) {
+      console.error("Error asignando pago:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo asignar");
+    } finally {
+      setAsignando(false);
+    }
+  };
+
+  const borrarPago = async () => {
+    if (!aBorrar) return;
+    try {
+      await axios.delete(`${API}/admin/pagos-extra/${aBorrar.id}`);
+      toast.success("Pago eliminado");
+      setPagos((prev) => prev.filter((p) => p.id !== aBorrar.id));
+    } catch (err) {
+      console.error("Error borrando pago:", err);
+      toast.error("No se pudo eliminar");
+    } finally {
+      setABorrar(null);
+    }
+  };
 
   const abrirEdicion = (p) => {
     setEditando(p);
@@ -153,6 +252,16 @@ const AdminPagosExtraPage = () => {
               : "Revisa, ajusta y aprueba horas extra y pluses"}
           </p>
         </div>
+        {isAdmin && !isFacturacion && (
+          <Button
+            onClick={abrirAsignar}
+            className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white"
+            data-testid="asignar-pago-btn"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Asignar pago
+          </Button>
+        )}
       </div>
 
       {!isFacturacion && (
@@ -316,6 +425,21 @@ const AdminPagosExtraPage = () => {
                         Rechazar
                       </Button>
                     )}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("¿Eliminar este pago? No se puede deshacer.")) {
+                            setABorrar(p);
+                          }
+                        }}
+                        className="ml-auto text-slate-300 hover:text-red-500 p-1 self-center"
+                        title="Eliminar pago"
+                        data-testid={`borrar-pago-${p.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                   )}
                 </CardContent>
@@ -438,6 +562,153 @@ const AdminPagosExtraPage = () => {
           />
         </div>
       )}
+
+      {/* Diálogo: asignar pago directamente */}
+      <Dialog open={asignarOpen} onOpenChange={(v) => !asignando && setAsignarOpen(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Asignar pago a un trabajador</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Trabajador</Label>
+              <select
+                value={asigOperario}
+                onChange={(e) => setAsigOperario(e.target.value)}
+                className="w-full h-10 rounded-md border border-slate-200 px-3 text-sm bg-white"
+                data-testid="asig-operario-select"
+              >
+                <option value="">Elige un trabajador...</option>
+                {operarios.map((o) => (
+                  <option key={o.user_id} value={o.user_id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>¿Cómo?</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAsigModo("libre")}
+                  className={`flex-1 py-2 rounded-lg text-sm border ${
+                    asigModo === "libre" ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-500 border-slate-200"
+                  }`}
+                >
+                  Importe libre
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAsigModo("tipo")}
+                  className={`flex-1 py-2 rounded-lg text-sm border ${
+                    asigModo === "tipo" ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-500 border-slate-200"
+                  }`}
+                >
+                  Por tipo
+                </button>
+              </div>
+            </div>
+
+            {asigModo === "libre" ? (
+              <div className="space-y-1.5">
+                <Label>Importe (€)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={asigImporte}
+                  onChange={(e) => setAsigImporte(e.target.value)}
+                  placeholder="0.00"
+                  data-testid="asig-importe"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Tipo</Label>
+                  <select
+                    value={asigCategoria}
+                    onChange={(e) => {
+                      setAsigCategoria(e.target.value);
+                      setAsigSubtipo(e.target.value === "horas_extra" ? "normal" : "dia");
+                    }}
+                    className="w-full h-10 rounded-md border border-slate-200 px-2 text-sm bg-white"
+                  >
+                    <option value="horas_extra">Horas extra</option>
+                    <option value="plus">Plus</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Subtipo</Label>
+                  <select
+                    value={asigSubtipo}
+                    onChange={(e) => setAsigSubtipo(e.target.value)}
+                    className="w-full h-10 rounded-md border border-slate-200 px-2 text-sm bg-white"
+                  >
+                    {asigCategoria === "horas_extra" ? (
+                      <>
+                        <option value="normal">Normal</option>
+                        <option value="festivo">Festivo</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="dia">Por día</option>
+                        <option value="hora">Por hora</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+                <div className="space-y-1.5 col-span-2">
+                  <Label>Cantidad ({asigCategoria === "horas_extra" || asigSubtipo === "hora" ? "horas" : "días"})</Label>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    value={asigCantidad}
+                    onChange={(e) => setAsigCantidad(e.target.value)}
+                    placeholder="0"
+                    data-testid="asig-cantidad"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Fecha</Label>
+              <Input
+                type="date"
+                value={asigFecha}
+                onChange={(e) => setAsigFecha(e.target.value)}
+                data-testid="asig-fecha"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Nota (opcional)</Label>
+              <Textarea
+                value={asigNota}
+                onChange={(e) => setAsigNota(e.target.value)}
+                rows={2}
+                placeholder="Concepto del pago"
+                data-testid="asig-nota"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAsignarOpen(false)} disabled={asignando}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={asignarPago}
+              disabled={asignando}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              data-testid="asig-confirmar-btn"
+            >
+              {asignando ? "Asignando..." : "Asignar pago"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
