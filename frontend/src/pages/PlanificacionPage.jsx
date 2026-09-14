@@ -607,6 +607,7 @@ const PlanificacionPage = () => {
                   {asignado && !enVacaciones && (
                     <div className="pl-2 pr-1 pb-1.5">
                       <input
+                        key={`nota-${op.user_id}-${panelAbierto.fecha}-${panelAbierto.columna.id}-${asignacion?.nota || ""}`}
                         type="text"
                         defaultValue={asignacion?.nota || ""}
                         onBlur={(e) => guardarNotaAsignacion(op.user_id, e.target.value)}
