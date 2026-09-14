@@ -229,6 +229,36 @@ const PlanificacionPage = () => {
     setPanelAbierto({ fecha, columna, top, left });
   };
 
+  const guardarNotaAsignacion = async (operarioId, nota) => {
+    if (!panelAbierto) return;
+    const { fecha, columna } = panelAbierto;
+    try {
+      await axios.put(`${API}/planificacion/asignacion-nota`, {
+        operario_id: operarioId,
+        fecha,
+        destino_cliente_id: columna.tipo === "cliente" ? columna.cliente_id : null,
+        destino_centro_id: columna.tipo === "centro" ? columna.centro_id : null,
+        destino_libre: columna.tipo === "libre" ? columna.etiqueta : null,
+        nota: nota || "",
+      });
+      // Reflejar la nota en el estado local
+      setAsignaciones((prev) =>
+        prev.map((a) =>
+          a.operario_id === operarioId &&
+          a.fecha === fecha &&
+          a.destino_cliente_id === (columna.tipo === "cliente" ? columna.cliente_id : null) &&
+          a.destino_centro_id === (columna.tipo === "centro" ? columna.centro_id : null) &&
+          a.destino_libre === (columna.tipo === "libre" ? columna.etiqueta : null)
+            ? { ...a, nota: (nota || "").trim() }
+            : a
+        )
+      );
+    } catch (err) {
+      console.error("Error guardando nota:", err);
+      toast.error("No se pudo guardar la anotación");
+    }
+  };
+
   const toggleOperarioCelda = async (operarioId) => {
     if (!panelAbierto) return;
     const { fecha, columna } = panelAbierto;
@@ -546,33 +576,47 @@ const PlanificacionPage = () => {
             {operarios.map((op) => {
               const asignado = idsAsignadosPanel.has(op.user_id);
               const enVacaciones = vacacionesSet.has(`${op.user_id}|${panelAbierto.fecha}`);
+              const asignacion = operariosDelPanel.find((a) => a.operario_id === op.user_id);
               return (
-                <button
-                  type="button"
-                  key={op.user_id}
-                  onClick={() => !enVacaciones && toggleOperarioCelda(op.user_id)}
-                  disabled={guardando || enVacaciones}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-colors ${
-                    enVacaciones
-                      ? "opacity-40 cursor-not-allowed"
-                      : asignado
-                      ? "bg-indigo-50"
-                      : "hover:bg-slate-50"
-                  }`}
-                  data-testid={`panel-operario-${op.user_id}`}
-                >
-                  <span
-                    className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
-                    style={estiloColorTextura(op.color, op.textura)}
+                <div key={op.user_id}>
+                  <button
+                    type="button"
+                    onClick={() => !enVacaciones && toggleOperarioCelda(op.user_id)}
+                    disabled={guardando || enVacaciones}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-colors ${
+                      enVacaciones
+                        ? "opacity-40 cursor-not-allowed"
+                        : asignado
+                        ? "bg-indigo-50"
+                        : "hover:bg-slate-50"
+                    }`}
+                    data-testid={`panel-operario-${op.user_id}`}
                   >
-                    {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="truncate flex-1">{op.name}</span>
-                  {enVacaciones && <Lock className="w-3 h-3 text-slate-400 shrink-0" />}
+                    <span
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
+                      style={estiloColorTextura(op.color, op.textura)}
+                    >
+                      {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="truncate flex-1">{op.name}</span>
+                    {enVacaciones && <Lock className="w-3 h-3 text-slate-400 shrink-0" />}
+                    {asignado && !enVacaciones && (
+                      <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    )}
+                  </button>
                   {asignado && !enVacaciones && (
-                    <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <div className="pl-2 pr-1 pb-1.5">
+                      <input
+                        type="text"
+                        defaultValue={asignacion?.nota || ""}
+                        onBlur={(e) => guardarNotaAsignacion(op.user_id, e.target.value)}
+                        placeholder="Anotación (centro, zona, pauta...)"
+                        className="w-full text-[11px] border border-slate-200 rounded px-1.5 py-1 focus:border-indigo-300 focus:outline-none"
+                        data-testid={`nota-asignacion-${op.user_id}`}
+                      />
+                    </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

@@ -90,7 +90,7 @@ const MyCalendarPage = () => {
           });
           const nombre = columna?.etiqueta || a.destino_libre || "Sitio";
           if (!mapa[a.fecha]) mapa[a.fecha] = [];
-          mapa[a.fecha].push(nombre);
+          mapa[a.fecha].push({ nombre, nota: a.nota || "" });
         });
       const prefijoMes = `${year}-${String(month + 1).padStart(2, "0")}-`;
       setMisDestinos((prev) => {
@@ -352,7 +352,9 @@ const MyCalendarPage = () => {
 
                 {destinosHoy.length > 0 ? (
                   <div className="space-y-1">
-                    {destinosHoy.map((nombre, idx) => {
+                    {destinosHoy.map((dest, idx) => {
+                      const nombre = dest.nombre || dest;
+                      const nota = dest.nota || "";
                       const esGalp = (nombre || "").toUpperCase() === "GALP";
                       if (esGalp) {
                         return (
@@ -372,10 +374,17 @@ const MyCalendarPage = () => {
                       return (
                         <div
                           key={idx}
-                          className="flex items-center gap-1.5 text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
+                          className="text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
                         >
-                          <MapPin className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate font-medium">{nombre}</span>
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 shrink-0" />
+                            <span className="truncate font-medium">{nombre}</span>
+                          </div>
+                          {nota && (
+                            <p className="text-xs text-indigo-500 mt-0.5 pl-5 whitespace-pre-wrap">
+                              {nota}
+                            </p>
+                          )}
                         </div>
                       );
                     })}
@@ -478,16 +487,19 @@ const MyCalendarPage = () => {
                 </span>
                 {destinosHoy.length > 0 && (
                   <div className="mt-0.5 flex flex-col items-center gap-0.5">
-                    {destinosHoy.slice(0, 2).map((nombre, i) => (
-                      <span
-                        key={i}
-                        className="inline-flex items-center gap-0.5 text-[8px] leading-tight px-1 py-0.5 rounded bg-indigo-600 text-white max-w-full truncate"
-                        title={nombre}
-                      >
-                        <MapPin className="w-2 h-2 shrink-0" />
-                        <span className="truncate">{nombre}</span>
-                      </span>
-                    ))}
+                    {destinosHoy.slice(0, 2).map((dest, i) => {
+                      const nombre = dest.nombre || dest;
+                      return (
+                        <span
+                          key={i}
+                          className="inline-flex items-center gap-0.5 text-[8px] leading-tight px-1 py-0.5 rounded bg-indigo-600 text-white max-w-full truncate"
+                          title={dest.nota ? `${nombre} — ${dest.nota}` : nombre}
+                        >
+                          <MapPin className="w-2 h-2 shrink-0" />
+                          <span className="truncate">{nombre}</span>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
                 {esCitaMedica(dateStr) && (
