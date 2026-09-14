@@ -4841,6 +4841,7 @@ class AsignacionOut(BaseModel):
     destino_cliente_id: Optional[str] = None
     destino_centro_id: Optional[str] = None
     destino_libre: Optional[str] = None
+    nota: Optional[str] = None
 
 
 class VacacionSimple(BaseModel):
@@ -5040,6 +5041,40 @@ async def toggle_celda_planificacion(
     }
     await db.asignaciones.insert_one(doc)
     return {"ok": True, "accion": "added"}
+
+
+class NotaAsignacionPayload(BaseModel):
+    operario_id: str
+    fecha: str
+    destino_cliente_id: Optional[str] = None
+    destino_centro_id: Optional[str] = None
+    destino_libre: Optional[str] = None
+    nota: str = Field("", max_length=500)
+
+
+@api_router.put("/planificacion/asignacion-nota")
+async def editar_nota_asignacion(
+    payload: NotaAsignacionPayload, _: dict = Depends(require_admin)
+):
+    """Añade o edita una anotación breve en una asignación concreta
+    (operario + día + destino). Útil sobre todo en la columna 'Ruta', para
+    indicar a qué centros va, la zona o una pauta del día."""
+    query = {"operario_id": payload.operario_id, "fecha": payload.fecha}
+    if payload.destino_centro_id:
+        query["destino_centro_id"] = payload.destino_centro_id
+    elif payload.destino_cliente_id:
+        query["destino_cliente_id"] = payload.destino_cliente_id
+    else:
+        query["destino_libre"] = payload.destino_libre
+
+    existente = await db.asignaciones.find_one(query)
+    if not existente:
+        raise HTTPException(status_code=404, detail="Asignación no encontrada")
+    await db.asignaciones.update_one(
+        {"id": existente["id"]},
+        {"$set": {"nota": payload.nota.strip(), "actualizado_en": datetime.now(timezone.utc)}},
+    )
+    return {"ok": True}
 
 
 # =====================================================================
