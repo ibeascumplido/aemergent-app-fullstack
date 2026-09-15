@@ -65,6 +65,7 @@ const PlanificacionPage = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [columnas, setColumnas] = useState([]);
   const [asignaciones, setAsignaciones] = useState([]);
+  const [notasEdit, setNotasEdit] = useState({}); // { operarioId: textoEnEdicion }
   const [vacaciones, setVacaciones] = useState([]);
   const [operarios, setOperarios] = useState([]);
   const [clientesDisponibles, setClientesDisponibles] = useState([]);
@@ -226,6 +227,7 @@ const PlanificacionPage = () => {
     const maxTop = Math.max(minTop, window.innerHeight - PANEL_ALTO_ESTIMADO - MARGEN);
     top = Math.min(Math.max(top, minTop), maxTop);
 
+    setNotasEdit({});
     setPanelAbierto({ fecha, columna, top, left });
   };
 
@@ -253,6 +255,13 @@ const PlanificacionPage = () => {
             : a
         )
       );
+      // Quitar la edición temporal (ya está persistida)
+      setNotasEdit((prev) => {
+        const nuevo = { ...prev };
+        delete nuevo[operarioId];
+        return nuevo;
+      });
+      toast.success("Anotación guardada");
     } catch (err) {
       console.error("Error guardando nota:", err);
       toast.error("No se pudo guardar la anotación");
@@ -605,16 +614,30 @@ const PlanificacionPage = () => {
                     )}
                   </button>
                   {asignado && !enVacaciones && (
-                    <div className="pl-2 pr-1 pb-1.5">
+                    <div className="pl-2 pr-1 pb-1.5 flex gap-1 items-center">
                       <input
-                        key={`nota-${op.user_id}-${panelAbierto.fecha}-${panelAbierto.columna.id}-${asignacion?.nota || ""}`}
                         type="text"
-                        defaultValue={asignacion?.nota || ""}
-                        onBlur={(e) => guardarNotaAsignacion(op.user_id, e.target.value)}
+                        value={notasEdit[op.user_id] !== undefined ? notasEdit[op.user_id] : (asignacion?.nota || "")}
+                        onChange={(e) =>
+                          setNotasEdit((prev) => ({ ...prev, [op.user_id]: e.target.value }))
+                        }
                         placeholder="Anotación (centro, zona, pauta...)"
-                        className="w-full text-[11px] border border-slate-200 rounded px-1.5 py-1 focus:border-indigo-300 focus:outline-none"
+                        className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-1 focus:border-indigo-300 focus:outline-none"
                         data-testid={`nota-asignacion-${op.user_id}`}
                       />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          guardarNotaAsignacion(
+                            op.user_id,
+                            notasEdit[op.user_id] !== undefined ? notasEdit[op.user_id] : (asignacion?.nota || "")
+                          )
+                        }
+                        className="text-[10px] px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white shrink-0"
+                        data-testid={`guardar-nota-${op.user_id}`}
+                      >
+                        Guardar
+                      </button>
                     </div>
                   )}
                 </div>
