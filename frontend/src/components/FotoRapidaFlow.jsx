@@ -102,29 +102,30 @@ const FotoRapidaFlow = () => {
     return nuevo;
   };
 
-  const handleFotoSeleccionada = (e, loteIdParaEstaFoto) => {
-    const file = e.target.files?.[0];
+  const handleFotoSeleccionada = async (e, loteIdParaEstaFoto) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = "";
-    if (!file) return;
+    if (files.length === 0) return;
     const idLote = loteIdParaEstaFoto || loteId;
     setSubiendoFoto(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const res = await axios.post(`${API}/fotos`, { imagen: reader.result, lote_id: idLote });
+    try {
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) continue;
+        const dataUrl = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(file);
+        });
+        const res = await axios.post(`${API}/fotos`, { imagen: dataUrl, lote_id: idLote });
         setFotos((prev) => [...prev, { id: res.data.id, url: res.data.url }]);
-      } catch (err) {
-        console.error("Error subiendo foto:", err);
-        toast.error("No se pudo subir la foto");
-      } finally {
-        setSubiendoFoto(false);
       }
-    };
-    reader.onerror = () => {
-      toast.error("No se pudo leer la foto");
+    } catch (err) {
+      console.error("Error subiendo foto:", err);
+      toast.error("No se pudieron subir todas las fotos");
+    } finally {
       setSubiendoFoto(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const irAClasificar = () => {
@@ -231,7 +232,7 @@ const FotoRapidaFlow = () => {
         <input
           type="file"
           accept="image/*"
-          capture="environment"
+          multiple
           onChange={(e) => {
             const nuevoLote = iniciarSesion();
             handleFotoSeleccionada(e, nuevoLote);
@@ -286,7 +287,7 @@ const FotoRapidaFlow = () => {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
+            multiple
             onChange={handleFotoSeleccionada}
             disabled={subiendoFoto}
             className="hidden"
