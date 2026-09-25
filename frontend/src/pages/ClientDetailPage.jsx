@@ -413,7 +413,9 @@ const ClientDetailPage = () => {
                 </p>
               ) : (
                 <div className="divide-y divide-slate-100 border-t border-slate-100">
-                  {partes.slice(0, 8).map((wo) => (
+                  {partes.slice(0, 8).map((wo) => {
+                    const centroDelParte = centrosLista.find((c) => c.id === wo.centro_id);
+                    return (
                     <button
                       key={wo.id}
                       type="button"
@@ -433,13 +435,20 @@ const ClientDetailPage = () => {
                             </span>
                           )}
                         </div>
+                        {centroDelParte && (
+                          <p className="text-xs text-indigo-600 mt-0.5 flex items-center gap-1">
+                            <MapPin className="w-3 h-3 shrink-0" />
+                            {centroDelParte.nombre}
+                          </p>
+                        )}
                         <p className="text-xs text-slate-400 mt-0.5">
                           Creado {new Date(wo.creado_en).toLocaleDateString("es-ES")}
                         </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                     </button>
-                  ))}
+                    );
+                  })}
                   {partes.length > 8 && (
                     <p className="text-xs text-slate-400 text-center pt-3">
                       Mostrando 8 de {partes.length}
