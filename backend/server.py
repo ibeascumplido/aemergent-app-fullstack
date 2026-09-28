@@ -3404,6 +3404,49 @@ async def crear_comentario_lote(
     )
 
 
+async def _destino_de_parte(work_order_id: Optional[str]) -> dict:
+    """Cliente y centro del parte indicado, para que las fotos hechas o
+    asociadas desde un parte queden archivadas en ese cliente y centro."""
+    if not work_order_id:
+        return {}
+    parte = await db.work_orders.find_one(
+        {"id": work_order_id}, {"_id": 0, "client_id": 1, "centro_id": 1}
+    )
+    if not parte:
+        return {}
+    destino = {}
+    if parte.get("client_id"):
+        destino["client_id"] = parte["client_id"]
+    if parte.get("centro_id"):
+        destino["centro_id"] = parte["centro_id"]
+    return destino
+
+
+async def sincronizar_fotos_con_partes():
+    """Idempotente: completa cliente/centro de las fotos que ya estaban en
+    un parte pero se guardaron sin ellos (fotos anteriores a este cambio)."""
+    try:
+        wo_ids = await db.fotos.distinct(
+            "work_order_id",
+            {
+                "work_order_id": {"$ne": None},
+                "$or": [{"client_id": None}, {"centro_id": None}],
+            },
+        )
+        total = 0
+        for wo_id in wo_ids:
+            destino = await _destino_de_parte(wo_id)
+            for campo, valor in destino.items():
+                r = await db.fotos.update_many(
+                    {"work_order_id": wo_id, campo: None}, {"$set": {campo: valor}}
+                )
+                total += r.modified_count
+        if total:
+            logger.info(f"Fotos sincronizadas con su parte: {total} campos completados")
+    except Exception as e:  # nunca debe impedir el arranque
+        logger.warning(f"No se pudieron sincronizar fotos con partes: {e}")
+
+
 @api_router.post("/fotos", response_model=Foto)
 async def subir_foto(
     payload: FotoCreatePayload, current_user: dict = Depends(require_approved)
@@ -3412,6 +3455,9 @@ async def subir_foto(
         raise HTTPException(status_code=400, detail="Formato de imagen no valido")
     url, public_id = await _subir_logo_cloudinary(payload.imagen)
     now = datetime.now(timezone.utc)
+    destino = await _destino_de_parte(payload.work_order_id)
+    client_id = destino.get("client_id") or payload.client_id
+    centro_id = destino.get("centro_id") or payload.centro_id
     doc = {
         "id": str(uuid.uuid4()),
         "operario_id": current_user["user_id"],
@@ -3422,11 +3468,11 @@ async def subir_foto(
         "fecha": None,
         "audio_url": None,
         "audio_public_id": None,
-        "client_id": payload.client_id,
-        "centro_id": payload.centro_id,
+        "client_id": client_id,
+        "centro_id": centro_id,
         "work_order_id": payload.work_order_id,
         "creado_en": now,
-        "clasificado_en": now if payload.client_id else None,
+        "clasificado_en": now if client_id else None,
     }
     # Notificar al admin solo en la PRIMERA foto de cada lote, para no
     # generar una notificacion por cada foto de una misma tanda.
@@ -3484,6 +3530,12 @@ async def clasificar_lote(
                 status_code=403, detail="Solo un administrador puede asignar el parte"
             )
         updates["work_order_id"] = payload.work_order_id
+        destino = await _destino_de_parte(payload.work_order_id)
+        if destino.get("client_id") and payload.client_id is None:
+            updates["client_id"] = destino["client_id"]
+            updates["clasificado_en"] = datetime.now(timezone.utc)
+        if destino.get("centro_id") and payload.centro_id is None:
+            updates["centro_id"] = destino["centro_id"]
     if payload.audio:
         audio_url, audio_public_id = await _subir_audio_cloudinary(payload.audio)
         updates["audio_url"] = audio_url
@@ -3740,13 +3792,11 @@ async def asociar_fotos_parte(
     if not payload.foto_ids:
         return {"asociadas": 0}
     now = datetime.now(timezone.utc)
+    cambios = {"work_order_id": work_order_id, "clasificado_en": now}
+    cambios.update(await _destino_de_parte(work_order_id))
     result = await db.fotos.update_many(
         {"id": {"$in": payload.foto_ids}},
-        {"$set": {
-            "work_order_id": work_order_id,
-            "client_id": parte.get("client_id"),
-            "clasificado_en": now,
-        }},
+        {"$set": cambios},
     )
     return {"asociadas": result.modified_count}
 
@@ -9366,6 +9416,7 @@ async def on_startup():
     # Auto-siembra de datos base al arrancar (idempotente).
     await seed_clients_if_empty()
     await seed_work_tasks_if_empty()
+    await sincronizar_fotos_con_partes()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
