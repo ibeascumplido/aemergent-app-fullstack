@@ -32,6 +32,7 @@ import CentroDetailPage from "@/pages/CentroDetailPage";
 import ClientLocationsPage from "@/pages/ClientLocationsPage";
 import ClientLocationsCalendarPage from "@/pages/ClientLocationsCalendarPage";
 import WorkOrderDetailPage from "@/pages/WorkOrderDetailPage";
+import WorkOrdersListPage from "@/pages/WorkOrdersListPage";
 import RejillaZonasPage from "@/pages/RejillaZonasPage";
 import PublicSignPage from "@/pages/PublicSignPage";
 import LoginPage from "@/components/auth/LoginPage";
@@ -158,6 +159,11 @@ function App() {
               <Route path="admin/work-tasks" element={
                 <ProtectedRoute requireBudgets>
                   <WorkTasksAdminPage />
+                </ProtectedRoute>
+              } />
+              <Route path="partes" element={
+                <ProtectedRoute>
+                  <WorkOrdersListPage />
                 </ProtectedRoute>
               } />
               <Route path="work-orders/:id" element={
