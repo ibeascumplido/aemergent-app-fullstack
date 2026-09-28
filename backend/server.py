@@ -5383,6 +5383,61 @@ async def list_work_orders(
     return [WorkOrder(**doc) async for doc in cursor]
 
 
+class WorkOrderConNombres(WorkOrder):
+    """WorkOrder con nombre de cliente y centro resueltos, para el listado global."""
+
+    client_nombre: Optional[str] = None
+    centro_nombre: Optional[str] = None
+
+
+@api_router.get("/work-orders/accesibles", response_model=List[WorkOrderConNombres])
+async def listar_partes_accesibles(
+    estado: Optional[str] = None,
+    current_user: dict = Depends(require_approved),
+):
+    """Partes visibles para el usuario. El admin ve todos. El operario solo
+    los partes en los que figura como operario en alguna sesion. Para dar
+    acceso a un parte de un companero, el admin lo anade como operario en
+    una sesion de ese parte."""
+    query = {}
+    if estado:
+        if estado not in ESTADOS_WORK_ORDER:
+            raise HTTPException(status_code=400, detail="Estado invalido")
+        query["estado"] = estado
+
+    if current_user.get("role") != UserRole.ADMIN:
+        wo_ids = await db.work_sessions.distinct(
+            "work_order_id", {"operarios_ids": current_user["user_id"]}
+        )
+        if not wo_ids:
+            return []
+        query["id"] = {"$in": wo_ids}
+
+    partes = [doc async for doc in db.work_orders.find(query).sort("creado_en", -1)]
+
+    client_ids = list({p["client_id"] for p in partes if p.get("client_id")})
+    centro_ids = list({p["centro_id"] for p in partes if p.get("centro_id")})
+    clientes_map, centros_map = {}, {}
+    if client_ids:
+        async for c in db.clients.find({"id": {"$in": client_ids}}):
+            clientes_map[c["id"]] = c.get("nombre")
+    if centro_ids:
+        async for c in db.client_locations.find({"id": {"$in": centro_ids}}):
+            centros_map[c["id"]] = c.get("nombre")
+
+    resultado = []
+    for p in partes:
+        p = {k: v for k, v in p.items() if k != "_id"}
+        resultado.append(
+            WorkOrderConNombres(
+                **p,
+                client_nombre=clientes_map.get(p.get("client_id")) or p.get("client_libre"),
+                centro_nombre=centros_map.get(p.get("centro_id")) or p.get("centro_libre"),
+            )
+        )
+    return resultado
+
+
 @api_router.get("/work-orders/{work_order_id}", response_model=WorkOrderWithSessions)
 async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)):
     """Detalle del parte incluyendo todas sus sesiones ordenadas por fecha."""
