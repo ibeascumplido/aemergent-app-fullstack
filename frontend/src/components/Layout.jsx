@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro, ListChecks } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro, ListChecks, ClipboardList } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ const Layout = () => {
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: "Inicio", show: true, section: "personal" },
     { to: "/my-calendar", icon: Calendar, label: "Mi Calendario", show: !isFacturacion, section: "personal" },
+    { to: "/partes", icon: ClipboardList, label: "Partes", show: !isFacturacion, section: "personal" },
     { to: "/prevencion", icon: HardHat, label: "Prevención", show: !isFacturacion, section: "personal" },
     { to: "/pagos-extra", icon: Euro, label: "Pagos extra", show: !isFacturacion, section: "personal" },
     {
