@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import {
   Camera,
+  Images,
   Mic,
   Square,
   Play,
@@ -225,27 +226,19 @@ const FotoRapidaFlow = () => {
 
   if (paso === "boton") {
     return (
-      <label
-        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer p-4"
+      <button
+        type="button"
+        onClick={iniciarSesion}
+        className="flex flex-col items-center justify-center rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer p-4 text-left"
         data-testid="foto-rapida-btn"
       >
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(e) => {
-            const nuevoLote = iniciarSesion();
-            handleFotoSeleccionada(e, nuevoLote);
-          }}
-          className="hidden"
-        />
         <DashboardTileVisual
           icon={Camera}
           title="Foto rápida"
           subtitle="Captura y envía fotos al instante"
           color="azul"
         />
-      </label>
+      </button>
     );
   }
 
@@ -278,23 +271,44 @@ const FotoRapidaFlow = () => {
           </div>
         )}
 
-        <label
-          className={`flex items-center justify-center gap-2 w-full py-3 rounded-lg text-white font-medium cursor-pointer transition-colors ${
-            subiendoFoto ? "bg-red-300 cursor-wait" : "bg-red-500 hover:bg-red-600"
-          }`}
-          data-testid="tomar-otra-foto-btn"
-        >
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleFotoSeleccionada}
-            disabled={subiendoFoto}
-            className="hidden"
-          />
-          <Camera className="w-5 h-5" />
-          {subiendoFoto ? "Subiendo..." : fotos.length === 0 ? "Tomar foto" : "Tomar otra foto"}
-        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label
+            className={`flex items-center justify-center gap-2 py-3 rounded-lg text-white font-medium cursor-pointer transition-colors ${
+              subiendoFoto ? "bg-red-300 cursor-wait pointer-events-none" : "bg-red-500 hover:bg-red-600"
+            }`}
+            data-testid="tomar-otra-foto-btn"
+          >
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFotoSeleccionada}
+              disabled={subiendoFoto}
+              className="hidden"
+            />
+            <Camera className="w-5 h-5" />
+            {subiendoFoto ? "Subiendo..." : fotos.length === 0 ? "Hacer foto" : "Otra foto"}
+          </label>
+          <label
+            className={`flex items-center justify-center gap-2 py-3 rounded-lg font-medium cursor-pointer transition-colors border ${
+              subiendoFoto
+                ? "border-slate-200 text-slate-300 cursor-wait pointer-events-none"
+                : "border-slate-300 text-slate-700 bg-white hover:bg-slate-50"
+            }`}
+            data-testid="elegir-galeria-btn"
+          >
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFotoSeleccionada}
+              disabled={subiendoFoto}
+              className="hidden"
+            />
+            <Images className="w-5 h-5" />
+            Galería / archivos
+          </label>
+        </div>
 
         {fotos.length > 0 && (
           <Button
