@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import IncidenciasCliente from "@/components/IncidenciasCliente";
+import GaleriaFotos from "@/components/GaleriaFotos";
 import {
   Dialog,
   DialogContent,
@@ -647,6 +648,14 @@ const ClientDetailPage = () => {
           )}
         </CardContent>
       </Card>
+
+      {cliente?.id && (
+        <Card className="border-slate-100 shadow-sm mt-6" data-testid="fotos-cliente">
+          <CardContent className="p-6">
+            <GaleriaFotos clientId={cliente.id} titulo="Fotografías del cliente" />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Modal: Nuevo parte de trabajo */}
       <Dialog open={dialogNuevoParte} onOpenChange={setDialogNuevoParte}>
