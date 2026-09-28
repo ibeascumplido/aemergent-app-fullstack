@@ -444,7 +444,13 @@ const PlanificacionPage = () => {
       {loading ? (
         <p className="text-sm text-slate-400 text-center py-8">Cargando...</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-auto max-w-full">
+        <div
+          className="border border-slate-200 rounded-lg overflow-auto max-w-full max-h-[calc(100vh-160px)]"
+          style={{ maxHeight: "calc(100dvh - 160px)" }}
+          data-testid="rejilla-planificacion-scroll"
+        >
+          {/* Altura limitada a la pantalla: el scroll vertical ocurre DENTRO de
+              la tabla y las cabeceras (sticky top-0) se quedan fijas arriba. */}
           <table className="border-collapse text-xs min-w-max">
             <thead>
               <tr>
@@ -454,7 +460,7 @@ const PlanificacionPage = () => {
                 {columnas.map((c) => (
                   <th
                     key={c.id}
-                    className="sticky top-0 z-10 border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group"
+                    className="sticky top-0 z-[15] border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group shadow-[0_1px_0_0_#cbd5e1]"
                     style={{ backgroundColor: c.color_fondo || "#f8fafc" }}
                   >
                     <div className="flex items-center justify-center gap-1">
