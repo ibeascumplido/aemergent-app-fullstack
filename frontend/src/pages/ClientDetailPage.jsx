@@ -465,7 +465,7 @@ const ClientDetailPage = () => {
         <TabsContent value="incidencias" className="mt-0">
           <Card className="border-slate-100 shadow-sm">
             <CardContent className="p-6">
-              <IncidenciasCliente clientId={cliente.id} />
+              <IncidenciasCliente clientId={cliente.id} centros={centrosLista} />
             </CardContent>
           </Card>
         </TabsContent>
