@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   ChevronLeft,
@@ -45,11 +46,13 @@ const formatDateString = (date) =>
 
 const MyCalendarPage = () => {
   const { user, isPending } = useAuth();
+  const navigate = useNavigate();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState("week"); // "week" | "month" | "year"
   const [vacaciones, setVacaciones] = useState([]);
   const [resumen, setResumen] = useState(null);
-  const [misDestinos, setMisDestinos] = useState({}); // { fecha: [nombreDestino,...] }
+  const [misDestinos, setMisDestinos] = useState({}); // { fecha: [{nombre, nota, centroId},...] }
+  const [incidenciasPorCentro, setIncidenciasPorCentro] = useState({}); // { centroId: countAbiertas }
   const [loading, setLoading] = useState(true);
   const [markMode, setMarkMode] = useState("vacacion");
   const [galpDia, setGalpDia] = useState(null); // fecha seleccionada para ver estaciones
@@ -90,7 +93,11 @@ const MyCalendarPage = () => {
           });
           const nombre = columna?.etiqueta || a.destino_libre || "Sitio";
           if (!mapa[a.fecha]) mapa[a.fecha] = [];
-          mapa[a.fecha].push({ nombre, nota: a.nota || "" });
+          mapa[a.fecha].push({
+            nombre,
+            nota: a.nota || "",
+            centroId: a.destino_centro_id || null,
+          });
         });
       const prefijoMes = `${year}-${String(month + 1).padStart(2, "0")}-`;
       setMisDestinos((prev) => {
@@ -99,6 +106,27 @@ const MyCalendarPage = () => {
         );
         return { ...limpio, ...mapa };
       });
+
+      // Comprobar de un tirón qué centros de este mes tienen alguna
+      // incidencia abierta, para pintar el piloto rojo de aviso.
+      const centroIds = [
+        ...new Set(
+          Object.values(mapa)
+            .flat()
+            .map((d) => d.centroId)
+            .filter(Boolean)
+        ),
+      ];
+      if (centroIds.length > 0) {
+        try {
+          const resInc = await axios.get(`${API}/centros/incidencias-abiertas`, {
+            params: { centro_ids: centroIds.join(",") },
+          });
+          setIncidenciasPorCentro((prev) => ({ ...prev, ...resInc.data }));
+        } catch (err) {
+          console.error("Error comprobando incidencias de centros:", err);
+        }
+      }
     } catch (error) {
       console.error("Error fetching mis destinos:", error);
     }
@@ -371,21 +399,37 @@ const MyCalendarPage = () => {
                           </button>
                         );
                       }
+                      const tieneIncidencia = !!(dest.centroId && incidenciasPorCentro[dest.centroId]);
+                      const Contenedor = dest.centroId ? "button" : "div";
                       return (
-                        <div
+                        <Contenedor
                           key={idx}
-                          className="text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5"
+                          type={dest.centroId ? "button" : undefined}
+                          onClick={dest.centroId ? () => navigate(`/centros/${dest.centroId}`) : undefined}
+                          className={`w-full text-left text-sm text-indigo-700 bg-indigo-50 rounded-lg px-2 py-1.5 ${
+                            dest.centroId ? "hover:bg-indigo-100 transition-colors cursor-pointer" : ""
+                          }`}
+                          data-testid={`destino-dia-${dateStr}-${idx}`}
                         >
                           <div className="flex items-center gap-1.5">
                             <MapPin className="w-3.5 h-3.5 shrink-0" />
                             <span className="truncate font-medium">{nombre}</span>
+                            {tieneIncidencia && (
+                              <span
+                                className="ml-auto flex items-center gap-1 text-[11px] font-semibold text-red-700 bg-red-100 rounded-full px-2 py-0.5 shrink-0"
+                                data-testid={`incidencia-aviso-${dateStr}-${idx}`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                                Incidencia
+                              </span>
+                            )}
                           </div>
                           {nota && (
                             <p className="text-xs text-indigo-500 mt-0.5 pl-5 whitespace-pre-wrap">
                               {nota}
                             </p>
                           )}
-                        </div>
+                        </Contenedor>
                       );
                     })}
                   </div>
@@ -489,14 +533,21 @@ const MyCalendarPage = () => {
                   <div className="mt-0.5 flex flex-col items-center gap-0.5">
                     {destinosHoy.slice(0, 2).map((dest, i) => {
                       const nombre = dest.nombre || dest;
+                      const tieneIncidencia = !!(dest.centroId && incidenciasPorCentro[dest.centroId]);
                       return (
                         <span
                           key={i}
                           className="inline-flex items-center gap-0.5 text-[8px] leading-tight px-1 py-0.5 rounded bg-indigo-600 text-white max-w-full truncate"
-                          title={dest.nota ? `${nombre} — ${dest.nota}` : nombre}
+                          title={
+                            (dest.nota ? `${nombre} — ${dest.nota}` : nombre) +
+                            (tieneIncidencia ? " (incidencia abierta)" : "")
+                          }
                         >
                           <MapPin className="w-2 h-2 shrink-0" />
                           <span className="truncate">{nombre}</span>
+                          {tieneIncidencia && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+                          )}
                         </span>
                       );
                     })}

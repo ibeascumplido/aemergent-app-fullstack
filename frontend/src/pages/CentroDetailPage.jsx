@@ -137,11 +137,9 @@ const CentroDetailPage = () => {
                 <FileText className="w-3.5 h-3.5" /> Presupuestos
               </TabsTrigger>
             )}
-            {isAdmin && (
-              <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-c-incidencias">
-                <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="incidencias" className="gap-1.5" data-testid="tab-c-incidencias">
+              <AlertTriangle className="w-3.5 h-3.5" /> Incidencias
+            </TabsTrigger>
             {isAdmin && (
               <TabsTrigger value="partes" className="gap-1.5" data-testid="tab-c-partes">
                 <ClipboardList className="w-3.5 h-3.5" /> Partes
