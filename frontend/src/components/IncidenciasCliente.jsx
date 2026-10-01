@@ -1,7 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { AlertTriangle, Plus, RotateCcw, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Camera,
+  X,
+  ClipboardList,
+  CheckCircle2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,13 +44,37 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+// Convierte una lista de File (input de fotos) en data-URIs base64, que es
+// el formato que acepta el backend (igual que el resto de subidas de fotos
+// de la app). Ignora silenciosamente lo que no sea imagen.
+const leerFotosComoDataUrl = (fileList) => {
+  const archivos = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+  return Promise.all(
+    archivos.map(
+      (file) =>
+        new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result);
+          r.onerror = reject;
+          r.readAsDataURL(file);
+        })
+    )
+  );
+};
+
 /**
  * Incidencias por cliente (Fase 16): problemas/avisos abiertos. Pensado
  * para en el futuro conectarse con el correo (cualquier email
  * referenciado a este cliente se archivaria aqui automaticamente).
+ *
+ * Fase 17: se pueden adjuntar fotos al crear la incidencia (quedan
+ * archivadas tambien en la galeria de fotos del centro), y al cerrarla se
+ * elige entre dos caminos: generar un parte de trabajo (para transmitir al
+ * cliente) o un cierre interno con notas + fotos del "despues".
  */
 const IncidenciasCliente = ({ clientId, centroId, centros }) => {
   const { isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [incidencias, setIncidencias] = useState([]);
   const [loading, setLoading] = useState(true);
   const [verCerradas, setVerCerradas] = useState(false);
@@ -49,8 +83,18 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [centroElegido, setCentroElegido] = useState(""); // solo relevante si no hay centroId fijo
+  const [fotosNuevas, setFotosNuevas] = useState([]); // data-URIs, foto(s) al crear
   const [guardando, setGuardando] = useState(false);
   const [aBorrar, setABorrar] = useState(null);
+  const inputFotosRef = useRef(null);
+
+  // Cierre de incidencia: dos caminos (parte de trabajo / interno).
+  const [cerrando, setCerrando] = useState(null); // la incidencia que se esta cerrando, o null
+  const [cierrePaso, setCierrePaso] = useState("elegir"); // "elegir" | "interno"
+  const [cierreNotas, setCierreNotas] = useState("");
+  const [cierreFotos, setCierreFotos] = useState([]); // data-URIs, fotos del "despues"
+  const [procesandoCierre, setProcesandoCierre] = useState(false);
+  const inputFotosCierreRef = useRef(null);
 
   // Permite elegir centro en el dialogo solo cuando se usa a nivel de
   // cliente (sin centroId fijo) y se nos ha pasado la lista de centros.
@@ -79,7 +123,15 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
     setTitulo("");
     setDescripcion("");
     setCentroElegido("");
+    setFotosNuevas([]);
     setDialogOpen(true);
+  };
+
+  const onElegirFotosNuevas = async (e) => {
+    const nuevas = await leerFotosComoDataUrl(e.target.files);
+    e.target.value = "";
+    if (nuevas.length === 0) return;
+    setFotosNuevas((prev) => [...prev, ...nuevas].slice(0, 10));
   };
 
   const crear = async () => {
@@ -94,6 +146,7 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
         centro_id: centroId || centroElegido || null,
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
+        fotos: fotosNuevas.length > 0 ? fotosNuevas : undefined,
       });
       toast.success("Incidencia registrada");
       setDialogOpen(false);
@@ -103,17 +156,6 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
       toast.error("No se pudo crear");
     } finally {
       setGuardando(false);
-    }
-  };
-
-  const cerrar = async (id) => {
-    try {
-      await axios.put(`${API}/incidencias/${id}/cerrar`);
-      toast.success("Incidencia cerrada");
-      await cargar();
-    } catch (err) {
-      console.error("Error cerrando incidencia:", err);
-      toast.error("No se pudo cerrar");
     }
   };
 
@@ -138,6 +180,73 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
     } catch (err) {
       console.error("Error eliminando incidencia:", err);
       toast.error("No se pudo eliminar");
+    }
+  };
+
+  // --- Cierre --------------------------------------------------------
+
+  const abrirCierre = (incidencia) => {
+    setCerrando(incidencia);
+    setCierrePaso("elegir");
+    setCierreNotas("");
+    setCierreFotos([]);
+  };
+
+  const cerrarDialogoCierre = () => {
+    if (procesandoCierre) return;
+    setCerrando(null);
+  };
+
+  const elegirHacerParte = async () => {
+    if (!cerrando) return;
+    setProcesandoCierre(true);
+    try {
+      const resParte = await axios.post(`${API}/work-orders`, {
+        client_id: clientId,
+        centro_id: centroId || cerrando.centro_id || null,
+        titulo: cerrando.titulo,
+        usa_zonas: false,
+      });
+      const nuevoParteId = resParte.data.id;
+      await axios.put(`${API}/incidencias/${cerrando.id}/cerrar`, {
+        cierre_tipo: "parte",
+        work_order_id: nuevoParteId,
+      });
+      toast.success("Parte creado e incidencia cerrada");
+      setCerrando(null);
+      navigate(`/work-orders/${nuevoParteId}`);
+    } catch (err) {
+      console.error("Error creando parte desde incidencia:", err);
+      toast.error("No se pudo crear el parte");
+    } finally {
+      setProcesandoCierre(false);
+    }
+  };
+
+  const onElegirFotosCierre = async (e) => {
+    const nuevas = await leerFotosComoDataUrl(e.target.files);
+    e.target.value = "";
+    if (nuevas.length === 0) return;
+    setCierreFotos((prev) => [...prev, ...nuevas].slice(0, 10));
+  };
+
+  const guardarCierreInterno = async () => {
+    if (!cerrando) return;
+    setProcesandoCierre(true);
+    try {
+      await axios.put(`${API}/incidencias/${cerrando.id}/cerrar`, {
+        cierre_tipo: "interno",
+        cierre_notas: cierreNotas.trim(),
+        cierre_fotos: cierreFotos.length > 0 ? cierreFotos : undefined,
+      });
+      toast.success("Incidencia cerrada");
+      setCerrando(null);
+      await cargar();
+    } catch (err) {
+      console.error("Error cerrando incidencia:", err);
+      toast.error("No se pudo cerrar");
+    } finally {
+      setProcesandoCierre(false);
     }
   };
 
@@ -189,7 +298,7 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
               data-testid={`incidencia-${i.id}`}
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p
                     className={`text-sm font-medium ${
                       i.estado === "cerrada" ? "text-slate-400 line-through" : "text-slate-800"
@@ -205,15 +314,67 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
                       📍 {centroPorId(i.centro_id).nombre}
                     </p>
                   )}
+
+                  {i.fotos && i.fotos.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                      {i.fotos.map((f) => (
+                        <a key={f.id} href={f.url} target="_blank" rel="noreferrer">
+                          <img
+                            src={f.url}
+                            alt="Foto de la incidencia"
+                            className="w-12 h-12 rounded-md object-cover border border-orange-200"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+
                   <p className="text-xs text-slate-400 mt-1">
                     {i.estado === "abierta"
                       ? `Abierta por ${i.creado_por_nombre} · ${new Date(i.creado_en).toLocaleDateString("es-ES")}`
                       : `Cerrada por ${i.cerrado_por_nombre} · ${new Date(i.cerrado_en).toLocaleDateString("es-ES")}`}
                   </p>
+
+                  {i.estado === "cerrada" && i.cierre_tipo === "parte" && i.work_order_id && (
+                    <Link
+                      to={`/work-orders/${i.work_order_id}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700 mt-1.5"
+                    >
+                      <ClipboardList className="w-3.5 h-3.5" />
+                      Ver parte de trabajo
+                    </Link>
+                  )}
+
+                  {i.estado === "cerrada" && i.cierre_tipo === "interno" && (
+                    <div className="mt-1.5 rounded-lg bg-emerald-50 border border-emerald-100 px-2.5 py-2">
+                      <p className="text-xs font-medium text-emerald-700 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Cierre interno
+                      </p>
+                      {i.cierre_notas && (
+                        <p className="text-xs text-emerald-800 mt-1 whitespace-pre-wrap">
+                          {i.cierre_notas}
+                        </p>
+                      )}
+                      {i.cierre_fotos && i.cierre_fotos.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                          {i.cierre_fotos.map((f) => (
+                            <a key={f.id} href={f.url} target="_blank" rel="noreferrer">
+                              <img
+                                src={f.url}
+                                alt="Foto del después"
+                                className="w-12 h-12 rounded-md object-cover border border-emerald-200"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {i.estado === "abierta" ? (
-                    <Button size="sm" variant="outline" onClick={() => cerrar(i.id)}>
+                    <Button size="sm" variant="outline" onClick={() => abrirCierre(i)}>
                       Cerrar
                     </Button>
                   ) : (
@@ -238,12 +399,13 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
         </div>
       )}
 
+      {/* Nueva incidencia */}
       <Dialog open={dialogOpen} onOpenChange={(v) => !guardando && setDialogOpen(v)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
+        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-5 pb-0 shrink-0">
             <DialogTitle>Nueva incidencia</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3 p-5 overflow-y-auto">
             <div className="space-y-1.5">
               <Label>Título</Label>
               <Input
@@ -285,8 +447,49 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
                 </p>
               </div>
             )}
+            <div className="space-y-1.5">
+              <Label>Fotos (opcional)</Label>
+              <input
+                ref={inputFotosRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={onElegirFotosNuevas}
+                data-testid="incidencia-fotos-input"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => inputFotosRef.current?.click()}
+              >
+                <Camera className="w-3.5 h-3.5 mr-1.5" />
+                Añadir foto
+              </Button>
+              {fotosNuevas.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                  {fotosNuevas.map((src, idx) => (
+                    <div key={idx} className="relative">
+                      <img
+                        src={src}
+                        alt=""
+                        className="w-14 h-14 rounded-md object-cover border border-slate-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFotosNuevas((prev) => prev.filter((_, i2) => i2 !== idx))}
+                        className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="p-5 pt-0 shrink-0">
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={guardando}>
               Cancelar
             </Button>
@@ -299,6 +502,141 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
               {guardando ? "Creando..." : "Crear"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cierre de incidencia: elegir parte vs. interno */}
+      <Dialog open={!!cerrando} onOpenChange={(v) => !v && cerrarDialogoCierre()}>
+        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-5 pb-0 shrink-0">
+            <DialogTitle>Cerrar incidencia</DialogTitle>
+          </DialogHeader>
+
+          {cierrePaso === "elegir" ? (
+            <>
+              <div className="p-5 space-y-3">
+                <p className="text-sm text-slate-500">
+                  "{cerrando?.titulo}" — ¿cómo quieres resolverla?
+                </p>
+                <button
+                  type="button"
+                  onClick={elegirHacerParte}
+                  disabled={procesandoCierre}
+                  className="w-full text-left rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors p-3.5 flex items-start gap-3 disabled:opacity-60"
+                  data-testid="cierre-modo-parte"
+                >
+                  <ClipboardList className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-medium text-indigo-900">
+                      Hacer parte de trabajo
+                    </span>
+                    <span className="block text-xs text-indigo-600 mt-0.5">
+                      Para transmitírselo al cliente (firma, PDF, etc.). Se creará un parte
+                      abierto y te llevará directo a él.
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCierrePaso("interno")}
+                  disabled={procesandoCierre}
+                  className="w-full text-left rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors p-3.5 flex items-start gap-3 disabled:opacity-60"
+                  data-testid="cierre-modo-interno"
+                >
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-medium text-emerald-900">
+                      Cierre interno
+                    </span>
+                    <span className="block text-xs text-emerald-600 mt-0.5">
+                      Para algo visto internamente: anota qué se ha hecho y adjunta fotos del
+                      después.
+                    </span>
+                  </span>
+                </button>
+              </div>
+              <DialogFooter className="p-5 pt-0 shrink-0">
+                <Button variant="ghost" onClick={cerrarDialogoCierre} disabled={procesandoCierre}>
+                  Cancelar
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="space-y-3 p-5 overflow-y-auto">
+                <div className="space-y-1.5">
+                  <Label>¿Qué se ha hecho? (opcional)</Label>
+                  <Textarea
+                    value={cierreNotas}
+                    onChange={(e) => setCierreNotas(e.target.value)}
+                    rows={3}
+                    placeholder="Ej. Revisado el riego, cambiado el aspersor de zona 2"
+                    data-testid="cierre-notas-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Fotos del después (opcional)</Label>
+                  <input
+                    ref={inputFotosCierreRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={onElegirFotosCierre}
+                    data-testid="cierre-fotos-input"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => inputFotosCierreRef.current?.click()}
+                  >
+                    <Camera className="w-3.5 h-3.5 mr-1.5" />
+                    Añadir foto
+                  </Button>
+                  {cierreFotos.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                      {cierreFotos.map((src, idx) => (
+                        <div key={idx} className="relative">
+                          <img
+                            src={src}
+                            alt=""
+                            className="w-14 h-14 rounded-md object-cover border border-slate-200"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCierreFotos((prev) => prev.filter((_, i2) => i2 !== idx))
+                            }
+                            className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <DialogFooter className="p-5 pt-0 shrink-0">
+                <Button
+                  variant="ghost"
+                  onClick={() => setCierrePaso("elegir")}
+                  disabled={procesandoCierre}
+                >
+                  Atrás
+                </Button>
+                <Button
+                  onClick={guardarCierreInterno}
+                  disabled={procesandoCierre}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  data-testid="guardar-cierre-interno-btn"
+                >
+                  {procesandoCierre ? "Cerrando..." : "Cerrar incidencia"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
