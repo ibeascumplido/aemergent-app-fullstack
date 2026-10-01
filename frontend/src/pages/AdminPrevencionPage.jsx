@@ -87,6 +87,11 @@ const AdminPrevencionPage = () => {
   const [fitoClienteFiltro, setFitoClienteFiltro] = useState("");
   const [fitoDesde, setFitoDesde] = useState("");
   const [fitoHasta, setFitoHasta] = useState("");
+  const [fitoEditando, setFitoEditando] = useState(null);
+  const [fitoEditForm, setFitoEditForm] = useState(null);
+  const [guardandoFito, setGuardandoFito] = useState(false);
+  const [fitoABorrar, setFitoABorrar] = useState(null);
+  const [borrandoFito, setBorrandoFito] = useState(false);
   const [config, setConfig] = useState({ protocolo_baja: "", protocolo_accidente: "", mutua_nombre: "", mutua_url: "", mutua_telefono: "" });
   const [loading, setLoading] = useState(true);
 
@@ -159,6 +164,56 @@ const AdminPrevencionPage = () => {
   useEffect(() => {
     recargarFitosanitarios();
   }, [recargarFitosanitarios]);
+
+  const abrirEdicionFito = (r) => {
+    setFitoEditando(r);
+    setFitoEditForm({
+      client_nombre: r.client_nombre || "",
+      centro_nombre: r.centro_nombre || "",
+      producto: r.producto || "",
+      zona: r.zona || "",
+      fecha: r.fecha || "",
+      hora_inicio: r.hora_inicio || "",
+      hora_fin: r.hora_fin || "",
+    });
+  };
+
+  const guardarEdicionFito = async () => {
+    if (!fitoEditando || !fitoEditForm) return;
+    if (!fitoEditForm.client_nombre.trim() || !fitoEditForm.producto.trim() || !fitoEditForm.fecha.trim()) {
+      toast.error("Cliente, producto y fecha son obligatorios");
+      return;
+    }
+    setGuardandoFito(true);
+    try {
+      await axios.put(`${API}/admin/registro-fitosanitarios/${fitoEditando.id}`, fitoEditForm);
+      toast.success("Registro actualizado");
+      setFitoEditando(null);
+      setFitoEditForm(null);
+      await recargarFitosanitarios();
+    } catch (err) {
+      console.error("Error editando registro de fitosanitario:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo guardar el cambio");
+    } finally {
+      setGuardandoFito(false);
+    }
+  };
+
+  const confirmarBorrarFito = async () => {
+    if (!fitoABorrar) return;
+    setBorrandoFito(true);
+    try {
+      await axios.delete(`${API}/admin/registro-fitosanitarios/${fitoABorrar.id}`);
+      toast.success("Registro borrado");
+      setFitosanitarios((prev) => prev.filter((x) => x.id !== fitoABorrar.id));
+    } catch (err) {
+      console.error("Error borrando registro de fitosanitario:", err);
+      toast.error("No se pudo borrar el registro");
+    } finally {
+      setBorrandoFito(false);
+      setFitoABorrar(null);
+    }
+  };
 
   const confirmarBorrarJustificante = async () => {
     if (!justificanteABorrar) return;
@@ -806,6 +861,28 @@ const AdminPrevencionPage = () => {
                         />
                       </button>
                     )}
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-slate-400 hover:text-indigo-600"
+                        onClick={() => abrirEdicionFito(r)}
+                        title="Editar"
+                        data-testid={`fito-editar-${r.id}`}
+                      >
+                        <PenLine className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-slate-400 hover:text-red-600"
+                        onClick={() => setFitoABorrar(r)}
+                        title="Borrar"
+                        data-testid={`fito-borrar-${r.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -813,6 +890,129 @@ const AdminPrevencionPage = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={!!fitoEditando}
+        onOpenChange={(v) => {
+          if (!v) {
+            setFitoEditando(null);
+            setFitoEditForm(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar registro de fitosanitario</DialogTitle>
+          </DialogHeader>
+          {fitoEditForm && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Cliente</Label>
+                  <Input
+                    value={fitoEditForm.client_nombre}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, client_nombre: e.target.value }))}
+                    data-testid="fito-edit-cliente-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Centro (opcional)</Label>
+                  <Input
+                    value={fitoEditForm.centro_nombre}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, centro_nombre: e.target.value }))}
+                    data-testid="fito-edit-centro-input"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Producto</Label>
+                  <Input
+                    value={fitoEditForm.producto}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, producto: e.target.value }))}
+                    data-testid="fito-edit-producto-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Zona (opcional)</Label>
+                  <Input
+                    value={fitoEditForm.zona}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, zona: e.target.value }))}
+                    data-testid="fito-edit-zona-input"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Fecha</Label>
+                  <Input
+                    type="date"
+                    value={fitoEditForm.fecha}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, fecha: e.target.value }))}
+                    data-testid="fito-edit-fecha-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Hora inicio</Label>
+                  <Input
+                    type="time"
+                    value={fitoEditForm.hora_inicio}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, hora_inicio: e.target.value }))}
+                    data-testid="fito-edit-hora-inicio-input"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Hora fin</Label>
+                  <Input
+                    type="time"
+                    value={fitoEditForm.hora_fin}
+                    onChange={(e) => setFitoEditForm((f) => ({ ...f, hora_fin: e.target.value }))}
+                    data-testid="fito-edit-hora-fin-input"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFitoEditando(null);
+                setFitoEditForm(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={guardarEdicionFito} disabled={guardandoFito} data-testid="fito-edit-guardar-btn">
+              {guardandoFito ? "Guardando..." : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!fitoABorrar} onOpenChange={(v) => !v && setFitoABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Borrar este registro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el registro de aplicación de fitosanitario
+              {fitoABorrar?.producto ? ` (${fitoABorrar.producto})` : ""}
+              {fitoABorrar?.client_nombre ? ` de ${fitoABorrar.client_nombre}` : ""}. Esta acción no se puede
+              deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmarBorrarFito}
+              disabled={borrandoFito}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Borrar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!justificanteABorrar} onOpenChange={(v) => !v && setJustificanteABorrar(null)}>
         <AlertDialogContent>

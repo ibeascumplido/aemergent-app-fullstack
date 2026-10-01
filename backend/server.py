@@ -9303,6 +9303,76 @@ async def list_registro_fitosanitarios(
     return salida
 
 
+class RegistroFitosanitarioUpdate(BaseModel):
+    client_nombre: str
+    centro_nombre: Optional[str] = None
+    producto: str
+    zona: Optional[str] = None
+    fecha: str
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+
+
+async def _registro_fitosanitario_a_salida(registro: dict) -> RegistroFitosanitario:
+    nombre_operario = None
+    if registro.get("operario_id"):
+        u = await db.users.find_one({"user_id": registro["operario_id"]})
+        if u:
+            nombre_operario = u.get("name")
+    return RegistroFitosanitario(
+        id=registro["id"],
+        client_nombre=registro.get("client_nombre") or "?",
+        centro_nombre=registro.get("centro_nombre"),
+        producto=registro.get("producto") or "?",
+        zona=registro.get("zona"),
+        fecha=registro.get("fecha") or "",
+        hora_inicio=registro.get("hora_inicio"),
+        hora_fin=registro.get("hora_fin"),
+        foto_url=registro.get("foto_url"),
+        operario_nombre=nombre_operario,
+        creado_en=registro.get("creado_en") or datetime.now(timezone.utc),
+    )
+
+
+@api_router.put("/admin/registro-fitosanitarios/{registro_id}", response_model=RegistroFitosanitario)
+async def editar_registro_fitosanitario(
+    registro_id: str,
+    payload: RegistroFitosanitarioUpdate,
+    _: dict = Depends(require_admin),
+):
+    """Permite al admin corregir un registro oficial de fitosanitarios ya
+    guardado (cliente, centro, producto, zona, fecha u horario)."""
+    registro = await db.registro_fitosanitarios.find_one({"id": registro_id})
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    if not payload.client_nombre.strip() or not payload.producto.strip() or not payload.fecha.strip():
+        raise HTTPException(status_code=400, detail="Cliente, producto y fecha son obligatorios")
+
+    updates = {
+        "client_nombre": payload.client_nombre.strip(),
+        "centro_nombre": (payload.centro_nombre or "").strip() or None,
+        "producto": payload.producto.strip(),
+        "zona": (payload.zona or "").strip() or None,
+        "fecha": payload.fecha.strip(),
+        "hora_inicio": (payload.hora_inicio or "").strip() or None,
+        "hora_fin": (payload.hora_fin or "").strip() or None,
+    }
+    await db.registro_fitosanitarios.update_one({"id": registro_id}, {"$set": updates})
+    actualizado = await db.registro_fitosanitarios.find_one({"id": registro_id})
+    return await _registro_fitosanitario_a_salida(actualizado)
+
+
+@api_router.delete("/admin/registro-fitosanitarios/{registro_id}")
+async def borrar_registro_fitosanitario(registro_id: str, _: dict = Depends(require_admin)):
+    """Borra un registro oficial de fitosanitarios (p.ej. si se subió por
+    error o duplicado)."""
+    resultado = await db.registro_fitosanitarios.delete_one({"id": registro_id})
+    if resultado.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    return {"ok": True}
+
+
 @api_router.get("/admin/registro-fitosanitarios/pdf")
 async def descargar_pdf_fitosanitarios(
     client_id: Optional[str] = None,
