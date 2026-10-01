@@ -24,15 +24,20 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
- * Acceso rapido desde el dashboard (Fase 11): localizar un parte abierto
- * de un cliente registrado y saltar directo a firmarlo presencialmente.
- * Elige cliente -> lista de sus partes abiertos (marcando cuales ya
- * estan firmados) -> al confirmar, navega al parte con ?firmar=1 para
- * que se abra el dialogo de firma presencial automaticamente.
+ * Acceso rapido desde el dashboard (Fase 11, ampliado despues): dos tipos
+ * de firma en el mismo sitio.
+ * - "parte": localizar un parte abierto de un cliente registrado y saltar
+ *   directo a firmarlo presencialmente (firma del cliente). Elige cliente
+ *   -> lista de sus partes abiertos (marcando cuales ya estan firmados) ->
+ *   al confirmar, navega al parte con ?firmar=1 para que se abra el
+ *   dialogo de firma presencial automaticamente.
+ * - "prevencion": documentos de prevencion (PDF) pendientes de la firma
+ *   del propio operario -> navega a la pagina de firma de ese documento.
  */
 const FirmaDocumentosFlow = () => {
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [tipo, setTipo] = useState("parte");
 
   const [clientes, setClientes] = useState([]);
   const [clienteId, setClienteId] = useState("");
@@ -40,22 +45,49 @@ const FirmaDocumentosFlow = () => {
   const [partes, setPartes] = useState(null);
   const [parteSeleccionado, setParteSeleccionado] = useState("");
   const [cargandoPartes, setCargandoPartes] = useState(false);
+
+  const [documentos, setDocumentos] = useState(null);
+  const [documentoSeleccionado, setDocumentoSeleccionado] = useState("");
+  const [cargandoDocumentos, setCargandoDocumentos] = useState(false);
+
   const [continuando, setContinuando] = useState(false);
 
   useEffect(() => {
-    if (dialogOpen && clientes.length === 0) {
+    if (dialogOpen && tipo === "parte" && clientes.length === 0) {
       axios
         .get(`${API}/clients`)
         .then((res) => setClientes(res.data))
         .catch(() => setClientes([]));
     }
-  }, [dialogOpen, clientes.length]);
+  }, [dialogOpen, tipo, clientes.length]);
+
+  useEffect(() => {
+    if (dialogOpen && tipo === "prevencion" && documentos === null) {
+      setCargandoDocumentos(true);
+      axios
+        .get(`${API}/documentos-firma`, {
+          params: { categoria: "prevencion", solo_pendientes: true },
+        })
+        .then((res) => setDocumentos(res.data))
+        .catch(() => setDocumentos([]))
+        .finally(() => setCargandoDocumentos(false));
+    }
+  }, [dialogOpen, tipo, documentos]);
 
   const abrir = () => {
+    setTipo("parte");
     setClienteId("");
     setPartes(null);
     setParteSeleccionado("");
+    setDocumentos(null);
+    setDocumentoSeleccionado("");
     setDialogOpen(true);
+  };
+
+  const cambiarTipo = (nuevoTipo) => {
+    setTipo(nuevoTipo);
+    setParteSeleccionado("");
+    setDocumentoSeleccionado("");
   };
 
   const onCambiarCliente = async (id) => {
@@ -76,6 +108,16 @@ const FirmaDocumentosFlow = () => {
   };
 
   const continuar = () => {
+    if (tipo === "prevencion") {
+      if (!documentoSeleccionado) {
+        toast.error("Selecciona un documento");
+        return;
+      }
+      setContinuando(true);
+      setDialogOpen(false);
+      navigate(`/documentos-firma/${documentoSeleccionado}`);
+      return;
+    }
     if (!clienteId) {
       toast.error("Selecciona un cliente");
       return;
@@ -110,52 +152,108 @@ const FirmaDocumentosFlow = () => {
       <Dialog open={dialogOpen} onOpenChange={(v) => !continuando && setDialogOpen(v)}>
         <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
           <DialogHeader className="p-6 pb-2 shrink-0">
-            <DialogTitle>Firmar un parte</DialogTitle>
+            <DialogTitle>
+              {tipo === "prevencion" ? "Firmar un documento de prevención" : "Firmar un parte"}
+            </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 overflow-y-auto min-h-0 flex-1 px-6 py-2">
             <div className="space-y-1.5">
-              <Label>Cliente</Label>
-              <Select value={clienteId} onValueChange={onCambiarCliente}>
-                <SelectTrigger data-testid="firma-cliente-select">
-                  <SelectValue placeholder="Selecciona..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {clientes.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.nombre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>¿Qué quieres firmar?</Label>
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="firma-tipo"
+                    checked={tipo === "parte"}
+                    onChange={() => cambiarTipo("parte")}
+                    data-testid="firma-tipo-parte"
+                  />
+                  Un parte de trabajo
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="firma-tipo"
+                    checked={tipo === "prevencion"}
+                    onChange={() => cambiarTipo("prevencion")}
+                    data-testid="firma-tipo-prevencion"
+                  />
+                  Un documento de prevención
+                </label>
+              </div>
             </div>
 
-            {clienteId && (
-              <div className="space-y-1.5">
-                <Label>Parte</Label>
-                {cargandoPartes ? (
-                  <p className="text-xs text-slate-400">Buscando partes abiertos...</p>
-                ) : partes && partes.length > 0 ? (
-                  <Select value={parteSeleccionado} onValueChange={setParteSeleccionado}>
-                    <SelectTrigger data-testid="firma-parte-select">
-                      <SelectValue placeholder="Elige un parte..." />
+            {tipo === "parte" ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Cliente</Label>
+                  <Select value={clienteId} onValueChange={onCambiarCliente}>
+                    <SelectTrigger data-testid="firma-cliente-select">
+                      <SelectValue placeholder="Selecciona..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {partes.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          <span className="flex items-center gap-1.5">
-                            {p.firma_cliente && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            )}
-                            {p.titulo}
-                          </span>
+                      {clientes.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {clienteId && (
+                  <div className="space-y-1.5">
+                    <Label>Parte</Label>
+                    {cargandoPartes ? (
+                      <p className="text-xs text-slate-400">Buscando partes abiertos...</p>
+                    ) : partes && partes.length > 0 ? (
+                      <Select value={parteSeleccionado} onValueChange={setParteSeleccionado}>
+                        <SelectTrigger data-testid="firma-parte-select">
+                          <SelectValue placeholder="Elige un parte..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {partes.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              <span className="flex items-center gap-1.5">
+                                {p.firma_cliente && (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                )}
+                                {p.titulo}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        Este cliente no tiene partes abiertos.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Documento pendiente</Label>
+                {cargandoDocumentos ? (
+                  <p className="text-xs text-slate-400">Buscando documentos pendientes...</p>
+                ) : documentos && documentos.length > 0 ? (
+                  <Select value={documentoSeleccionado} onValueChange={setDocumentoSeleccionado}>
+                    <SelectTrigger data-testid="firma-documento-select">
+                      <SelectValue placeholder="Elige un documento..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {documentos.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.nombre}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 ) : (
                   <p className="text-xs text-slate-400">
-                    Este cliente no tiene partes abiertos.
+                    No tienes documentos de prevención pendientes de firmar.
                   </p>
                 )}
               </div>
@@ -168,7 +266,7 @@ const FirmaDocumentosFlow = () => {
             </Button>
             <Button
               onClick={continuar}
-              disabled={continuando || cargandoPartes}
+              disabled={continuando || cargandoPartes || cargandoDocumentos}
               className="bg-slate-800 hover:bg-slate-900 text-white"
               data-testid="continuar-firma-documentos-btn"
             >
