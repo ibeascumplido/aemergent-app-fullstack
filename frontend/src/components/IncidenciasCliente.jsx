@@ -7,6 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -32,7 +39,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
  * para en el futuro conectarse con el correo (cualquier email
  * referenciado a este cliente se archivaria aqui automaticamente).
  */
-const IncidenciasCliente = ({ clientId, centroId }) => {
+const IncidenciasCliente = ({ clientId, centroId, centros }) => {
   const { isAdmin } = useAuth();
   const [incidencias, setIncidencias] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -41,8 +48,14 @@ const IncidenciasCliente = ({ clientId, centroId }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  const [centroElegido, setCentroElegido] = useState(""); // solo relevante si no hay centroId fijo
   const [guardando, setGuardando] = useState(false);
   const [aBorrar, setABorrar] = useState(null);
+
+  // Permite elegir centro en el dialogo solo cuando se usa a nivel de
+  // cliente (sin centroId fijo) y se nos ha pasado la lista de centros.
+  const puedeElegirCentro = !centroId && Array.isArray(centros) && centros.length > 0;
+  const centroPorId = (id) => (centros || []).find((c) => c.id === id);
 
   const cargar = async () => {
     try {
@@ -65,6 +78,7 @@ const IncidenciasCliente = ({ clientId, centroId }) => {
   const abrirNueva = () => {
     setTitulo("");
     setDescripcion("");
+    setCentroElegido("");
     setDialogOpen(true);
   };
 
@@ -77,7 +91,7 @@ const IncidenciasCliente = ({ clientId, centroId }) => {
     try {
       await axios.post(`${API}/incidencias`, {
         client_id: clientId,
-        centro_id: centroId || null,
+        centro_id: centroId || centroElegido || null,
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
       });
@@ -186,6 +200,11 @@ const IncidenciasCliente = ({ clientId, centroId }) => {
                   {i.descripcion && (
                     <p className="text-xs text-slate-500 mt-0.5">{i.descripcion}</p>
                   )}
+                  {puedeElegirCentro && i.centro_id && centroPorId(i.centro_id) && (
+                    <p className="text-xs text-indigo-500 mt-0.5">
+                      📍 {centroPorId(i.centro_id).nombre}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-400 mt-1">
                     {i.estado === "abierta"
                       ? `Abierta por ${i.creado_por_nombre} · ${new Date(i.creado_en).toLocaleDateString("es-ES")}`
@@ -242,6 +261,30 @@ const IncidenciasCliente = ({ clientId, centroId }) => {
                 rows={3}
               />
             </div>
+            {puedeElegirCentro && (
+              <div className="space-y-1.5">
+                <Label>Centro (opcional)</Label>
+                <Select
+                  value={centroElegido || "none"}
+                  onValueChange={(v) => setCentroElegido(v === "none" ? "" : v)}
+                >
+                  <SelectTrigger data-testid="incidencia-centro-select">
+                    <SelectValue placeholder="Sin centro específico" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin centro específico</SelectItem>
+                    {centros.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-400">
+                  Si la eliges, la incidencia también aparecerá en la ficha de ese centro.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={guardando}>
