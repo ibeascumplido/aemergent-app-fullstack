@@ -17,6 +17,10 @@ import {
   HardHat,
   Euro,
   ListChecks,
+  Truck,
+  Stethoscope,
+  AlertTriangle,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -126,6 +130,14 @@ const NotificationBell = () => {
         return "/fotos";
       case "parte_creado":
         return data?.enlace || "/work-orders";
+      case "aviso_itv_vehiculo":
+        return data?.vehiculo_id ? `/vehiculos/${data.vehiculo_id}` : "/vehiculos";
+      case "aviso_revision_medica":
+        return data?.user_id ? `/admin/users/${data.user_id}` : "/admin/users";
+      case "incidencia_sin_resolver":
+        return data?.enlace || null;
+      case "parte_sin_actividad":
+        return data?.work_order_id ? `/work-orders/${data.work_order_id}` : "/work-orders";
       default:
         return null;
     }
@@ -178,6 +190,14 @@ const NotificationBell = () => {
         return <Camera className="w-4 h-4 text-sky-500" />;
       case "parte_creado":
         return <FileText className="w-4 h-4 text-red-500" />;
+      case "aviso_itv_vehiculo":
+        return <Truck className="w-4 h-4 text-amber-600" />;
+      case "aviso_revision_medica":
+        return <Stethoscope className="w-4 h-4 text-amber-600" />;
+      case "incidencia_sin_resolver":
+        return <AlertTriangle className="w-4 h-4 text-orange-500" />;
+      case "parte_sin_actividad":
+        return <Clock className="w-4 h-4 text-slate-500" />;
       default:
         return <AlertCircle className="w-4 h-4 text-slate-500" />;
     }

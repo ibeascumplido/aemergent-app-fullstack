@@ -41,6 +41,17 @@ except Exception:
     # la aplicacion sigue funcionando con total normalidad.
     pdfium = None
     _PYPDFIUM2_DISPONIBLE = False
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    _APSCHEDULER_DISPONIBLE = True
+except Exception:
+    # Igual que pypdfium2 arriba: si por lo que sea no esta disponible en
+    # el entorno, los avisos automaticos programados (ver mas abajo)
+    # simplemente no arrancan - el resto de la app sigue funcionando, y
+    # el admin siempre puede lanzarlos a mano desde
+    # POST /admin/avisos-automaticos/ejecutar.
+    AsyncIOScheduler = None
+    _APSCHEDULER_DISPONIBLE = False
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -117,6 +128,10 @@ class NotificationType(str, Enum):
     TAREA_CENTRO_RESUELTA = "tarea_centro_resuelta"
     FOTO_SUBIDA = "foto_subida"
     PARTE_CREADO = "parte_creado"
+    AVISO_ITV_VEHICULO = "aviso_itv_vehiculo"
+    AVISO_REVISION_MEDICA = "aviso_revision_medica"
+    INCIDENCIA_SIN_RESOLVER = "incidencia_sin_resolver"
+    PARTE_SIN_ACTIVIDAD = "parte_sin_actividad"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -9558,6 +9573,203 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# AVISOS AUTOMATICOS PARA EL ADMIN (tarea diaria programada)
+# ---------------------------------------------------------------------
+# Revisa cada dia, sin que nadie tenga que entrar a mirar: ITV/revision
+# de vehiculos, revision medica de empleados, incidencias que llevan
+# mucho tiempo abiertas y partes de trabajo abiertos sin actividad
+# reciente. Usa el sistema de notificaciones que ya existe
+# (notify_admins) - los avisos aparecen en la campana de notificaciones
+# de siempre, no hay nada nuevo que aprender.
+#
+# Para no repetir el mismo aviso cada dia, cada uno se guarda en
+# avisos_enviados con una clave que incluye la fecha relevante (fecha de
+# ITV, fecha de creacion de la incidencia, etc.): mientras esa fecha no
+# cambie, el aviso solo se envia una vez. Si se renueva la ITV o se
+# reabre la incidencia con otra fecha, se genera una clave nueva y puede
+# avisar de nuevo.
+# =====================================================================
+
+DIAS_AVISO_ITV_VEHICULO = 7
+DIAS_AVISO_REVISION_MEDICA = 7
+DIAS_AVISO_INCIDENCIA_ABIERTA = 7
+DIAS_AVISO_PARTE_SIN_ACTIVIDAD = 10
+
+
+async def _ya_avisado(clave: str) -> bool:
+    return await db.avisos_enviados.find_one({"clave": clave}) is not None
+
+
+async def _marcar_avisado(clave: str, tipo: str, entidad_id: str):
+    await db.avisos_enviados.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "clave": clave,
+            "tipo": tipo,
+            "entidad_id": entidad_id,
+            "creado_en": datetime.now(timezone.utc),
+        }
+    )
+
+
+def _dias_hasta(fecha_str: Optional[str]) -> Optional[int]:
+    """Dias que faltan hasta fecha_str (formato YYYY-MM-DD). Negativo si
+    esa fecha ya ha pasado. None si no hay fecha o es invalida."""
+    if not fecha_str:
+        return None
+    try:
+        objetivo = date.fromisoformat(fecha_str)
+    except ValueError:
+        return None
+    return (objetivo - date.today()).days
+
+
+def _describir_plazo(dias: int) -> str:
+    if dias < 0:
+        return f"venció hace {abs(dias)} día(s)"
+    if dias == 0:
+        return "es hoy"
+    return f"en {dias} día(s)"
+
+
+async def revisar_avisos_automaticos() -> int:
+    """Tarea diaria (y disponible a mano para el admin): revisa ITV y
+    revision de vehiculos, revision medica de empleados, incidencias
+    abiertas hace mucho e inactividad en partes abiertos, y notifica a
+    los admin lo que necesite atencion. Idempotente - llamarla varias
+    veces no duplica avisos ya enviados. Devuelve cuantos avisos nuevos
+    ha enviado en esta pasada."""
+    enviados = 0
+
+    # --- Vehiculos: ITV y revision proxima --------------------------
+    async for v in db.vehiculos.find({"activo": True}):
+        nombre = v.get("matricula") or "Vehículo"
+        etiqueta_marca = " ".join(filter(None, [v.get("marca"), v.get("modelo")]))
+        if etiqueta_marca:
+            nombre = f"{nombre} ({etiqueta_marca})"
+        for campo, titulo_aviso in (("fecha_itv", "ITV"), ("fecha_proxima_revision", "revisión")):
+            fecha_str = v.get(campo)
+            dias = _dias_hasta(fecha_str)
+            if dias is None or dias > DIAS_AVISO_ITV_VEHICULO:
+                continue
+            clave = f"itv_vehiculo:{v['id']}:{campo}:{fecha_str}"
+            if await _ya_avisado(clave):
+                continue
+            await notify_admins(
+                notification_type=NotificationType.AVISO_ITV_VEHICULO,
+                title=f"{titulo_aviso.capitalize()} próxima: {nombre}",
+                message=f"La {titulo_aviso} de {nombre} {_describir_plazo(dias)} ({fecha_str}).",
+                data={"vehiculo_id": v["id"]},
+            )
+            await _marcar_avisado(clave, "itv_vehiculo", v["id"])
+            enviados += 1
+
+    # --- Empleados: revision medica proxima --------------------------
+    async for u in db.users.find(
+        {"fecha_proxima_revision_medica": {"$ne": None}},
+        {
+            "_id": 0,
+            "user_id": 1,
+            "name": 1,
+            "fecha_proxima_revision_medica": 1,
+            "lugar_proxima_revision_medica": 1,
+        },
+    ):
+        fecha_str = u.get("fecha_proxima_revision_medica")
+        dias = _dias_hasta(fecha_str)
+        if dias is None or dias > DIAS_AVISO_REVISION_MEDICA:
+            continue
+        clave = f"revision_medica:{u['user_id']}:{fecha_str}"
+        if await _ya_avisado(clave):
+            continue
+        lugar = f" en {u['lugar_proxima_revision_medica']}" if u.get("lugar_proxima_revision_medica") else ""
+        nombre_emp = u.get("name", "un empleado")
+        await notify_admins(
+            notification_type=NotificationType.AVISO_REVISION_MEDICA,
+            title=f"Revisión médica próxima: {nombre_emp}",
+            message=f"La revisión médica de {nombre_emp} {_describir_plazo(dias)} ({fecha_str}){lugar}.",
+            data={"user_id": u["user_id"]},
+        )
+        await _marcar_avisado(clave, "revision_medica", u["user_id"])
+        enviados += 1
+
+    # --- Incidencias abiertas hace demasiado tiempo -------------------
+    async for inc in db.incidencias.find({"estado": "abierta"}):
+        creado_en = inc.get("creado_en")
+        if isinstance(creado_en, str):
+            try:
+                creado_en = datetime.fromisoformat(creado_en)
+            except ValueError:
+                continue
+        if not creado_en:
+            continue
+        if creado_en.tzinfo is None:
+            creado_en = creado_en.replace(tzinfo=timezone.utc)
+        dias_abierta = (datetime.now(timezone.utc) - creado_en).days
+        if dias_abierta < DIAS_AVISO_INCIDENCIA_ABIERTA:
+            continue
+        clave = f"incidencia_abierta:{inc['id']}:{creado_en.date().isoformat()}"
+        if await _ya_avisado(clave):
+            continue
+        if inc.get("centro_id"):
+            enlace = f"/centros/{inc['centro_id']}"
+        else:
+            enlace = f"/clients/{inc.get('client_id', '')}"
+        await notify_admins(
+            notification_type=NotificationType.INCIDENCIA_SIN_RESOLVER,
+            title="Incidencia sin resolver",
+            message=f"\"{inc['titulo']}\" lleva abierta {dias_abierta} días.",
+            data={"incidencia_id": inc["id"], "enlace": enlace},
+        )
+        await _marcar_avisado(clave, "incidencia_abierta", inc["id"])
+        enviados += 1
+
+    # --- Partes abiertos sin actividad reciente -----------------------
+    async for wo in db.work_orders.find({"estado": "abierto"}):
+        actualizado_en = wo.get("actualizado_en")
+        if isinstance(actualizado_en, str):
+            try:
+                actualizado_en = datetime.fromisoformat(actualizado_en)
+            except ValueError:
+                continue
+        if not actualizado_en:
+            continue
+        if actualizado_en.tzinfo is None:
+            actualizado_en = actualizado_en.replace(tzinfo=timezone.utc)
+        dias_inactivo = (datetime.now(timezone.utc) - actualizado_en).days
+        if dias_inactivo < DIAS_AVISO_PARTE_SIN_ACTIVIDAD:
+            continue
+        clave = f"parte_inactivo:{wo['id']}:{actualizado_en.isoformat()}"
+        if await _ya_avisado(clave):
+            continue
+        titulo_parte = wo.get("numero") or wo.get("titulo") or "Parte"
+        await notify_admins(
+            notification_type=NotificationType.PARTE_SIN_ACTIVIDAD,
+            title="Parte sin actividad",
+            message=f"\"{titulo_parte}\" lleva {dias_inactivo} días abierto sin cambios.",
+            data={"work_order_id": wo["id"]},
+        )
+        await _marcar_avisado(clave, "parte_inactivo", wo["id"])
+        enviados += 1
+
+    if enviados:
+        logger.info(f"Avisos automaticos: {enviados} notificaciones nuevas enviadas")
+    return enviados
+
+
+@api_router.post("/admin/avisos-automaticos/ejecutar")
+async def ejecutar_avisos_automaticos_manual(_: dict = Depends(require_admin)):
+    """Lanza la revision de avisos automaticos al momento, sin esperar a
+    la siguiente ejecucion programada - util para probar que funciona."""
+    enviados = await revisar_avisos_automaticos()
+    return {"ok": True, "avisos_enviados": enviados}
+
+
+_scheduler = None
+
+
 @app.on_event("startup")
 async def on_startup():
     # Auto-siembra de datos base al arrancar (idempotente).
@@ -9565,6 +9777,20 @@ async def on_startup():
     await seed_work_tasks_if_empty()
     await sincronizar_fotos_con_partes()
 
+    global _scheduler
+    if _APSCHEDULER_DISPONIBLE:
+        _scheduler = AsyncIOScheduler(timezone="Europe/Madrid")
+        _scheduler.add_job(revisar_avisos_automaticos, "cron", hour=8, minute=0)
+        _scheduler.start()
+        logger.info("Avisos automaticos programados: todos los dias a las 08:00 (Europe/Madrid)")
+    else:
+        logger.warning(
+            "apscheduler no disponible: los avisos automaticos solo se pueden lanzar a "
+            "mano desde POST /admin/avisos-automaticos/ejecutar"
+        )
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
     client.close()
