@@ -3872,6 +3872,35 @@ async def crear_centro(slug: str, payload: CentroCreate, _: dict = Depends(requi
     return Centro(**doc)
 
 
+@api_router.get("/centros/incidencias-abiertas")
+async def centros_con_incidencias_abiertas(
+    centro_ids: str,
+    _: dict = Depends(require_approved),
+):
+    """Dado un listado de IDs de centro separados por coma, devuelve cuantas
+    incidencias ABIERTAS tiene cada uno: {centro_id: count}. Los centros sin
+    incidencias abiertas no aparecen en la respuesta (count implicito 0).
+    Pensado para pintar un aviso (p.ej. en 'Mi Calendario') sin tener que
+    hacer una peticion por centro ni conocer de antemano el client_id de
+    cada uno.
+
+    IMPORTANTE: esta ruta debe declararse ANTES que GET /centros/{centro_id}
+    (mas abajo) para que FastAPI no la confunda con un centro_id literal
+    'incidencias-abiertas'."""
+    ids = [c.strip() for c in centro_ids.split(",") if c.strip()]
+    if not ids:
+        return {}
+    cursor = db.incidencias.find(
+        {"centro_id": {"$in": ids}, "estado": "abierta"}, {"_id": 0, "centro_id": 1}
+    )
+    conteo: Dict[str, int] = {}
+    async for doc in cursor:
+        cid = doc.get("centro_id")
+        if cid:
+            conteo[cid] = conteo.get(cid, 0) + 1
+    return conteo
+
+
 @api_router.get("/centros/{centro_id}", response_model=Centro)
 async def obtener_centro(centro_id: str, _: dict = Depends(require_approved)):
     doc = await db.client_locations.find_one({"id": centro_id})
