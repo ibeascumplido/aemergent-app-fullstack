@@ -114,8 +114,8 @@ const PrevencionPage = () => {
         axios.get(`${API}/justificantes-medicos`, { params: { mias: true } }),
       ]);
       setAvisos(avisosRes.data);
-      setDocumentos(docsRes.data.filter((d) => d.firmado && d.firmado_por === user?.user_id));
-      setDocumentosPendientes(docsRes.data.filter((d) => !d.firmado));
+      setDocumentos(docsRes.data.filter((d) => d.firmado_por_mi));
+      setDocumentosPendientes(docsRes.data.filter((d) => !d.firmado_por_mi));
       setConfig(configRes.data);
       setSolicitudesEpi(epiRes.data);
       setJustificantes(justRes.data);
@@ -388,7 +388,7 @@ const PrevencionPage = () => {
               {documentos.map((d) => (
                 <a
                   key={d.id}
-                  href={d.pdf_firmado_url || d.pdf_url}
+                  href={d.pdf_firmado_url_mio || d.pdf_url}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center justify-between py-2.5 hover:bg-slate-50 -mx-2 px-2 rounded transition-colors"
@@ -398,8 +398,8 @@ const PrevencionPage = () => {
                     <p className="text-sm font-medium text-slate-800">{d.nombre}</p>
                     <p className="text-xs text-slate-400">
                       Firmado el{" "}
-                      {d.firmado_en
-                        ? new Date(d.firmado_en).toLocaleDateString("es-ES")
+                      {d.mi_firmado_en
+                        ? new Date(d.mi_firmado_en).toLocaleDateString("es-ES")
                         : "-"}
                     </p>
                   </div>

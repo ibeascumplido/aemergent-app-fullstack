@@ -81,6 +81,9 @@ const AdminPrevencionPage = () => {
   const [justificantes, setJustificantes] = useState([]);
   const [justificanteABorrar, setJustificanteABorrar] = useState(null);
   const [documentos, setDocumentos] = useState([]);
+  const [operarios, setOperarios] = useState([]);
+  const [docParaTodos, setDocParaTodos] = useState(true);
+  const [docDestinatariosIds, setDocDestinatariosIds] = useState([]);
   const [fitosanitarios, setFitosanitarios] = useState([]);
   const [fotoFitoAmpliada, setFotoFitoAmpliada] = useState(null);
   const [fitoClientes, setFitoClientes] = useState([]);
@@ -147,6 +150,20 @@ const AdminPrevencionPage = () => {
       .then((res) => setFitoClientes(res.data || []))
       .catch(() => {});
   }, []);
+
+  // Operarios para elegir a quién va dirigido un documento a firmar
+  useEffect(() => {
+    axios
+      .get(`${API}/users/operarios`)
+      .then((res) => setOperarios(res.data || []))
+      .catch(() => {});
+  }, []);
+
+  const toggleDocDestinatario = (userId) => {
+    setDocDestinatariosIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
 
   const recargarFitosanitarios = useCallback(async () => {
     try {
@@ -330,6 +347,10 @@ const AdminPrevencionPage = () => {
       toast.error("Ponle antes un nombre al documento");
       return;
     }
+    if (!docParaTodos && docDestinatariosIds.length === 0) {
+      toast.error("Elige a quién va dirigido el documento, o marca \"Todos los operarios\"");
+      return;
+    }
     setSubiendoDoc(true);
     const reader = new FileReader();
     reader.onload = async () => {
@@ -338,9 +359,13 @@ const AdminPrevencionPage = () => {
           nombre: nombreDoc.trim(),
           pdf: reader.result,
           categoria: "prevencion",
+          para_todos: docParaTodos,
+          destinatarios_ids: docParaTodos ? [] : docDestinatariosIds,
         });
         toast.success("Documento subido, ya está disponible para firmar");
         setNombreDoc("");
+        setDocParaTodos(true);
+        setDocDestinatariosIds([]);
         await cargar();
       } catch (err) {
         console.error("Error subiendo documento:", err);
@@ -528,8 +553,8 @@ const AdminPrevencionPage = () => {
             <FileText className="w-3.5 h-3.5" />
             Documentos de prevención
           </p>
-          <div className="flex items-end gap-2 flex-wrap">
-            <div className="space-y-1.5 flex-1 min-w-[200px]">
+          <div className="space-y-3">
+            <div className="space-y-1.5">
               <Label>Nombre del documento</Label>
               <Input
                 value={nombreDoc}
@@ -538,8 +563,61 @@ const AdminPrevencionPage = () => {
                 data-testid="nombre-documento-input"
               />
             </div>
+
+            <div className="space-y-1.5">
+              <Label>¿Quién tiene que firmarlo?</Label>
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="doc-destino"
+                    checked={docParaTodos}
+                    onChange={() => setDocParaTodos(true)}
+                    data-testid="doc-destino-todos"
+                  />
+                  Todos los operarios
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="doc-destino"
+                    checked={!docParaTodos}
+                    onChange={() => setDocParaTodos(false)}
+                    data-testid="doc-destino-elegir"
+                  />
+                  Elegir destinatarios
+                </label>
+              </div>
+              {!docParaTodos && (
+                <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg border border-slate-100 bg-slate-50 max-h-36 overflow-y-auto">
+                  {operarios.length === 0 ? (
+                    <p className="text-xs text-slate-400">No hay operarios disponibles.</p>
+                  ) : (
+                    operarios.map((o) => {
+                      const activo = docDestinatariosIds.includes(o.user_id);
+                      return (
+                        <button
+                          key={o.user_id}
+                          type="button"
+                          onClick={() => toggleDocDestinatario(o.user_id)}
+                          className={`text-xs px-2.5 py-1.5 rounded-full border transition-colors ${
+                            activo
+                              ? "bg-indigo-600 border-indigo-600 text-white"
+                              : "bg-white border-slate-200 text-slate-600 hover:border-indigo-300"
+                          }`}
+                          data-testid={`doc-destinatario-${o.user_id}`}
+                        >
+                          {o.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+
             <label
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed cursor-pointer transition-colors shrink-0 ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed cursor-pointer transition-colors w-fit ${
                 subiendoDoc
                   ? "opacity-60 border-slate-200"
                   : "border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50"
@@ -572,21 +650,25 @@ const AdminPrevencionPage = () => {
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{d.nombre}</p>
-                    {d.firmado ? (
-                      <p className="text-xs text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        Firmado por {d.firmado_por_nombre}
+                    <p className="text-xs text-slate-400 truncate">
+                      Para: {d.para_todos ? "todos los operarios" : d.destinatarios_nombres?.join(", ") || "-"}
+                    </p>
+                    {d.firmas && d.firmas.length > 0 && (
+                      <p className="text-xs text-green-600 flex items-center gap-1 truncate">
+                        <CheckCircle className="w-3 h-3 shrink-0" />
+                        Firmado por {d.firmas.map((f) => f.nombre).join(", ")}
                       </p>
-                    ) : (
-                      <p className="text-xs text-amber-600 flex items-center gap-1">
-                        <PenLine className="w-3 h-3" />
-                        Pendiente de firma
+                    )}
+                    {d.pendientes_nombres && d.pendientes_nombres.length > 0 && (
+                      <p className="text-xs text-amber-600 flex items-center gap-1 truncate">
+                        <PenLine className="w-3 h-3 shrink-0" />
+                        Pendiente: {d.pendientes_nombres.join(", ")}
                       </p>
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <a
-                      href={d.pdf_firmado_url || d.pdf_url}
+                      href={d.pdf_url}
                       target="_blank"
                       rel="noreferrer"
                       className="p-2 text-slate-400 hover:text-indigo-600"
@@ -1134,8 +1216,8 @@ const AdminPrevencionPage = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar este documento?</AlertDialogTitle>
             <AlertDialogDescription>
-              {docABorrar?.firmado
-                ? "Este documento ya está firmado. Al eliminarlo se perderá también la firma."
+              {docABorrar?.firmas?.length > 0
+                ? "Este documento ya tiene firmas. Al eliminarlo se perderán también."
                 : "Esta acción no se puede deshacer."}
             </AlertDialogDescription>
           </AlertDialogHeader>

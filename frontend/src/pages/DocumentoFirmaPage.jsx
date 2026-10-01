@@ -30,12 +30,12 @@ const DocumentoFirmaPage = () => {
     try {
       const res = await axios.get(`${API}/documentos-firma/${docId}`);
       setDocumento(res.data);
-      if (res.data.firmado) {
-        setPagina(res.data.firma_pagina || 0);
+      if (res.data.firmado_por_mi) {
+        setPagina(res.data.mi_firma_pagina || 0);
       }
     } catch (err) {
       console.error("Error cargando documento:", err);
-      toast.error("No se pudo cargar el documento");
+      toast.error(err?.response?.data?.detail || "No se pudo cargar el documento");
     } finally {
       setLoading(false);
     }
@@ -81,7 +81,7 @@ const DocumentoFirmaPage = () => {
   }, []);
 
   const tocarImagen = (e) => {
-    if (documento?.firmado) return;
+    if (documento?.firmado_por_mi) return;
     const rect = imgRef.current.getBoundingClientRect();
     const x_frac = (e.clientX - rect.left) / rect.width;
     const y_frac = (e.clientY - rect.top) / rect.height;
@@ -145,10 +145,10 @@ const DocumentoFirmaPage = () => {
 
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h1 className="text-xl font-bold text-slate-900 tracking-tight">{documento.nombre}</h1>
-        {documento.firmado ? (
+        {documento.firmado_por_mi ? (
           <span className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-full bg-green-50 text-green-700">
             <CheckCircle className="w-4 h-4" />
-            Firmado por {documento.firmado_por_nombre}
+            Ya has firmado este documento
           </span>
         ) : (
           <span className="text-sm text-slate-500">
@@ -194,10 +194,10 @@ const DocumentoFirmaPage = () => {
                     src={imagenUrl}
                     alt={`Página ${pagina + 1}`}
                     onClick={tocarImagen}
-                    className={`max-w-full ${documento.firmado ? "" : "cursor-crosshair"}`}
+                    className={`max-w-full ${documento.firmado_por_mi ? "" : "cursor-crosshair"}`}
                     data-testid="pagina-documento-img"
                   />
-                  {punto && !documento.firmado && (
+                  {punto && !documento.firmado_por_mi && (
                     <div
                       className="absolute w-6 h-6 -ml-3 -mt-3 rounded-full bg-indigo-500/30 border-2 border-indigo-600 pointer-events-none flex items-center justify-center"
                       style={{ left: `${punto.x_frac * 100}%`, top: `${punto.y_frac * 100}%` }}
@@ -213,7 +213,7 @@ const DocumentoFirmaPage = () => {
         </CardContent>
       </Card>
 
-      {!documento.firmado && (
+      {!documento.firmado_por_mi && (
         <Card className="border-slate-100 shadow-sm">
           <CardContent className="p-4 space-y-3">
             <p className="text-sm font-medium text-slate-700">Tu firma</p>

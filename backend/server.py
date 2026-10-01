@@ -2040,6 +2040,20 @@ class DocumentoFirmaCreate(BaseModel):
     categoria: Optional[str] = Field(
         None, max_length=50, description="Ej. 'prevencion' para agrupar en ese apartado"
     )
+    para_todos: bool = Field(
+        True, description="Si es True, el documento va dirigido a todos los operarios aprobados"
+    )
+    destinatarios_ids: List[str] = Field(
+        default_factory=list,
+        description="user_id de los destinatarios concretos, si para_todos es False",
+    )
+
+
+class FirmaInfo(BaseModel):
+    user_id: str
+    nombre: str
+    firmado_en: datetime
+    pdf_firmado_url: Optional[str] = None
 
 
 class DocumentoFirma(BaseModel):
@@ -2049,16 +2063,19 @@ class DocumentoFirma(BaseModel):
     pdf_url: str
     pdf_public_id: str
     num_paginas: int
-    firmado: bool = False
-    firma_pagina: Optional[int] = None
-    firmado_por: Optional[str] = None
-    firmado_por_nombre: Optional[str] = None
-    firmado_en: Optional[datetime] = None
-    pdf_firmado_url: Optional[str] = None
-    pdf_firmado_public_id: Optional[str] = None
+    para_todos: bool = True
+    destinatarios_ids: List[str] = Field(default_factory=list)
+    destinatarios_nombres: List[str] = Field(default_factory=list)
+    firmas: List[FirmaInfo] = Field(default_factory=list)
+    pendientes_nombres: List[str] = Field(default_factory=list)
     creado_por: str
     creado_por_nombre: str
     creado_en: datetime
+    # Contexto del usuario que consulta - se calcula al leer, no se guarda.
+    firmado_por_mi: bool = False
+    mi_firma_pagina: Optional[int] = None
+    mi_firmado_en: Optional[datetime] = None
+    pdf_firmado_url_mio: Optional[str] = None
 
 
 class FirmarDocumentoPayload(BaseModel):
@@ -2073,12 +2090,105 @@ class FirmarDocumentoPayload(BaseModel):
     nombre_firmante: str = Field(..., min_length=1, max_length=200)
 
 
+async def _todos_operarios_nombres() -> dict:
+    """user_id -> nombre de todos los operarios aprobados (incluye admin),
+    para resolver 'para todos' y saber quien falta por firmar."""
+    salida = {}
+    async for u in db.users.find(
+        {"role": {"$in": [UserRole.USER, UserRole.ADMIN]}, "status": UserStatus.APPROVED},
+        {"_id": 0, "user_id": 1, "name": 1},
+    ):
+        salida[u["user_id"]] = u.get("name") or "?"
+    return salida
+
+
+def _firmas_de_documento(doc: dict) -> List[dict]:
+    """Lista de firmas de un documento. Los documentos creados antes de
+    poder elegir destinatarios guardaban una unica firma en campos sueltos
+    (firmado/firmado_por/firmado_en/...) - aqui se adapta esa firma antigua
+    para que siga apareciendo junto a las nuevas."""
+    firmas = list(doc.get("firmas") or [])
+    ids_presentes = {f.get("user_id") for f in firmas}
+    if doc.get("firmado") and doc.get("firmado_por") not in ids_presentes:
+        firmas.append(
+            {
+                "user_id": doc.get("firmado_por"),
+                "nombre": doc.get("firmado_por_nombre") or "?",
+                "firmado_en": doc.get("firmado_en") or doc.get("creado_en") or datetime.now(timezone.utc),
+                "pagina": doc.get("firma_pagina"),
+                "pdf_firmado_url": doc.get("pdf_firmado_url"),
+            }
+        )
+    return firmas
+
+
+def _documento_aplica_a(doc: dict, user_id: str) -> bool:
+    if doc.get("para_todos", True):  # los documentos antiguos no tenian destinatarios -> todos
+        return True
+    return user_id in (doc.get("destinatarios_ids") or [])
+
+
+def _documento_firma_a_salida(
+    doc: dict, nombres_operarios: dict, current_user_id: Optional[str] = None
+) -> DocumentoFirma:
+    para_todos = doc.get("para_todos", True)
+    destinatarios_ids = list(doc.get("destinatarios_ids") or [])
+    firmas = _firmas_de_documento(doc)
+    firmantes_ids = {f.get("user_id") for f in firmas if f.get("user_id")}
+
+    ids_a_resolver = list(nombres_operarios.keys()) if para_todos else destinatarios_ids
+    destinatarios_nombres = (
+        [] if para_todos else [nombres_operarios.get(uid, "?") for uid in ids_a_resolver]
+    )
+    pendientes_nombres = [
+        nombres_operarios.get(uid, "?") for uid in ids_a_resolver if uid not in firmantes_ids
+    ]
+
+    mi_firma = None
+    if current_user_id:
+        mi_firma = next((f for f in firmas if f.get("user_id") == current_user_id), None)
+
+    return DocumentoFirma(
+        id=doc["id"],
+        nombre=doc["nombre"],
+        categoria=doc.get("categoria"),
+        pdf_url=doc["pdf_url"],
+        pdf_public_id=doc.get("pdf_public_id") or "",
+        num_paginas=doc.get("num_paginas") or 0,
+        para_todos=para_todos,
+        destinatarios_ids=destinatarios_ids,
+        destinatarios_nombres=destinatarios_nombres,
+        firmas=[
+            FirmaInfo(
+                user_id=f.get("user_id") or "",
+                nombre=f.get("nombre") or "?",
+                firmado_en=f.get("firmado_en") or doc.get("creado_en") or datetime.now(timezone.utc),
+                pdf_firmado_url=f.get("pdf_firmado_url"),
+            )
+            for f in firmas
+        ],
+        pendientes_nombres=pendientes_nombres,
+        creado_por=doc["creado_por"],
+        creado_por_nombre=doc.get("creado_por_nombre") or "?",
+        creado_en=doc.get("creado_en") or datetime.now(timezone.utc),
+        firmado_por_mi=bool(mi_firma),
+        mi_firma_pagina=(mi_firma.get("pagina") if mi_firma else None),
+        mi_firmado_en=(mi_firma.get("firmado_en") if mi_firma else None),
+        pdf_firmado_url_mio=(mi_firma.get("pdf_firmado_url") if mi_firma else None),
+    )
+
+
 @api_router.post("/documentos-firma", response_model=DocumentoFirma)
 async def crear_documento_firma(
     payload: DocumentoFirmaCreate, current_user: dict = Depends(require_admin)
 ):
     if not _es_pdf_base64(payload.pdf):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
+    if not payload.para_todos and not payload.destinatarios_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Elige a quien va dirigido el documento, o marca 'Todos los operarios'",
+        )
 
     try:
         _, datos_b64 = payload.pdf.split(",", 1)
@@ -2098,42 +2208,59 @@ async def crear_documento_firma(
         "pdf_url": url,
         "pdf_public_id": public_id,
         "num_paginas": num_paginas,
-        "firmado": False,
-        "firma_pagina": None,
-        "firmado_por": None,
-        "firmado_por_nombre": None,
-        "firmado_en": None,
-        "pdf_firmado_url": None,
-        "pdf_firmado_public_id": None,
+        "para_todos": payload.para_todos,
+        "destinatarios_ids": [] if payload.para_todos else payload.destinatarios_ids,
+        "firmas": [],
         "creado_por": current_user["user_id"],
         "creado_por_nombre": usuario["name"] if usuario else "?",
         "creado_en": now,
     }
     await db.documentos_firma.insert_one(doc)
-    return DocumentoFirma(**doc)
+    nombres_operarios = await _todos_operarios_nombres()
+    return _documento_firma_a_salida(doc, nombres_operarios, current_user["user_id"])
 
 
 @api_router.get("/documentos-firma", response_model=List[DocumentoFirma])
 async def list_documentos_firma(
     solo_pendientes: bool = False,
     categoria: Optional[str] = None,
-    _: dict = Depends(require_approved),
+    current_user: dict = Depends(require_approved),
 ):
     query = {}
-    if solo_pendientes:
-        query["firmado"] = False
     if categoria:
         query["categoria"] = categoria
     cursor = db.documentos_firma.find(query).sort("creado_en", -1)
-    return [DocumentoFirma(**d) async for d in cursor]
+    docs = [d async for d in cursor]
+
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    user_id = current_user["user_id"]
+    nombres_operarios = await _todos_operarios_nombres()
+
+    salida = []
+    for d in docs:
+        if not es_admin and not _documento_aplica_a(d, user_id):
+            continue  # este documento no va dirigido a este usuario
+        item = _documento_firma_a_salida(d, nombres_operarios, user_id)
+        if solo_pendientes:
+            if es_admin:
+                if not item.pendientes_nombres:
+                    continue
+            elif item.firmado_por_mi:
+                continue
+        salida.append(item)
+    return salida
 
 
 @api_router.get("/documentos-firma/{doc_id}", response_model=DocumentoFirma)
-async def obtener_documento_firma(doc_id: str, _: dict = Depends(require_approved)):
+async def obtener_documento_firma(doc_id: str, current_user: dict = Depends(require_approved)):
     doc = await db.documentos_firma.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    return DocumentoFirma(**doc)
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    if not es_admin and not _documento_aplica_a(doc, current_user["user_id"]):
+        raise HTTPException(status_code=403, detail="Este documento no está dirigido a ti")
+    nombres_operarios = await _todos_operarios_nombres()
+    return _documento_firma_a_salida(doc, nombres_operarios, current_user["user_id"])
 
 
 async def _descargar_bytes(url: str) -> bytes:
@@ -2145,7 +2272,7 @@ async def _descargar_bytes(url: str) -> bytes:
 
 @api_router.get("/documentos-firma/{doc_id}/pagina/{pagina}")
 async def obtener_pagina_documento(
-    doc_id: str, pagina: int, _: dict = Depends(require_approved)
+    doc_id: str, pagina: int, current_user: dict = Depends(require_approved)
 ):
     """Renderiza una pagina del PDF como PNG, para que el frontend la
     muestre y el usuario pueda tocar donde quiere colocar la firma."""
@@ -2157,6 +2284,9 @@ async def obtener_pagina_documento(
     doc = await db.documentos_firma.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    if not es_admin and not _documento_aplica_a(doc, current_user["user_id"]):
+        raise HTTPException(status_code=403, detail="Este documento no está dirigido a ti")
     if pagina < 0 or pagina >= doc["num_paginas"]:
         raise HTTPException(status_code=400, detail="Numero de pagina invalido")
 
@@ -2190,8 +2320,11 @@ async def firmar_documento(
     doc = await db.documentos_firma.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    if doc["firmado"]:
-        raise HTTPException(status_code=400, detail="Este documento ya esta firmado")
+    es_admin = current_user.get("role") == UserRole.ADMIN
+    if not es_admin and not _documento_aplica_a(doc, current_user["user_id"]):
+        raise HTTPException(status_code=403, detail="Este documento no está dirigido a ti")
+    if any(f.get("user_id") == current_user["user_id"] for f in _firmas_de_documento(doc)):
+        raise HTTPException(status_code=400, detail="Ya has firmado este documento")
     if payload.pagina < 0 or payload.pagina >= doc["num_paginas"]:
         raise HTTPException(status_code=400, detail="Numero de pagina invalido")
     if not _es_logo_base64(payload.firma):
@@ -2260,23 +2393,21 @@ async def firmar_documento(
 
     usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
     now = datetime.now(timezone.utc)
+    nueva_firma = {
+        "user_id": current_user["user_id"],
+        "nombre": (usuario["name"] if usuario else None) or payload.nombre_firmante.strip(),
+        "firmado_en": now,
+        "pagina": payload.pagina,
+        "pdf_firmado_url": url_firmado,
+        "pdf_firmado_public_id": public_id_firmado,
+    }
     await db.documentos_firma.update_one(
         {"id": doc_id},
-        {
-            "$set": {
-                "firmado": True,
-                "firma_pagina": payload.pagina,
-                "firmado_por": current_user["user_id"],
-                "firmado_por_nombre": (usuario["name"] if usuario else None)
-                or payload.nombre_firmante.strip(),
-                "firmado_en": now,
-                "pdf_firmado_url": url_firmado,
-                "pdf_firmado_public_id": public_id_firmado,
-            }
-        },
+        {"$push": {"firmas": nueva_firma}},
     )
     doc = await db.documentos_firma.find_one({"id": doc_id})
-    return DocumentoFirma(**doc)
+    nombres_operarios = await _todos_operarios_nombres()
+    return _documento_firma_a_salida(doc, nombres_operarios, current_user["user_id"])
 
 
 @api_router.delete("/documentos-firma/{doc_id}")
@@ -2285,7 +2416,11 @@ async def eliminar_documento_firma(doc_id: str, _: dict = Depends(require_admin)
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     await _borrar_pdf_cloudinary(doc.get("pdf_public_id"))
+    # Documentos antiguos (una sola firma en campos sueltos):
     await _borrar_pdf_cloudinary(doc.get("pdf_firmado_public_id"))
+    # Una copia del PDF firmada por cada destinatario:
+    for f in doc.get("firmas") or []:
+        await _borrar_pdf_cloudinary(f.get("pdf_firmado_public_id"))
     await db.documentos_firma.delete_one({"id": doc_id})
     return {"ok": True}
 
