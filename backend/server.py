@@ -5967,6 +5967,14 @@ async def delete_work_order(
     if count > 0:
         raise HTTPException(status_code=400, detail="El parte tiene sesiones registradas")
     await db.work_orders.delete_one({"id": work_order_id})
+    # Las fotos que se hubieran etiquetado directamente a este parte (p.ej.
+    # desde la camara rapida, sin pasar por una sesion) se mandan a la
+    # papelera, para que no se queden huerfanas en el archivo de fotos del
+    # cliente/centro sin que el admin pueda borrarlas desde ahi.
+    await db.fotos.update_many(
+        {"work_order_id": work_order_id, "borrada": {"$ne": True}},
+        {"$set": {"borrada": True, "borrada_en": datetime.now(timezone.utc)}},
+    )
     return {"ok": True}
 
 

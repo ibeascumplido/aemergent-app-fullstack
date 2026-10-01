@@ -196,7 +196,7 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
           )}
         </div>
       </button>
-      {isAdmin && !modoArchivo && (
+      {isAdmin && (
         <button
           type="button"
           onClick={(e) => eliminarFoto(e, f.id)}
