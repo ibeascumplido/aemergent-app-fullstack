@@ -3292,6 +3292,11 @@ class Foto(BaseModel):
     client_id: Optional[str] = None
     centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
+    incidencia_id: Optional[str] = Field(
+        None, description="Si la foto se adjunto al crear o cerrar una incidencia, "
+        "el id de esa incidencia (ademas de quedar archivada en client_id/centro_id "
+        "como cualquier otra foto del centro)."
+    )
     creado_en: datetime
     clasificado_en: Optional[datetime] = None
 
@@ -4622,6 +4627,28 @@ class IncidenciaCreate(BaseModel):
     centro_id: Optional[str] = None
     titulo: str = Field(..., min_length=1, max_length=200)
     descripcion: Optional[str] = Field("", max_length=2000)
+    fotos: Optional[List[str]] = Field(
+        None, description="Fotos adjuntas al crear la incidencia (data-URI base64, "
+        "max 10). Quedan archivadas tambien en la galeria de fotos del centro."
+    )
+
+
+class IncidenciaCerrarPayload(BaseModel):
+    """Cuerpo opcional al cerrar una incidencia (Fase: cierre con parte o
+    interno). Si se omite por completo (PUT sin body, como hacia el
+    frontend anterior), el cierre se comporta igual que antes: solo
+    estado/cerrado_por/cerrado_en."""
+
+    cierre_tipo: Optional[str] = Field(None, pattern=r"^(parte|interno)$")
+    cierre_notas: Optional[str] = Field(None, max_length=2000)
+    cierre_fotos: Optional[List[str]] = Field(
+        None, description="Fotos del 'despues' (data-URI base64, max 10) - solo "
+        "tiene sentido con cierre_tipo='interno'."
+    )
+    work_order_id: Optional[str] = Field(
+        None, description="Parte de trabajo ya creado que resuelve esta incidencia - "
+        "solo tiene sentido con cierre_tipo='parte'."
+    )
 
 
 class Incidencia(BaseModel):
@@ -4636,6 +4663,64 @@ class Incidencia(BaseModel):
     creado_en: datetime
     cerrado_por_nombre: Optional[str] = None
     cerrado_en: Optional[datetime] = None
+    fotos: List[Dict[str, str]] = Field(
+        default_factory=list, description="Fotos adjuntadas al crear la incidencia: [{id, url}]."
+    )
+    cierre_tipo: Optional[str] = None  # parte | interno
+    cierre_notas: Optional[str] = None
+    cierre_fotos: List[Dict[str, str]] = Field(
+        default_factory=list, description="Fotos del 'despues' adjuntadas en un cierre interno."
+    )
+    work_order_id: Optional[str] = Field(
+        None, description="Parte de trabajo vinculado si el cierre fue de tipo 'parte'."
+    )
+
+
+async def _subir_fotos_incidencia(
+    fotos_base64: List[str],
+    *,
+    operario_id: str,
+    client_id: Optional[str],
+    centro_id: Optional[str],
+    incidencia_id: str,
+    antes_despues: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Sube cada foto (data-URI base64) a Cloudinary y la archiva en
+    db.fotos con client_id/centro_id, para que aparezca automaticamente en
+    la galeria de fotos del centro ademas de quedar ligada a la
+    incidencia. Devuelve [{id, url}, ...] para denormalizar en la propia
+    incidencia (evita una consulta extra al mostrarla)."""
+    if len(fotos_base64) > 10:
+        raise HTTPException(status_code=400, detail="Maximo 10 fotos por envio")
+    now = datetime.now(timezone.utc)
+    guardadas: List[Dict[str, str]] = []
+    for img in fotos_base64:
+        if not _es_logo_base64(img):
+            continue
+        url, public_id = await _subir_logo_cloudinary(img)
+        foto_id = str(uuid.uuid4())
+        await db.fotos.insert_one(
+            {
+                "id": foto_id,
+                "operario_id": operario_id,
+                "url": url,
+                "public_id": public_id,
+                "lote_id": None,
+                "antes_despues": antes_despues,
+                "fecha": None,
+                "audio_url": None,
+                "audio_public_id": None,
+                "anotacion": None,
+                "client_id": client_id,
+                "centro_id": centro_id,
+                "work_order_id": None,
+                "incidencia_id": incidencia_id,
+                "creado_en": now,
+                "clasificado_en": now if client_id else None,
+            }
+        )
+        guardadas.append({"id": foto_id, "url": url})
+    return guardadas
 
 
 @api_router.get("/incidencias", response_model=List[Incidencia])
@@ -4663,8 +4748,20 @@ async def crear_incidencia(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
     now = datetime.now(timezone.utc)
+    incidencia_id = str(uuid.uuid4())
+
+    fotos_guardadas: List[Dict[str, str]] = []
+    if payload.fotos:
+        fotos_guardadas = await _subir_fotos_incidencia(
+            payload.fotos,
+            operario_id=current_user["user_id"],
+            client_id=payload.client_id,
+            centro_id=payload.centro_id,
+            incidencia_id=incidencia_id,
+        )
+
     doc = {
-        "id": str(uuid.uuid4()),
+        "id": incidencia_id,
         "client_id": payload.client_id,
         "centro_id": payload.centro_id,
         "titulo": payload.titulo.strip(),
@@ -4675,27 +4772,48 @@ async def crear_incidencia(
         "creado_en": now,
         "cerrado_por_nombre": None,
         "cerrado_en": None,
+        "fotos": fotos_guardadas,
+        "cierre_tipo": None,
+        "cierre_notas": None,
+        "cierre_fotos": [],
+        "work_order_id": None,
     }
     await db.incidencias.insert_one(doc)
     return Incidencia(**doc)
 
 
 @api_router.put("/incidencias/{incidencia_id}/cerrar", response_model=Incidencia)
-async def cerrar_incidencia(incidencia_id: str, current_user: dict = Depends(require_approved)):
+async def cerrar_incidencia(
+    incidencia_id: str,
+    payload: Optional[IncidenciaCerrarPayload] = None,
+    current_user: dict = Depends(require_approved),
+):
     doc = await db.incidencias.find_one({"id": incidencia_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Incidencia no encontrada")
     usuario = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
-    await db.incidencias.update_one(
-        {"id": incidencia_id},
-        {
-            "$set": {
-                "estado": "cerrada",
-                "cerrado_por_nombre": usuario["name"] if usuario else "?",
-                "cerrado_en": datetime.now(timezone.utc),
-            }
-        },
-    )
+    updates: Dict = {
+        "estado": "cerrada",
+        "cerrado_por_nombre": usuario["name"] if usuario else "?",
+        "cerrado_en": datetime.now(timezone.utc),
+    }
+    if payload:
+        if payload.cierre_tipo:
+            updates["cierre_tipo"] = payload.cierre_tipo
+        if payload.cierre_notas is not None:
+            updates["cierre_notas"] = payload.cierre_notas.strip()
+        if payload.work_order_id:
+            updates["work_order_id"] = payload.work_order_id
+        if payload.cierre_fotos:
+            updates["cierre_fotos"] = await _subir_fotos_incidencia(
+                payload.cierre_fotos,
+                operario_id=current_user["user_id"],
+                client_id=doc.get("client_id"),
+                centro_id=doc.get("centro_id"),
+                incidencia_id=incidencia_id,
+                antes_despues="despues",
+            )
+    await db.incidencias.update_one({"id": incidencia_id}, {"$set": updates})
     doc = await db.incidencias.find_one({"id": incidencia_id})
     return Incidencia(**doc)
 
