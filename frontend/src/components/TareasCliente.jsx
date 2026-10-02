@@ -392,7 +392,6 @@ const TareasCliente = ({ clientId, clientSlug }) => {
                 <input
                   type="file"
                   accept="image/*"
-                  capture="environment"
                   onChange={onFotoSeleccionada}
                   className="hidden"
                 />
