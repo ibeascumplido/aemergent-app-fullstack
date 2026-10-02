@@ -184,7 +184,6 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     multiple
                     onChange={subirNuevas}
                     disabled={subiendo}
