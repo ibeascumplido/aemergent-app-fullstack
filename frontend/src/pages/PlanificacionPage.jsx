@@ -590,23 +590,32 @@ const PlanificacionPage = () => {
                 const numero = Number(fecha.split("-")[2]);
                 const esHoy = fecha === hoyISO;
                 const esSemanaActual = fecha >= inicioSemanaISO && fecha <= finSemanaISO;
+                const bordeSemana = esSemanaActual
+                  ? `${fecha === inicioSemanaISO ? "border-t-2 border-t-slate-900 " : ""}${
+                      fecha === finSemanaISO ? "border-b-2 border-b-slate-900 " : ""
+                    }`
+                  : "";
+                const bordeIzq = esSemanaActual ? "border-l-2 border-l-slate-900 " : "";
+                const bordeDer = esSemanaActual ? "border-r-2 border-r-slate-900 " : "";
                 const diaSem = new Date(fecha + "T00:00:00").getDay(); // 0=dom,6=sab
                 const esFinde = diaSem === 0 || diaSem === 6;
                 return (
                   <tr
                     key={fecha}
                     className={`border-b border-slate-200 ${
-                      esHoy
-                        ? "bg-indigo-200/70"
-                        : esSemanaActual
-                        ? "bg-indigo-100/70"
+                      esSemanaActual
+                        ? esFinde
+                          ? "bg-rose-50"
+                          : esHoy
+                          ? "bg-sky-100"
+                          : "bg-sky-50"
                         : esFinde
                         ? "bg-slate-100/60"
                         : "odd:bg-white even:bg-slate-50/40"
                     }`}
                   >
                     <td
-                      className={`sticky left-0 z-10 bg-inherit border-r-2 border-slate-300 px-2 py-1 text-center ${
+                      className={`sticky left-0 z-10 bg-inherit border-r-2 border-slate-300 px-2 py-1 text-center ${bordeSemana}${bordeIzq}${
                         esHoy || esSemanaActual ? "font-bold text-indigo-600" : esFinde ? "text-slate-400" : "text-slate-500"
                       }`}
                     >
@@ -620,7 +629,12 @@ const PlanificacionPage = () => {
                       const activa =
                         panelAbierto?.fecha === fecha && panelAbierto?.columna?.id === c.id;
                       return (
-                        <td key={c.id} className="border-l border-slate-200 p-0">
+                        <td
+                          key={c.id}
+                          className={`border-l border-slate-200 p-0 ${bordeSemana}${
+                            !isAdmin && c.id === columnas[columnas.length - 1]?.id ? bordeDer : ""
+                          }`}
+                        >
                           <button
                             type="button"
                             onClick={(e) => abrirPanel(e, fecha, c)}
@@ -648,7 +662,9 @@ const PlanificacionPage = () => {
                         </td>
                       );
                     })}
-                    {isAdmin && <td className="border-l border-slate-200 bg-white" />}
+                    {isAdmin && (
+                      <td className={`border-l border-slate-200 bg-white ${bordeSemana}${bordeDer}`} />
+                    )}
                   </tr>
                 );
               })}
