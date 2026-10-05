@@ -5310,6 +5310,30 @@ async def crear_columna_planificacion(
     )
 
 
+class OrdenColumnasPayload(BaseModel):
+    ids: List[str]
+
+
+@api_router.put("/planificacion/columnas/orden")
+async def reordenar_columnas_planificacion(
+    payload: OrdenColumnasPayload, _: dict = Depends(require_admin)
+):
+    """Guarda el orden de las columnas: `ids` es la lista completa (o parcial)
+    de ids en el orden deseado. Las no incluidas se quedan al final."""
+    existentes = [c["id"] async for c in db.planificacion_columnas.find({}, {"id": 1}).sort("orden", 1)]
+    existentes_set = set(existentes)
+    pedidos = []
+    for i in payload.ids:
+        if i in existentes_set and i not in pedidos:
+            pedidos.append(i)
+    resto = [i for i in existentes if i not in set(pedidos)]
+    for posicion, columna_id in enumerate(pedidos + resto):
+        await db.planificacion_columnas.update_one(
+            {"id": columna_id}, {"$set": {"orden": posicion}}
+        )
+    return {"ok": True}
+
+
 @api_router.delete("/planificacion/columnas/{columna_id}")
 async def eliminar_columna_planificacion(columna_id: str, _: dict = Depends(require_admin)):
     result = await db.planificacion_columnas.delete_one({"id": columna_id})

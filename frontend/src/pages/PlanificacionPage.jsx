@@ -93,6 +93,15 @@ const PlanificacionPage = () => {
     return Array.from({ length: ultimoDia }, (_, i) => formatDateString(new Date(year, month, i + 1)));
   }, [year, month]);
 
+  // Semana actual (lunes a domingo) para resaltarla en la rejilla
+  const hoyISO = formatDateString(new Date());
+  const { inicioSemanaISO, finSemanaISO } = (() => {
+    const hoy = new Date();
+    const lunes = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - ((hoy.getDay() + 6) % 7));
+    const domingo = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 6);
+    return { inicioSemanaISO: formatDateString(lunes), finSemanaISO: formatDateString(domingo) };
+  })();
+
   const cargarBase = async () => {
     try {
       const [opsRes, clientesRes] = await Promise.all([
@@ -372,6 +381,41 @@ const PlanificacionPage = () => {
     }
   };
 
+  // Reordenar columnas (flechas o arrastrando): optimista + guardado en servidor
+  const [columnaArrastrada, setColumnaArrastrada] = useState(null);
+
+  const guardarOrdenColumnas = async (nuevas) => {
+    const anteriores = columnas;
+    setColumnas(nuevas);
+    try {
+      await axios.put(`${API}/planificacion/columnas/orden`, {
+        ids: nuevas.map((c) => c.id),
+      });
+    } catch (err) {
+      console.error("Error guardando el orden:", err);
+      toast.error("No se pudo guardar el orden");
+      setColumnas(anteriores);
+    }
+  };
+
+  const moverColumna = (desdeId, haciaId) => {
+    if (!desdeId || !haciaId || desdeId === haciaId) return;
+    const lista = [...columnas];
+    const desde = lista.findIndex((c) => c.id === desdeId);
+    const hacia = lista.findIndex((c) => c.id === haciaId);
+    if (desde < 0 || hacia < 0) return;
+    const [mov] = lista.splice(desde, 1);
+    lista.splice(hacia, 0, mov);
+    guardarOrdenColumnas(lista);
+  };
+
+  const desplazarColumna = (columnaId, delta) => {
+    const idx = columnas.findIndex((c) => c.id === columnaId);
+    const destino = columnas[idx + delta];
+    if (idx < 0 || !destino) return;
+    moverColumna(columnaId, destino.id);
+  };
+
   const eliminarColumna = async () => {
     if (!columnaABorrar) return;
     try {
@@ -457,12 +501,53 @@ const PlanificacionPage = () => {
                 <th className="sticky left-0 top-0 z-20 bg-slate-50 border-b-2 border-r-2 border-slate-300 px-2 py-2 text-center font-medium text-slate-600 w-12">
                   Día
                 </th>
-                {columnas.map((c) => (
+                {columnas.map((c, idx) => (
                   <th
                     key={c.id}
-                    className="sticky top-0 z-[15] border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group shadow-[0_1px_0_0_#cbd5e1]"
+                    draggable={isAdmin}
+                    onDragStart={(e) => {
+                      setColumnaArrastrada(c.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragOver={(e) => {
+                      if (columnaArrastrada) e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      moverColumna(columnaArrastrada, c.id);
+                      setColumnaArrastrada(null);
+                    }}
+                    onDragEnd={() => setColumnaArrastrada(null)}
+                    className={`sticky top-0 z-[15] border-b-2 border-l border-slate-300 px-2 py-2 text-center font-medium text-slate-700 min-w-[110px] group shadow-[0_1px_0_0_#cbd5e1] ${
+                      isAdmin ? "cursor-grab" : ""
+                    } ${columnaArrastrada === c.id ? "opacity-50" : ""}`}
                     style={{ backgroundColor: c.color_fondo || "#f8fafc" }}
+                    data-testid={`cabecera-columna-${c.id}`}
                   >
+                    {isAdmin && columnas.length > 1 && (
+                      <div className="flex items-center justify-center gap-1 mb-0.5">
+                        <button
+                          type="button"
+                          onClick={() => desplazarColumna(c.id, -1)}
+                          disabled={idx === 0}
+                          className="text-slate-400 hover:text-indigo-600 disabled:opacity-20"
+                          title="Mover a la izquierda"
+                          data-testid={`mover-izq-${c.id}`}
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => desplazarColumna(c.id, 1)}
+                          disabled={idx === columnas.length - 1}
+                          className="text-slate-400 hover:text-indigo-600 disabled:opacity-20"
+                          title="Mover a la derecha"
+                          data-testid={`mover-der-${c.id}`}
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                     <div className="flex items-center justify-center gap-1">
                       <div className="min-w-0">
                         {c.tipo === "centro" && c.cliente_nombre && (
@@ -503,19 +588,26 @@ const PlanificacionPage = () => {
             <tbody>
               {diasDelMes.map((fecha) => {
                 const numero = Number(fecha.split("-")[2]);
-                const esHoy = fecha === formatDateString(new Date());
+                const esHoy = fecha === hoyISO;
+                const esSemanaActual = fecha >= inicioSemanaISO && fecha <= finSemanaISO;
                 const diaSem = new Date(fecha + "T00:00:00").getDay(); // 0=dom,6=sab
                 const esFinde = diaSem === 0 || diaSem === 6;
                 return (
                   <tr
                     key={fecha}
                     className={`border-b border-slate-200 ${
-                      esHoy ? "bg-indigo-50/40" : esFinde ? "bg-slate-100/60" : "odd:bg-white even:bg-slate-50/40"
+                      esHoy
+                        ? "bg-indigo-200/70"
+                        : esSemanaActual
+                        ? "bg-indigo-100/70"
+                        : esFinde
+                        ? "bg-slate-100/60"
+                        : "odd:bg-white even:bg-slate-50/40"
                     }`}
                   >
                     <td
                       className={`sticky left-0 z-10 bg-inherit border-r-2 border-slate-300 px-2 py-1 text-center ${
-                        esHoy ? "font-bold text-indigo-600" : esFinde ? "text-slate-400" : "text-slate-500"
+                        esHoy || esSemanaActual ? "font-bold text-indigo-600" : esFinde ? "text-slate-400" : "text-slate-500"
                       }`}
                     >
                       {numero}
