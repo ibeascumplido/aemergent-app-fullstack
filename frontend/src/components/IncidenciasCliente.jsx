@@ -7,6 +7,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  Pencil,
   Camera,
   X,
   ClipboardList,
@@ -41,6 +42,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/AuthContext";
+import EditarIncidenciaDialog from "@/components/EditarIncidenciaDialog";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -86,6 +88,7 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
   const [fotosNuevas, setFotosNuevas] = useState([]); // data-URIs, foto(s) al crear
   const [guardando, setGuardando] = useState(false);
   const [aBorrar, setABorrar] = useState(null);
+  const [aEditar, setAEditar] = useState(null);
   const inputFotosRef = useRef(null);
 
   // Cierre de incidencia: dos caminos (parte de trabajo / interno).
@@ -386,6 +389,17 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
                   {isAdmin && (
                     <button
                       type="button"
+                      onClick={() => setAEditar(i)}
+                      className="text-slate-300 hover:text-indigo-500 p-1"
+                      title="Editar incidencia"
+                      data-testid={`editar-incidencia-${i.id}`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
                       onClick={() => setABorrar(i)}
                       className="text-slate-300 hover:text-red-500 p-1"
                     >
@@ -639,6 +653,12 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
           )}
         </DialogContent>
       </Dialog>
+
+      <EditarIncidenciaDialog
+        incidencia={aEditar}
+        onClose={() => setAEditar(null)}
+        onSaved={cargar}
+      />
 
       <AlertDialog open={!!aBorrar} onOpenChange={(open) => !open && setABorrar(null)}>
         <AlertDialogContent>

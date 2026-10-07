@@ -11,9 +11,30 @@ import {
   MapPin,
   AlertTriangle,
   Trash2,
+  Pencil,
+  Camera,
+  Images,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import EditarIncidenciaDialog from "@/components/EditarIncidenciaDialog";
+import { comprimirImagen } from "@/lib/imagen";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -39,6 +60,16 @@ const AdminTareasCentroPage = () => {
   const [contadores, setContadores] = useState({});
   const [fotoAmpliada, setFotoAmpliada] = useState(null);
   const [procesando, setProcesando] = useState(null);
+
+  // Edición de tarea
+  const [tareaEditar, setTareaEditar] = useState(null);
+  const [editDescripcion, setEditDescripcion] = useState("");
+  const [editPrioridad, setEditPrioridad] = useState("3");
+  const [editFotoNueva, setEditFotoNueva] = useState(null);
+  const [editQuitarFoto, setEditQuitarFoto] = useState(false);
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  // Edición de la incidencia generada desde una tarea
+  const [incidenciaEditar, setIncidenciaEditar] = useState(null);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -91,6 +122,65 @@ const AdminTareasCentroPage = () => {
       toast.error(err?.response?.data?.detail || "No se pudo completar la acción");
     } finally {
       setProcesando(null);
+    }
+  };
+
+  const abrirEditar = (t) => {
+    setTareaEditar(t);
+    setEditDescripcion(t.descripcion || "");
+    setEditPrioridad(String(t.prioridad || 3));
+    setEditFotoNueva(null);
+    setEditQuitarFoto(false);
+  };
+
+  const onFotoEdicion = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !file.type.startsWith("image/")) return;
+    try {
+      setEditFotoNueva(await comprimirImagen(file));
+      setEditQuitarFoto(false);
+    } catch {
+      toast.error("No se pudo leer la foto");
+    }
+  };
+
+  const guardarEdicion = async () => {
+    if (!editDescripcion.trim()) {
+      toast.error("Escribe la descripción");
+      return;
+    }
+    setGuardandoEdicion(true);
+    try {
+      await axios.put(`${API}/tareas-centro/${tareaEditar.id}`, {
+        descripcion: editDescripcion.trim(),
+        prioridad: Number(editPrioridad),
+        foto: editFotoNueva || undefined,
+        quitar_foto: editQuitarFoto && !editFotoNueva ? true : undefined,
+      });
+      toast.success("Tarea actualizada");
+      setTareaEditar(null);
+      await cargar();
+    } catch (err) {
+      console.error("Error editando tarea:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo guardar");
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  };
+
+  const abrirEditarIncidencia = async (t) => {
+    try {
+      const res = await axios.get(`${API}/incidencias`, { params: { client_id: t.client_id } });
+      const inc = res.data.find((i) => i.id === t.incidencia_id);
+      if (!inc) {
+        toast.error("No se encontró la incidencia");
+        return;
+      }
+      setIncidenciaEditar(inc);
+    } catch (err) {
+      console.error("Error cargando incidencia:", err);
+      toast.error("No se pudo cargar la incidencia");
     }
   };
 
@@ -258,10 +348,21 @@ const AdminTareasCentroPage = () => {
                   {filtro === "activa" && (
                     <div className="flex items-center gap-2 flex-wrap">
                       {t.incidencia_id ? (
-                        <span className="text-xs text-red-600 inline-flex items-center gap-1 font-medium">
-                          <AlertTriangle className="w-3.5 h-3.5" />
-                          Marcada como incidencia
-                        </span>
+                        <>
+                          <span className="text-xs text-red-600 inline-flex items-center gap-1 font-medium">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            Marcada como incidencia
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => abrirEditarIncidencia(t)}
+                            data-testid={`editar-incidencia-tarea-${t.id}`}
+                          >
+                            <Pencil className="w-3.5 h-3.5 mr-1" />
+                            Editar incidencia
+                          </Button>
+                        </>
                       ) : (
                         <Button
                           size="sm"
@@ -283,9 +384,19 @@ const AdminTareasCentroPage = () => {
                   )}
                   <button
                     type="button"
+                    onClick={() => abrirEditar(t)}
+                    disabled={procesando === t.id}
+                    className="ml-auto text-slate-300 hover:text-indigo-500 p-1 self-center"
+                    title="Editar tarea"
+                    data-testid={`editar-tarea-${t.id}`}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => eliminarTarea(t.id)}
                     disabled={procesando === t.id}
-                    className="ml-auto text-slate-300 hover:text-red-500 p-1 self-center"
+                    className="text-slate-300 hover:text-red-500 p-1 self-center"
                     title="Eliminar tarea"
                     data-testid={`eliminar-tarea-${t.id}`}
                   >
@@ -297,6 +408,94 @@ const AdminTareasCentroPage = () => {
           ))}
         </div>
       )}
+
+      <EditarIncidenciaDialog
+        incidencia={incidenciaEditar}
+        onClose={() => setIncidenciaEditar(null)}
+        onSaved={cargar}
+      />
+
+      <Dialog open={!!tareaEditar} onOpenChange={(v) => !v && !guardandoEdicion && setTareaEditar(null)}>
+        <DialogContent className="max-w-sm max-h-[85dvh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-5 pb-0 shrink-0">
+            <DialogTitle>Editar tarea</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 p-5 overflow-y-auto">
+            <div className="space-y-1.5">
+              <Label>Descripción</Label>
+              <Textarea
+                value={editDescripcion}
+                onChange={(e) => setEditDescripcion(e.target.value)}
+                rows={3}
+                maxLength={500}
+                data-testid="editar-tarea-descripcion"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Prioridad</Label>
+              <Select value={editPrioridad} onValueChange={setEditPrioridad}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 - Máxima</SelectItem>
+                  <SelectItem value="4">4 - Alta</SelectItem>
+                  <SelectItem value="3">3 - Media</SelectItem>
+                  <SelectItem value="2">2 - Baja</SelectItem>
+                  <SelectItem value="1">1 - Mínima</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Foto</Label>
+              {(editFotoNueva || (tareaEditar?.foto_url && !editQuitarFoto)) && (
+                <div className="relative inline-block">
+                  <img
+                    src={editFotoNueva || tareaEditar.foto_url}
+                    alt=""
+                    className="w-24 h-24 rounded-lg object-cover border border-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editFotoNueva) setEditFotoNueva(null);
+                      else setEditQuitarFoto(true);
+                    }}
+                    className="absolute -top-2 -right-2 bg-white rounded-full border border-slate-200 p-0.5 text-slate-500"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-2 flex-wrap">
+                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                  <Camera className="w-4 h-4" />
+                  Hacer foto
+                  <input type="file" accept="image/*" capture="environment" onChange={onFotoEdicion} className="hidden" />
+                </label>
+                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                  <Images className="w-4 h-4" />
+                  Galería
+                  <input type="file" accept="image/*" onChange={onFotoEdicion} className="hidden" />
+                </label>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="p-5 pt-0 shrink-0">
+            <Button variant="ghost" onClick={() => setTareaEditar(null)} disabled={guardandoEdicion}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={guardarEdicion}
+              disabled={guardandoEdicion}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              data-testid="guardar-edicion-tarea-btn"
+            >
+              {guardandoEdicion ? "Guardando..." : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {fotoAmpliada && (
         <div

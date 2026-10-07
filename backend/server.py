@@ -4251,6 +4251,8 @@ class TareaCentroCreate(BaseModel):
 class TareaCentroUpdate(BaseModel):
     descripcion: Optional[str] = Field(None, min_length=1, max_length=500)
     prioridad: Optional[int] = Field(None, ge=1, le=5)
+    foto: Optional[str] = Field(None, description="Nueva foto (data-URI base64); sustituye a la actual")
+    quitar_foto: Optional[bool] = Field(None, description="True para quitar la foto actual")
 
 
 class CompletarTareaPayload(BaseModel):
@@ -4341,6 +4343,55 @@ async def list_tareas_centro(
     return await _resolver_nombres_tareas(tareas)
 
 
+async def _completar_tareas_de_incidencia(incidencia_id: str, user_id: Optional[str], nombre: Optional[str]):
+    """Al cerrar una incidencia, la tarea de la que nacio (si la hay) se da
+    por completada para que deje de aparecer como pendiente."""
+    now = datetime.now(timezone.utc)
+    await db.tareas_centro.update_many(
+        {"incidencia_id": incidencia_id, "completada": {"$ne": True}},
+        {
+            "$set": {
+                "estado": "completada",
+                "completada": True,
+                "completada_por": user_id,
+                "completada_por_nombre": nombre,
+                "completada_en": now,
+                "actualizado_en": now,
+            }
+        },
+    )
+
+
+async def _reactivar_tareas_de_incidencia(incidencia_id: str):
+    """Al reabrir una incidencia, su tarea vuelve a estar activa."""
+    await db.tareas_centro.update_many(
+        {"incidencia_id": incidencia_id, "completada": True},
+        {
+            "$set": {
+                "estado": "activa",
+                "completada": False,
+                "completada_por": None,
+                "completada_por_nombre": None,
+                "completada_en": None,
+                "actualizado_en": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+
+async def _sincronizar_tareas_con_incidencias():
+    """Pone al dia las tareas cuya incidencia ya se cerro antes de que
+    existiera la sincronizacion automatica."""
+    pendientes = db.tareas_centro.find(
+        {"incidencia_id": {"$nin": [None, ""]}, "completada": {"$ne": True}},
+        {"id": 1, "incidencia_id": 1},
+    )
+    async for t in pendientes:
+        inc = await db.incidencias.find_one({"id": t["incidencia_id"]})
+        if inc and inc.get("estado") == "cerrada":
+            await _completar_tareas_de_incidencia(inc["id"], None, inc.get("cerrado_por_nombre"))
+
+
 @api_router.get("/tareas-centro/pendientes-todas", response_model=List[TareaCentroConNombres])
 async def list_todas_pendientes(
     estado: Optional[str] = None, _: dict = Depends(require_admin)
@@ -4348,6 +4399,7 @@ async def list_todas_pendientes(
     """Vista para el administrador. Sin filtro: todas las tareas no
     completadas. Con 'estado': solo las de ese estado (pendiente_aprobacion,
     pendiente_validacion, activa)."""
+    await _sincronizar_tareas_con_incidencias()
     if estado:
         query = {"estado": estado}
     else:
@@ -4534,8 +4586,23 @@ async def actualizar_tarea_centro(
     if not doc:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
     updates = payload.model_dump(exclude_unset=True)
+    nueva_foto = updates.pop("foto", None)
+    quitar_foto = updates.pop("quitar_foto", None)
     if "descripcion" in updates:
         updates["descripcion"] = updates["descripcion"].strip()
+    if nueva_foto:
+        if not _es_logo_base64(nueva_foto):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        url, public_id = await _subir_logo_cloudinary(nueva_foto)
+        if doc.get("foto_public_id"):
+            await _borrar_logo_cloudinary(doc["foto_public_id"])
+        updates["foto_url"] = url
+        updates["foto_public_id"] = public_id
+    elif quitar_foto:
+        if doc.get("foto_public_id"):
+            await _borrar_logo_cloudinary(doc["foto_public_id"])
+        updates["foto_url"] = None
+        updates["foto_public_id"] = None
     if updates:
         updates["actualizado_en"] = datetime.now(timezone.utc)
         await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
@@ -4964,6 +5031,9 @@ async def cerrar_incidencia(
                 antes_despues="despues",
             )
     await db.incidencias.update_one({"id": incidencia_id}, {"$set": updates})
+    await _completar_tareas_de_incidencia(
+        incidencia_id, current_user["user_id"], updates["cerrado_por_nombre"]
+    )
     doc = await db.incidencias.find_one({"id": incidencia_id})
     return Incidencia(**doc)
 
@@ -4977,6 +5047,60 @@ async def reabrir_incidencia(incidencia_id: str, _: dict = Depends(require_appro
         {"id": incidencia_id},
         {"$set": {"estado": "abierta", "cerrado_por_nombre": None, "cerrado_en": None}},
     )
+    await _reactivar_tareas_de_incidencia(incidencia_id)
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    return Incidencia(**doc)
+
+
+class IncidenciaUpdate(BaseModel):
+    titulo: Optional[str] = Field(None, min_length=1, max_length=200)
+    descripcion: Optional[str] = Field(None, max_length=2000)
+    centro_id: Optional[str] = None
+    fotos_nuevas: Optional[List[str]] = Field(None, description="Fotos a anadir (data-URI base64, max 10)")
+    quitar_fotos: Optional[List[str]] = Field(None, description="Ids de fotos a quitar")
+
+
+@api_router.put("/incidencias/{incidencia_id}", response_model=Incidencia)
+async def actualizar_incidencia(
+    incidencia_id: str,
+    payload: IncidenciaUpdate,
+    current_user: dict = Depends(require_admin),
+):
+    """El admin edita una incidencia: titulo, descripcion, centro y fotos
+    (anadir / quitar)."""
+    doc = await db.incidencias.find_one({"id": incidencia_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    datos = payload.model_dump(exclude_unset=True)
+    updates: Dict = {}
+    if "titulo" in datos and datos["titulo"] is not None:
+        updates["titulo"] = datos["titulo"].strip()
+    if "descripcion" in datos and datos["descripcion"] is not None:
+        updates["descripcion"] = datos["descripcion"].strip()
+    if "centro_id" in datos:
+        updates["centro_id"] = datos["centro_id"] or None
+
+    fotos = list(doc.get("fotos") or [])
+    if datos.get("quitar_fotos"):
+        quitar = set(datos["quitar_fotos"])
+        fotos = [f for f in fotos if f.get("id") not in quitar]
+        await db.fotos.update_many(
+            {"id": {"$in": list(quitar)}, "incidencia_id": incidencia_id},
+            {"$set": {"borrada": True, "borrada_en": datetime.now(timezone.utc)}},
+        )
+    if datos.get("fotos_nuevas"):
+        nuevas = await _subir_fotos_incidencia(
+            datos["fotos_nuevas"],
+            operario_id=current_user["user_id"],
+            client_id=doc.get("client_id"),
+            centro_id=updates.get("centro_id", doc.get("centro_id")),
+            incidencia_id=incidencia_id,
+        )
+        fotos.extend(nuevas)
+    if "quitar_fotos" in datos or "fotos_nuevas" in datos:
+        updates["fotos"] = fotos
+    if updates:
+        await db.incidencias.update_one({"id": incidencia_id}, {"$set": updates})
     doc = await db.incidencias.find_one({"id": incidencia_id})
     return Incidencia(**doc)
 
