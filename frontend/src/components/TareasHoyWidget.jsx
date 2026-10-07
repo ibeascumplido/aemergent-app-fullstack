@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { comprimirImagen } from "@/lib/imagen";
+import SelectorFotos from "@/components/SelectorFotos";
 import { toast } from "sonner";
-import { ListChecks, Plus, Camera, Images, X } from "lucide-react";
+import { ListChecks, Plus, Camera, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,10 +58,10 @@ const TareasHoyWidget = () => {
   const [catalogo, setCatalogo] = useState([]);
   const [tareaCatalogoSel, setTareaCatalogoSel] = useState("libre");
   const [zonaTexto, setZonaTexto] = useState("");
-  const [fotoPropuesta, setFotoPropuesta] = useState(null);
+  const [fotosPropuesta, setFotosPropuesta] = useState([]);
 
   const [dialogFotoTareaId, setDialogFotoTareaId] = useState(null);
-  const [fotoDataUrl, setFotoDataUrl] = useState(null);
+  const [fotosCompletar, setFotosCompletar] = useState([]);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
 
   const cargar = async () => {
@@ -110,21 +110,8 @@ const TareasHoyWidget = () => {
     setCentros([]);
     setTareaCatalogoSel("libre");
     setZonaTexto("");
-    setFotoPropuesta(null);
+    setFotosPropuesta([]);
     setDialogOpen(true);
-  };
-
-  const onFotoPropuesta = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Sube una imagen");
-      return;
-    }
-    comprimirImagen(file)
-      .then((d) => setFotoPropuesta(d))
-      .catch(() => toast.error("No se pudo leer la foto"));
   };
 
   const crear = async () => {
@@ -154,7 +141,7 @@ const TareasHoyWidget = () => {
         centro_id: centroSel || null,
         descripcion: texto,
         prioridad: Number(prioridad),
-        foto: fotoPropuesta || null,
+        fotos: fotosPropuesta.length > 0 ? fotosPropuesta : undefined,
       });
       toast.success("Tarea propuesta. El administrador la revisará.");
       setDialogOpen(false);
@@ -178,20 +165,11 @@ const TareasHoyWidget = () => {
     }
   };
 
-  const onFotoSeleccionada = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    comprimirImagen(file)
-      .then((d) => setFotoDataUrl(d))
-      .catch(() => toast.error("No se pudo leer la foto"));
-  };
-
   const confirmarCompletarConFoto = async () => {
     setSubiendoFoto(true);
     try {
       await axios.put(`${API}/tareas-centro/${dialogFotoTareaId}/completar`, {
-        foto: fotoDataUrl,
+        fotos: fotosCompletar,
       });
       toast.success("Tarea completada");
       setDialogFotoTareaId(null);
@@ -293,7 +271,7 @@ const TareasHoyWidget = () => {
                   type="button"
                   onClick={() => {
                     setDialogFotoTareaId(t.id);
-                    setFotoDataUrl(null);
+                    setFotosCompletar([]);
                   }}
                   className="text-slate-300 hover:text-indigo-500 shrink-0"
                   title="Completar con foto"
@@ -389,36 +367,8 @@ const TareasHoyWidget = () => {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Foto (opcional)</Label>
-              {fotoPropuesta ? (
-                <div className="relative inline-block">
-                  <img
-                    src={fotoPropuesta}
-                    alt=""
-                    className="w-24 h-24 rounded-lg object-cover border border-slate-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setFotoPropuesta(null)}
-                    className="absolute -top-2 -right-2 bg-white rounded-full border border-slate-200 p-0.5 text-slate-500"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex gap-2 flex-wrap">
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
-                    <Camera className="w-4 h-4" />
-                    Hacer foto
-                    <input type="file" accept="image/*" capture="environment" onChange={onFotoPropuesta} className="hidden" />
-                  </label>
-                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
-                    <Images className="w-4 h-4" />
-                    Galería
-                    <input type="file" accept="image/*" onChange={onFotoPropuesta} className="hidden" />
-                  </label>
-                </div>
-              )}
+              <Label>Fotos (opcional)</Label>
+              <SelectorFotos fotos={fotosPropuesta} onChange={setFotosPropuesta} />
             </div>
 
             <div className="space-y-1.5">
@@ -462,42 +412,7 @@ const TareasHoyWidget = () => {
             <DialogTitle>Completar con foto</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {fotoDataUrl ? (
-              <div className="relative">
-                <img src={fotoDataUrl} alt="" className="w-full rounded-lg" />
-                <button
-                  type="button"
-                  onClick={() => setFotoDataUrl(null)}
-                  className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={onFotoSeleccionada}
-                    className="hidden"
-                  />
-                  <Camera className="w-6 h-6" />
-                  <span className="text-sm">Hacer foto</span>
-                </label>
-                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={onFotoSeleccionada}
-                    className="hidden"
-                  />
-                  <Images className="w-6 h-6" />
-                  <span className="text-sm">Galería</span>
-                </label>
-              </div>
-            )}
+            <SelectorFotos fotos={fotosCompletar} onChange={setFotosCompletar} />
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogFotoTareaId(null)} disabled={subiendoFoto}>
@@ -505,7 +420,7 @@ const TareasHoyWidget = () => {
             </Button>
             <Button
               onClick={confirmarCompletarConFoto}
-              disabled={subiendoFoto || !fotoDataUrl}
+              disabled={subiendoFoto || fotosCompletar.length === 0}
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {subiendoFoto ? "Guardando..." : "Completar"}

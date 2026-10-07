@@ -4246,17 +4246,19 @@ class TareaCentroCreate(BaseModel):
     descripcion: str = Field(..., min_length=1, max_length=500)
     prioridad: int = Field(3, ge=1, le=5, description="1 (baja) a 5 (maxima)")
     foto: Optional[str] = Field(None, description="Data-URI base64 opcional al proponer")
+    fotos: Optional[List[str]] = Field(None, description="Varias fotos (data-URI base64, max 10)")
 
 
 class TareaCentroUpdate(BaseModel):
     descripcion: Optional[str] = Field(None, min_length=1, max_length=500)
     prioridad: Optional[int] = Field(None, ge=1, le=5)
-    foto: Optional[str] = Field(None, description="Nueva foto (data-URI base64); sustituye a la actual")
-    quitar_foto: Optional[bool] = Field(None, description="True para quitar la foto actual")
+    fotos_nuevas: Optional[List[str]] = Field(None, description="Fotos a anadir (data-URI base64, max 10)")
+    quitar_fotos: Optional[List[str]] = Field(None, description="public_id de las fotos a quitar")
 
 
 class CompletarTareaPayload(BaseModel):
     foto: Optional[str] = Field(None, description="Data-URI base64 de la foto, opcional")
+    fotos: Optional[List[str]] = Field(None, description="Varias fotos (data-URI base64, max 10)")
 
 
 class TareaCentro(BaseModel):
@@ -4280,6 +4282,9 @@ class TareaCentro(BaseModel):
     marcada_en: Optional[datetime] = None
     foto_url: Optional[str] = None
     foto_public_id: Optional[str] = None
+    fotos: List[Dict[str, str]] = Field(
+        default_factory=list, description="Todas las fotos de la tarea: [{url, public_id}]"
+    )
     incidencia_id: Optional[str] = None  # si se convirtio en incidencia
     creado_por: str
     creado_por_nombre: str
@@ -4301,6 +4306,39 @@ class TareaCentroConNombres(TareaCentro):
     centro_nombre: Optional[str] = None
 
 
+async def _subir_fotos_tarea(fotos_base64: List[str]) -> List[Dict[str, str]]:
+    """Sube las fotos (data-URI base64) a Cloudinary y devuelve
+    [{url, public_id}, ...]."""
+    if len(fotos_base64) > 10:
+        raise HTTPException(status_code=400, detail="Maximo 10 fotos por envio")
+    subidas: List[Dict[str, str]] = []
+    for img in fotos_base64:
+        if not _es_logo_base64(img):
+            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+        url, public_id = await _subir_logo_cloudinary(img)
+        subidas.append({"url": url, "public_id": public_id})
+    return subidas
+
+
+def _fotos_de_tarea(doc: dict) -> List[Dict[str, str]]:
+    """Fotos de una tarea. Las tareas antiguas solo tienen foto_url /
+    foto_public_id: se tratan como una lista de una foto."""
+    fotos = [f for f in (doc.get("fotos") or []) if f.get("url")]
+    if not fotos and doc.get("foto_url"):
+        fotos = [{"url": doc["foto_url"], "public_id": doc.get("foto_public_id") or ""}]
+    return fotos
+
+
+def _campos_foto_tarea(fotos: List[Dict[str, str]]) -> dict:
+    """Campos a guardar: la lista y, por compatibilidad, la primera foto."""
+    primera = fotos[0] if fotos else None
+    return {
+        "fotos": fotos,
+        "foto_url": primera["url"] if primera else None,
+        "foto_public_id": (primera.get("public_id") or None) if primera else None,
+    }
+
+
 async def _resolver_nombres_tareas(tareas: list) -> List[TareaCentroConNombres]:
     """Adjunta el nombre del cliente y del centro (si aplica) a cada
     tarea, para no tener que hacerlo por separado en cada endpoint."""
@@ -4314,6 +4352,8 @@ async def _resolver_nombres_tareas(tareas: list) -> List[TareaCentroConNombres]:
     if centro_ids:
         async for ce in db.client_locations.find({"id": {"$in": list(centro_ids)}}):
             centros_map[ce["id"]] = ce["nombre"]
+    for t in tareas:
+        t["fotos"] = _fotos_de_tarea(t)
     return [
         TareaCentroConNombres(
             **t,
@@ -4532,12 +4572,9 @@ async def crear_tarea_centro(
     estado = "activa" if es_admin else "pendiente_aprobacion"
 
     # Foto opcional adjunta al proponer la tarea
-    foto_url = None
-    foto_public_id = None
-    if payload.foto:
-        if not _es_logo_base64(payload.foto):
-            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
-        foto_url, foto_public_id = await _subir_logo_cloudinary(payload.foto)
+    fotos_subidas = await _subir_fotos_tarea(
+        ([payload.foto] if payload.foto else []) + (payload.fotos or [])
+    )
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -4553,8 +4590,7 @@ async def crear_tarea_centro(
         "marcada_por": None,
         "marcada_por_nombre": None,
         "marcada_en": None,
-        "foto_url": foto_url,
-        "foto_public_id": foto_public_id,
+        **_campos_foto_tarea(fotos_subidas),
         "creado_por": current_user["user_id"],
         "creado_por_nombre": usuario["name"] if usuario else "?",
         "creado_en": now,
@@ -4586,23 +4622,23 @@ async def actualizar_tarea_centro(
     if not doc:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
     updates = payload.model_dump(exclude_unset=True)
-    nueva_foto = updates.pop("foto", None)
-    quitar_foto = updates.pop("quitar_foto", None)
+    nuevas = updates.pop("fotos_nuevas", None)
+    quitar = updates.pop("quitar_fotos", None)
     if "descripcion" in updates:
         updates["descripcion"] = updates["descripcion"].strip()
-    if nueva_foto:
-        if not _es_logo_base64(nueva_foto):
-            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
-        url, public_id = await _subir_logo_cloudinary(nueva_foto)
-        if doc.get("foto_public_id"):
-            await _borrar_logo_cloudinary(doc["foto_public_id"])
-        updates["foto_url"] = url
-        updates["foto_public_id"] = public_id
-    elif quitar_foto:
-        if doc.get("foto_public_id"):
-            await _borrar_logo_cloudinary(doc["foto_public_id"])
-        updates["foto_url"] = None
-        updates["foto_public_id"] = None
+    if nuevas or quitar:
+        fotos = _fotos_de_tarea(doc)
+        if quitar:
+            quitar_set = set(quitar)
+            for f in fotos:
+                if f.get("public_id") in quitar_set and not doc.get("incidencia_id"):
+                    # Si la tarea ya genero incidencia, las fotos se comparten
+                    # con ella: no se borran de Cloudinary.
+                    await _borrar_logo_cloudinary(f["public_id"])
+            fotos = [f for f in fotos if f.get("public_id") not in quitar_set]
+        if nuevas:
+            fotos = fotos + await _subir_fotos_tarea(nuevas)
+        updates.update(_campos_foto_tarea(fotos))
     if updates:
         updates["actualizado_en"] = datetime.now(timezone.utc)
         await db.tareas_centro.update_one({"id": tarea_id}, {"$set": updates})
@@ -4635,12 +4671,10 @@ async def completar_tarea_centro(
         "marcada_en": now,
         "actualizado_en": now,
     }
-    if payload.foto:
-        if not _es_logo_base64(payload.foto):
-            raise HTTPException(status_code=400, detail="Formato de imagen no valido")
-        url, public_id = await _subir_logo_cloudinary(payload.foto)
-        updates["foto_url"] = url
-        updates["foto_public_id"] = public_id
+    entrantes = ([payload.foto] if payload.foto else []) + (payload.fotos or [])
+    if entrantes:
+        nuevas_fotos = await _subir_fotos_tarea(entrantes)
+        updates.update(_campos_foto_tarea(_fotos_de_tarea(doc) + nuevas_fotos))
 
     if es_admin:
         # El admin la completa directamente (queda validada).
@@ -4783,6 +4817,33 @@ async def convertir_tarea_en_incidencia(
         "cerrado_por_nombre": None,
         "cerrado_en": None,
     }
+    # Las fotos de la tarea pasan tambien a la incidencia (y a la galeria
+    # del centro) para que no se pierdan.
+    fotos_inc: List[Dict[str, str]] = []
+    for f in _fotos_de_tarea(doc):
+        foto_id = str(uuid.uuid4())
+        await db.fotos.insert_one(
+            {
+                "id": foto_id,
+                "operario_id": doc.get("creado_por") or current_user["user_id"],
+                "url": f["url"],
+                "public_id": f.get("public_id"),
+                "lote_id": None,
+                "antes_despues": None,
+                "fecha": None,
+                "audio_url": None,
+                "audio_public_id": None,
+                "anotacion": None,
+                "client_id": doc["client_id"],
+                "centro_id": doc.get("centro_id"),
+                "work_order_id": None,
+                "incidencia_id": inc["id"],
+                "creado_en": now,
+                "clasificado_en": now,
+            }
+        )
+        fotos_inc.append({"id": foto_id, "url": f["url"]})
+    inc["fotos"] = fotos_inc
     await db.incidencias.insert_one(inc)
 
     await db.tareas_centro.update_one(
@@ -4823,8 +4884,10 @@ async def eliminar_tarea_centro(tarea_id: str, _: dict = Depends(require_admin))
     doc = await db.tareas_centro.find_one({"id": tarea_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
-    if doc.get("foto_public_id"):
-        await _borrar_logo_cloudinary(doc["foto_public_id"])
+    if not doc.get("incidencia_id"):
+        for f in _fotos_de_tarea(doc):
+            if f.get("public_id"):
+                await _borrar_logo_cloudinary(f["public_id"])
     await db.tareas_centro.delete_one({"id": tarea_id})
     return {"ok": True}
 

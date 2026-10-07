@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
@@ -40,7 +41,33 @@ import AuthCallback from "@/components/auth/AuthCallback";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
+// Red de seguridad: a veces Radix deja el <body> con pointer-events:none
+// tras cerrarse un diálogo (p. ej. al volver del selector de fotos del
+// móvil) y toda la app parece "bloqueada". Si no hay ningún diálogo o
+// menú abierto, se desbloquea solo.
+const useDesbloquearBody = () => {
+  useEffect(() => {
+    const hayCapaAbierta = () =>
+      !!document.querySelector(
+        '[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"]'
+      );
+    const revisar = () => {
+      if (document.body.style.pointerEvents === "none" && !hayCapaAbierta()) {
+        document.body.style.pointerEvents = "";
+      }
+    };
+    const obs = new MutationObserver(() => setTimeout(revisar, 400));
+    obs.observe(document.body, { attributes: true, attributeFilter: ["style"] });
+    const t = setInterval(revisar, 2000);
+    return () => {
+      obs.disconnect();
+      clearInterval(t);
+    };
+  }, []);
+};
+
 function App() {
+  useDesbloquearBody();
   return (
     <div className="App">
       <ErrorBoundary>

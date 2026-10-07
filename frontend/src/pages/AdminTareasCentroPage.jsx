@@ -12,8 +12,6 @@ import {
   AlertTriangle,
   Trash2,
   Pencil,
-  Camera,
-  Images,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,7 +32,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import EditarIncidenciaDialog from "@/components/EditarIncidenciaDialog";
-import { comprimirImagen } from "@/lib/imagen";
+import SelectorFotos from "@/components/SelectorFotos";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -65,8 +63,8 @@ const AdminTareasCentroPage = () => {
   const [tareaEditar, setTareaEditar] = useState(null);
   const [editDescripcion, setEditDescripcion] = useState("");
   const [editPrioridad, setEditPrioridad] = useState("3");
-  const [editFotoNueva, setEditFotoNueva] = useState(null);
-  const [editQuitarFoto, setEditQuitarFoto] = useState(false);
+  const [editFotosNuevas, setEditFotosNuevas] = useState([]);
+  const [editQuitar, setEditQuitar] = useState([]);
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
   // Edición de la incidencia generada desde una tarea
   const [incidenciaEditar, setIncidenciaEditar] = useState(null);
@@ -129,20 +127,8 @@ const AdminTareasCentroPage = () => {
     setTareaEditar(t);
     setEditDescripcion(t.descripcion || "");
     setEditPrioridad(String(t.prioridad || 3));
-    setEditFotoNueva(null);
-    setEditQuitarFoto(false);
-  };
-
-  const onFotoEdicion = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !file.type.startsWith("image/")) return;
-    try {
-      setEditFotoNueva(await comprimirImagen(file));
-      setEditQuitarFoto(false);
-    } catch {
-      toast.error("No se pudo leer la foto");
-    }
+    setEditFotosNuevas([]);
+    setEditQuitar([]);
   };
 
   const guardarEdicion = async () => {
@@ -155,8 +141,8 @@ const AdminTareasCentroPage = () => {
       await axios.put(`${API}/tareas-centro/${tareaEditar.id}`, {
         descripcion: editDescripcion.trim(),
         prioridad: Number(editPrioridad),
-        foto: editFotoNueva || undefined,
-        quitar_foto: editQuitarFoto && !editFotoNueva ? true : undefined,
+        fotos_nuevas: editFotosNuevas.length > 0 ? editFotosNuevas : undefined,
+        quitar_fotos: editQuitar.length > 0 ? editQuitar : undefined,
       });
       toast.success("Tarea actualizada");
       setTareaEditar(null);
@@ -282,15 +268,23 @@ const AdminTareasCentroPage = () => {
                       </p>
                     </div>
                   </div>
-                  {t.foto_url && (
-                    <button
-                      type="button"
-                      onClick={() => setFotoAmpliada(t.foto_url)}
-                      className="w-14 h-14 rounded-lg overflow-hidden border border-slate-200 shrink-0"
-                      title="Ver foto"
-                    >
-                      <img src={t.foto_url} alt="" className="w-full h-full object-cover" />
-                    </button>
+                  {(t.fotos || []).length > 0 && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {t.fotos.slice(0, 3).map((f, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setFotoAmpliada(f.url)}
+                          className="w-14 h-14 rounded-lg overflow-hidden border border-slate-200"
+                          title="Ver foto"
+                        >
+                          <img src={f.url} alt="" className="w-full h-full object-cover" />
+                        </button>
+                      ))}
+                      {t.fotos.length > 3 && (
+                        <span className="text-xs text-slate-400">+{t.fotos.length - 3}</span>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -447,38 +441,28 @@ const AdminTareasCentroPage = () => {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Foto</Label>
-              {(editFotoNueva || (tareaEditar?.foto_url && !editQuitarFoto)) && (
-                <div className="relative inline-block">
-                  <img
-                    src={editFotoNueva || tareaEditar.foto_url}
-                    alt=""
-                    className="w-24 h-24 rounded-lg object-cover border border-slate-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (editFotoNueva) setEditFotoNueva(null);
-                      else setEditQuitarFoto(true);
-                    }}
-                    className="absolute -top-2 -right-2 bg-white rounded-full border border-slate-200 p-0.5 text-slate-500"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+              <Label>Fotos</Label>
+              {(tareaEditar?.fotos || []).filter((f) => !editQuitar.includes(f.public_id)).length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(tareaEditar?.fotos || [])
+                    .filter((f) => !editQuitar.includes(f.public_id))
+                    .map((f) => (
+                      <div key={f.public_id || f.url} className="relative">
+                        <img src={f.url} alt="" className="w-16 h-16 rounded-md object-cover border border-slate-200" />
+                        {f.public_id && (
+                          <button
+                            type="button"
+                            onClick={() => setEditQuitar((prev) => [...prev, f.public_id])}
+                            className="absolute -top-1.5 -right-1.5 bg-slate-900 text-white rounded-full p-0.5"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 </div>
               )}
-              <div className="flex gap-2 flex-wrap">
-                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
-                  <Camera className="w-4 h-4" />
-                  Hacer foto
-                  <input type="file" accept="image/*" capture="environment" onChange={onFotoEdicion} className="hidden" />
-                </label>
-                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
-                  <Images className="w-4 h-4" />
-                  Galería
-                  <input type="file" accept="image/*" onChange={onFotoEdicion} className="hidden" />
-                </label>
-              </div>
+              <SelectorFotos fotos={editFotosNuevas} onChange={setEditFotosNuevas} />
             </div>
           </div>
           <DialogFooter className="p-5 pt-0 shrink-0">

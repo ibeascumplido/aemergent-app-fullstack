@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { comprimirImagen } from "@/lib/imagen";
+import SelectorFotos from "@/components/SelectorFotos";
 import { toast } from "sonner";
-import { ListChecks, Plus, Trash2, Camera, Images, X } from "lucide-react";
+import { ListChecks, Plus, Trash2, Camera, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,7 +62,7 @@ const TareasCliente = ({ clientId, clientSlug }) => {
   const [guardando, setGuardando] = useState(false);
 
   const [dialogFotoTareaId, setDialogFotoTareaId] = useState(null);
-  const [fotoDataUrl, setFotoDataUrl] = useState(null);
+  const [fotosCompletar, setFotosCompletar] = useState([]);
   const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [fotoAmpliada, setFotoAmpliada] = useState(null);
   const [aBorrar, setABorrar] = useState(null);
@@ -131,23 +131,14 @@ const TareasCliente = ({ clientId, clientSlug }) => {
 
   const abrirCompletarConFoto = (tareaId) => {
     setDialogFotoTareaId(tareaId);
-    setFotoDataUrl(null);
-  };
-
-  const onFotoSeleccionada = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    comprimirImagen(file)
-      .then((d) => setFotoDataUrl(d))
-      .catch(() => toast.error("No se pudo leer la foto"));
+    setFotosCompletar([]);
   };
 
   const confirmarCompletarConFoto = async () => {
     setSubiendoFoto(true);
     try {
       await axios.put(`${API}/tareas-centro/${dialogFotoTareaId}/completar`, {
-        foto: fotoDataUrl,
+        fotos: fotosCompletar,
       });
       toast.success("Tarea completada");
       setDialogFotoTareaId(null);
@@ -265,15 +256,16 @@ const TareasCliente = ({ clientId, clientSlug }) => {
                 </div>
               </div>
 
-              {t.foto_url && (
+              {(t.fotos || []).slice(0, 3).map((f, idx) => (
                 <button
+                  key={idx}
                   type="button"
-                  onClick={() => setFotoAmpliada(t.foto_url)}
+                  onClick={() => setFotoAmpliada(f.url)}
                   className="w-10 h-10 rounded-md overflow-hidden border border-slate-200 shrink-0"
                 >
-                  <img src={t.foto_url} alt="" className="w-full h-full object-cover" />
+                  <img src={f.url} alt="" className="w-full h-full object-cover" />
                 </button>
-              )}
+              ))}
 
               {!t.completada && (
                 <button
@@ -377,42 +369,7 @@ const TareasCliente = ({ clientId, clientSlug }) => {
             <DialogTitle>Completar con foto</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {fotoDataUrl ? (
-              <div className="relative">
-                <img src={fotoDataUrl} alt="" className="w-full rounded-lg" />
-                <button
-                  type="button"
-                  onClick={() => setFotoDataUrl(null)}
-                  className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={onFotoSeleccionada}
-                    className="hidden"
-                  />
-                  <Camera className="w-6 h-6" />
-                  <span className="text-sm">Hacer foto</span>
-                </label>
-                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={onFotoSeleccionada}
-                    className="hidden"
-                  />
-                  <Images className="w-6 h-6" />
-                  <span className="text-sm">Galería</span>
-                </label>
-              </div>
-            )}
+            <SelectorFotos fotos={fotosCompletar} onChange={setFotosCompletar} />
           </div>
           <DialogFooter>
             <Button
@@ -424,7 +381,7 @@ const TareasCliente = ({ clientId, clientSlug }) => {
             </Button>
             <Button
               onClick={confirmarCompletarConFoto}
-              disabled={subiendoFoto || !fotoDataUrl}
+              disabled={subiendoFoto || fotosCompletar.length === 0}
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
               data-testid="confirmar-completar-foto-btn"
             >
