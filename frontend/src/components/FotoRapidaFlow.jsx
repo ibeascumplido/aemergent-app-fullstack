@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
+import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
 import {
   Camera,
@@ -112,12 +113,7 @@ const FotoRapidaFlow = () => {
     try {
       for (const file of files) {
         if (!file.type.startsWith("image/")) continue;
-        const dataUrl = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload = () => res(r.result);
-          r.onerror = rej;
-          r.readAsDataURL(file);
-        });
+        const dataUrl = await comprimirImagen(file);
         const res = await axios.post(`${API}/fotos`, { imagen: dataUrl, lote_id: idLote });
         setFotos((prev) => [...prev, { id: res.data.id, url: res.data.url }]);
       }

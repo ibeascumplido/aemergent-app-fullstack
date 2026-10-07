@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
 import { ListChecks, Plus, Camera, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -121,9 +122,9 @@ const TareasHoyWidget = () => {
       toast.error("Sube una imagen");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => setFotoPropuesta(reader.result);
-    reader.readAsDataURL(file);
+    comprimirImagen(file)
+      .then((d) => setFotoPropuesta(d))
+      .catch(() => toast.error("No se pudo leer la foto"));
   };
 
   const crear = async () => {
@@ -181,9 +182,9 @@ const TareasHoyWidget = () => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setFotoDataUrl(reader.result);
-    reader.readAsDataURL(file);
+    comprimirImagen(file)
+      .then((d) => setFotoDataUrl(d))
+      .catch(() => toast.error("No se pudo leer la foto"));
   };
 
   const confirmarCompletarConFoto = async () => {

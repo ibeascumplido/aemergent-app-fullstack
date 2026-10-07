@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
 import { ListChecks, Plus, Trash2, Camera, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -137,9 +138,9 @@ const TareasCliente = ({ clientId, clientSlug }) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setFotoDataUrl(reader.result);
-    reader.readAsDataURL(file);
+    comprimirImagen(file)
+      .then((d) => setFotoDataUrl(d))
+      .catch(() => toast.error("No se pudo leer la foto"));
   };
 
   const confirmarCompletarConFoto = async () => {
