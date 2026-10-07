@@ -3266,6 +3266,38 @@ async def seed_work_tasks_if_empty() -> None:
     await db.work_tasks.insert_many(docs)
 
 
+# Tareas que se anaden al catalogo aunque ya exista (se crean solo si faltan).
+_TAREAS_EXTRA_CATALOGO = [
+    {"nombre": "Limpieza de zonas verdes", "orden": 110, "en_top10": True},
+    {"nombre": "Recorte setos y arbustos", "orden": 120, "en_top10": True},
+    {"nombre": "Eliminar mala hierba", "orden": 130, "en_top10": True},
+]
+
+
+async def asegurar_tareas_extra_catalogo() -> None:
+    """Idempotente: crea (o reactiva) las tareas extra del catalogo."""
+    now = datetime.now(timezone.utc)
+    for t in _TAREAS_EXTRA_CATALOGO:
+        existente = await db.work_tasks.find_one(
+            {"nombre": {"$regex": f"^{re.escape(t['nombre'])}$", "$options": "i"}}
+        )
+        if existente:
+            if not existente.get("activo", True):
+                await db.work_tasks.update_one({"id": existente["id"]}, {"$set": {"activo": True}})
+            continue
+        await db.work_tasks.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "nombre": t["nombre"],
+                "orden": t["orden"],
+                "en_top10": t["en_top10"],
+                "activo": True,
+                "uso_count": 0,
+                "creado_en": now,
+            }
+        )
+
+
 @api_router.get("/work-tasks", response_model=List[WorkTask])
 async def list_work_tasks(_: dict = Depends(require_approved)):
     """Catalogo de tareas activas, orden ascendente por 'orden' y luego nombre."""
@@ -10199,6 +10231,7 @@ async def on_startup():
     # Auto-siembra de datos base al arrancar (idempotente).
     await seed_clients_if_empty()
     await seed_work_tasks_if_empty()
+    await asegurar_tareas_extra_catalogo()
     await sincronizar_fotos_con_partes()
 
     global _scheduler
