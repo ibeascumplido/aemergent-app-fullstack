@@ -170,23 +170,38 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
           <div className="flex-1 overflow-y-auto p-4">
             {pestana === "nueva" ? (
               <div className="text-center py-6">
-                <label className="inline-flex flex-col items-center gap-2 cursor-pointer">
-                  <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center">
-                    <Camera className="w-8 h-8 text-indigo-500" />
-                  </div>
-                  <span className="text-sm text-slate-600">
-                    {subiendo ? "Subiendo..." : "Toca para hacer o elegir fotos"}
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={subirNuevas}
-                    disabled={subiendo}
-                    className="hidden"
-                    data-testid="subir-nuevas-input"
-                  />
-                </label>
+                <div className="flex justify-center gap-4">
+                  <label className="inline-flex flex-col items-center gap-2 cursor-pointer">
+                    <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center">
+                      <Camera className="w-8 h-8 text-indigo-500" />
+                    </div>
+                    <span className="text-sm text-slate-600">{subiendo ? "Subiendo..." : "Hacer foto"}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={subirNuevas}
+                      disabled={subiendo}
+                      className="hidden"
+                      data-testid="subir-camara-input"
+                    />
+                  </label>
+                  <label className="inline-flex flex-col items-center gap-2 cursor-pointer">
+                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
+                      <Images className="w-8 h-8 text-slate-500" />
+                    </div>
+                    <span className="text-sm text-slate-600">Galería</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={subirNuevas}
+                      disabled={subiendo}
+                      className="hidden"
+                      data-testid="subir-nuevas-input"
+                    />
+                  </label>
+                </div>
                 <p className="text-xs text-slate-400 mt-3">
                   Puedes seleccionar varias a la vez.
                 </p>

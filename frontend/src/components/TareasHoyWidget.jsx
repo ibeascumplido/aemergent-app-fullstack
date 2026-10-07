@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
-import { ListChecks, Plus, Camera, X } from "lucide-react";
+import { ListChecks, Plus, Camera, Images, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -406,11 +406,18 @@ const TareasHoyWidget = () => {
                   </button>
                 </div>
               ) : (
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
-                  <Camera className="w-4 h-4" />
-                  Añadir foto
-                  <input type="file" accept="image/*" onChange={onFotoPropuesta} className="hidden" />
-                </label>
+                <div className="flex gap-2 flex-wrap">
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                    <Camera className="w-4 h-4" />
+                    Hacer foto
+                    <input type="file" accept="image/*" capture="environment" onChange={onFotoPropuesta} className="hidden" />
+                  </label>
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                    <Images className="w-4 h-4" />
+                    Galería
+                    <input type="file" accept="image/*" onChange={onFotoPropuesta} className="hidden" />
+                  </label>
+                </div>
               )}
             </div>
 
@@ -467,16 +474,29 @@ const TareasHoyWidget = () => {
                 </button>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={onFotoSeleccionada}
-                  className="hidden"
-                />
-                <Camera className="w-6 h-6" />
-                <span className="text-sm">Hacer/elegir foto</span>
-              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={onFotoSeleccionada}
+                    className="hidden"
+                  />
+                  <Camera className="w-6 h-6" />
+                  <span className="text-sm">Hacer foto</span>
+                </label>
+                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={onFotoSeleccionada}
+                    className="hidden"
+                  />
+                  <Images className="w-6 h-6" />
+                  <span className="text-sm">Galería</span>
+                </label>
+              </div>
             )}
           </div>
           <DialogFooter>

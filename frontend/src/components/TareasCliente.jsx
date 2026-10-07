@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
-import { ListChecks, Plus, Trash2, Camera, X } from "lucide-react";
+import { ListChecks, Plus, Trash2, Camera, Images, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -389,16 +389,29 @@ const TareasCliente = ({ clientId, clientSlug }) => {
                 </button>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={onFotoSeleccionada}
-                  className="hidden"
-                />
-                <Camera className="w-6 h-6" />
-                <span className="text-sm">Hacer/elegir foto</span>
-              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={onFotoSeleccionada}
+                    className="hidden"
+                  />
+                  <Camera className="w-6 h-6" />
+                  <span className="text-sm">Hacer foto</span>
+                </label>
+                <label className="flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed border-slate-300 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={onFotoSeleccionada}
+                    className="hidden"
+                  />
+                  <Images className="w-6 h-6" />
+                  <span className="text-sm">Galería</span>
+                </label>
+              </div>
             )}
           </div>
           <DialogFooter>
