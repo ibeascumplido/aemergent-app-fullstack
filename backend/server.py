@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -1727,6 +1727,29 @@ async def get_budget_templates(
         if isinstance(t.get('created_at'), str):
             t['created_at'] = datetime.fromisoformat(t['created_at'])
     return templates
+
+@api_router.post("/budget-templates/importar-excel")
+async def importar_presupuesto_excel(
+    archivo: UploadFile = File(...), _: dict = Depends(require_approved)
+):
+    """Lee un Excel de presupuesto y devuelve sus datos con el formato del
+    formulario (no guarda nada: el usuario revisa y guarda despues)."""
+    nombre = (archivo.filename or "").lower()
+    if not nombre.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx)")
+    contenido = await archivo.read()
+    if len(contenido) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El archivo es demasiado grande (max. 15 MB)")
+    try:
+        from excel_presupuesto import parse_presupuesto_excel
+
+        return parse_presupuesto_excel(contenido)
+    except HTTPException:
+        raise
+    except Exception as exc:  # archivo corrupto o con formato inesperado
+        logging.getLogger(__name__).exception("Error leyendo Excel de presupuesto")
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el Excel: {exc}")
+
 
 @api_router.get("/budget-templates/{template_id}", response_model=BudgetTemplate)
 async def get_budget_template(template_id: str):

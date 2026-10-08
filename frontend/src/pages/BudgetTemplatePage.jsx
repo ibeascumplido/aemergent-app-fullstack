@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Save, Download, Printer, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Save, Download, Printer, Plus, Trash2, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +43,8 @@ const BudgetTemplatePage = () => {
   const navigate = useNavigate();
   const isEditing = Boolean(id);
   const pdfRef = useRef(null);
+  const excelInputRef = useRef(null);
+  const [importando, setImportando] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -470,6 +472,48 @@ const BudgetTemplatePage = () => {
     }
   };
 
+  // Cargar los datos del presupuesto desde un Excel (los lee el servidor).
+  // No guarda nada: rellena el formulario para revisarlo y guardar después.
+  const handleImportExcel = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const hayDatos = cliente.trim() || materiales.some((m) => m.nombre && m.nombre.trim());
+    if (hayDatos && !window.confirm("Se van a sustituir los datos actuales del presupuesto por los del Excel. ¿Continuar?")) {
+      return;
+    }
+    setImportando(true);
+    try {
+      const form = new FormData();
+      form.append("archivo", file);
+      const res = await axios.post(`${API}/budget-templates/importar-excel`, form);
+      const d = res.data;
+      if (d.budget_number) setBudgetNumber(d.budget_number);
+      if (d.budget_date) setBudgetDate(d.budget_date);
+      if (d.cliente !== undefined) setCliente(d.cliente);
+      if (d.lugar_ejecucion !== undefined) setLugarEjecucion(d.lugar_ejecucion);
+      if (d.provincia !== undefined) setProvincia(d.provincia);
+      if (d.titulo) setTitulo(d.titulo);
+      if (d.servicios_descripcion !== undefined) setServiciosDescripcion(d.servicios_descripcion);
+      if (Array.isArray(d.materiales)) {
+        const filas = d.materiales.map((m) => ({ ...emptyMaterialRow, ...m }));
+        while (filas.length < 5) filas.push({ ...emptyMaterialRow });
+        setMateriales(filas);
+      }
+      if (d.porte) setPorte((prev) => ({ ...prev, ...d.porte }));
+      if (d.mano_obra) setManoObra((prev) => ({ ...prev, ...d.mano_obra }));
+      if (d.calculo_mano_obra) setCalculoManoObra((prev) => ({ ...prev, ...d.calculo_mano_obra }));
+      const n = (d.materiales || []).length;
+      toast.success(`Excel cargado: ${n} ${n === 1 ? "línea" : "líneas"} de materiales. Revisa y guarda.`);
+      (d.avisos || []).forEach((a) => toast.warning(a));
+    } catch (err) {
+      console.error("Error importando Excel:", err);
+      toast.error(err?.response?.data?.detail || "No se pudo leer el Excel");
+    } finally {
+      setImportando(false);
+    }
+  };
+
   // Export to PDF: todo en UNA sola cara A4 (se reduce el contenido para que
   // quepa). Solo si hay tantas líneas que habría que reducirlo demasiado, se
   // reparte en varias caras.
@@ -580,7 +624,28 @@ const BudgetTemplatePage = () => {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          {!isFacturacion && (
+            <>
+              <input
+                ref={excelInputRef}
+                type="file"
+                accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={handleImportExcel}
+                className="hidden"
+                data-testid="excel-file-input"
+              />
+              <Button
+                variant="outline"
+                onClick={() => excelInputRef.current?.click()}
+                disabled={importando}
+                data-testid="importar-excel-btn"
+              >
+                <FileSpreadsheet className="w-4 h-4 mr-2" />
+                {importando ? "Leyendo Excel..." : "Cargar desde Excel"}
+              </Button>
+            </>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowPreview(!showPreview)}
