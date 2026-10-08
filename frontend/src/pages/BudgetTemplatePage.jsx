@@ -47,6 +47,29 @@ const BudgetTemplatePage = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  // Qué bloques internos salen en el PDF para el cliente (se recuerda en este navegador).
+  const [pdfOpciones, setPdfOpciones] = useState(() => {
+    try {
+      const guardado = JSON.parse(localStorage.getItem("presupuesto_pdf_opciones") || "null");
+      if (guardado && typeof guardado === "object") {
+        return { control: guardado.control !== false, facturacion: guardado.facturacion !== false };
+      }
+    } catch {
+      // sin almacenamiento: valores por defecto
+    }
+    return { control: true, facturacion: true };
+  });
+  const cambiarPdfOpcion = (clave, valor) => {
+    setPdfOpciones((prev) => {
+      const nuevo = { ...prev, [clave]: valor };
+      try {
+        localStorage.setItem("presupuesto_pdf_opciones", JSON.stringify(nuevo));
+      } catch {
+        // ignorar
+      }
+      return nuevo;
+    });
+  };
 
   // Header fields
   const [budgetNumber, setBudgetNumber] = useState("");
@@ -447,36 +470,92 @@ const BudgetTemplatePage = () => {
     }
   };
 
-  // Export to PDF
+  // Export to PDF: todo en UNA sola cara A4 (se reduce el contenido para que
+  // quepa). Solo si hay tantas líneas que habría que reducirlo demasiado, se
+  // reparte en varias caras.
   const handleExportPDF = async () => {
     const element = pdfRef.current;
-    
-    // Ocultar columnas auxiliares temporalmente
-    const auxElements = element.querySelectorAll('[data-pdf-hide="true"]');
-    auxElements.forEach(el => {
-      el.style.display = 'none';
+
+    // Ocultar columnas auxiliares y los bloques que no se quieren en el PDF
+    const ocultar = Array.from(element.querySelectorAll('[data-pdf-hide="true"]'));
+    if (!pdfOpciones.control) {
+      ocultar.push(...element.querySelectorAll('[data-pdf-section="control"]'));
+    }
+    if (!pdfOpciones.facturacion) {
+      ocultar.push(...element.querySelectorAll('[data-pdf-section="facturacion"]'));
+    }
+    ocultar.forEach((el) => {
+      el.style.display = "none";
     });
-    
+
     const opt = {
       margin: [10, 15, 10, 15],
-      filename: `Presupuesto_${budgetNumber.replace(/\//g, '-')}_${cliente.replace(/\s+/g, '_')}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
+      image: { type: "jpeg", quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
     };
-    
+    const nombreArchivo = `Presupuesto_${budgetNumber.replace(/\//g, "-")}_${cliente.replace(/\s+/g, "_")}.pdf`;
+
     toast.info("Generando PDF...");
-    
+
     try {
-      await html2pdf().set(opt).from(element).save();
+      const worker = html2pdf().set(opt).from(element);
+      const canvas = await worker.toCanvas().get("canvas");
+      const pdfBase = await worker.toPdf().get("pdf");
+      const JsPDF = pdfBase.constructor;
+      const pdf = new JsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+
+      const [mt, mr, mb, ml] = opt.margin;
+      const anchoUtil = 210 - mr - ml; // 180 mm
+      const altoUtil = 297 - mt - mb; // 277 mm
+      const altoImg = (canvas.height * anchoUtil) / canvas.width;
+      const ESCALA_MINIMA = 0.6; // por debajo, mejor repartir en varias caras
+
+      if (altoImg <= altoUtil) {
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.98), "JPEG", ml, mt, anchoUtil, altoImg);
+      } else if (altoUtil / altoImg >= ESCALA_MINIMA) {
+        const k = altoUtil / altoImg;
+        const w = anchoUtil * k;
+        pdf.addImage(
+          canvas.toDataURL("image/jpeg", 0.98),
+          "JPEG",
+          ml + (anchoUtil - w) / 2,
+          mt,
+          w,
+          altoUtil
+        );
+      } else {
+        const altoPaginaPx = Math.floor((altoUtil * canvas.width) / anchoUtil);
+        let y = 0;
+        let primera = true;
+        while (y < canvas.height) {
+          const h = Math.min(altoPaginaPx, canvas.height - y);
+          const trozo = document.createElement("canvas");
+          trozo.width = canvas.width;
+          trozo.height = h;
+          trozo.getContext("2d").drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+          if (!primera) pdf.addPage();
+          pdf.addImage(
+            trozo.toDataURL("image/jpeg", 0.98),
+            "JPEG",
+            ml,
+            mt,
+            anchoUtil,
+            (h * anchoUtil) / canvas.width
+          );
+          primera = false;
+          y += h;
+        }
+      }
+      pdf.save(nombreArchivo);
       toast.success("PDF generado correctamente");
     } catch (err) {
       console.error("Error generating PDF:", err);
       toast.error("Error al generar el PDF");
     } finally {
-      // Restaurar columnas auxiliares
-      auxElements.forEach(el => {
-        el.style.display = '';
+      // Restaurar lo que se ocultó
+      ocultar.forEach((el) => {
+        el.style.display = "";
       });
     }
   };
@@ -531,6 +610,28 @@ const BudgetTemplatePage = () => {
         </div>
       </div>
 
+      <div className="flex items-center justify-end gap-4 flex-wrap mb-4 text-sm text-slate-600 print:hidden" data-testid="pdf-opciones">
+        <span className="font-medium">Incluir en el PDF:</span>
+        <label className="inline-flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pdfOpciones.control}
+            onChange={(e) => cambiarPdfOpcion("control", e.target.checked)}
+            data-testid="pdf-incluir-control"
+          />
+          Datos de control de trabajos
+        </label>
+        <label className="inline-flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pdfOpciones.facturacion}
+            onChange={(e) => cambiarPdfOpcion("facturacion", e.target.checked)}
+            data-testid="pdf-incluir-facturacion"
+          />
+          Datos de facturación
+        </label>
+      </div>
+
       {/* Budget Template */}
       <div ref={pdfRef} className={isFacturacion ? "[&_input]:pointer-events-none [&_textarea]:pointer-events-none [&_button]:pointer-events-none [&_[role=combobox]]:pointer-events-none [&_input]:bg-slate-50 [&_textarea]:bg-slate-50" : ""}>
         <motion.div
@@ -551,7 +652,6 @@ const BudgetTemplatePage = () => {
               <h1 className="text-2xl font-bold text-red-500 font-['Manrope']">
                 PRESUPUESTO
               </h1>
-              <p className="text-slate-500 text-sm mt-1">Documento comercial</p>
             </div>
           </div>
           <div className="text-right">
@@ -614,7 +714,7 @@ const BudgetTemplatePage = () => {
         </div>
 
         {/* Datos de Control de Trabajos (Jardinería) */}
-        <div className="mb-8">
+        <div className="mb-8" data-pdf-section="control">
           <div className="bg-slate-600 text-white px-4 py-2 rounded-t-lg font-medium">
             DATOS DE CONTROL DE TRABAJOS
           </div>
@@ -647,7 +747,7 @@ const BudgetTemplatePage = () => {
         </div>
 
         {/* Datos de Facturación (departamento facturación) */}
-        <div className={`mb-8 ${isFacturacion ? "[&_input]:!pointer-events-auto [&_textarea]:!pointer-events-auto [&_input]:!bg-white [&_textarea]:!bg-white ring-2 ring-sky-300 rounded-lg" : ""}`}>
+        <div data-pdf-section="facturacion" className={`mb-8 ${isFacturacion ? "[&_input]:!pointer-events-auto [&_textarea]:!pointer-events-auto [&_input]:!bg-white [&_textarea]:!bg-white ring-2 ring-sky-300 rounded-lg" : ""}`}>
           <div className="bg-sky-600 text-white px-4 py-2 rounded-t-lg font-medium">
             DATOS DE FACTURACIÓN
           </div>
@@ -1375,7 +1475,6 @@ const BudgetTemplatePage = () => {
                   />
                   <div>
                     <h1 className="text-xl font-bold text-red-500">PRESUPUESTO</h1>
-                    <p className="text-slate-500 text-xs mt-1">Documento comercial</p>
                   </div>
                 </div>
                 <div className="text-right text-xs">
@@ -1390,6 +1489,33 @@ const BudgetTemplatePage = () => {
                 <p><strong>Lugar de ejecución:</strong> {lugarEjecucion || "-"}</p>
                 <p><strong>Provincia:</strong> {provincia || "-"}</p>
               </div>
+
+              {pdfOpciones.control && (
+                <div className="mb-6 text-xs border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="bg-slate-600 text-white px-3 py-1.5 font-medium">DATOS DE CONTROL DE TRABAJOS</div>
+                  <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-1">
+                    <p><strong>Título:</strong> {titulo || "-"}</p>
+                    <p><strong>Centro:</strong> {centro || "-"}</p>
+                    <p><strong>Solicitud:</strong> {solicitudTrabajo || "-"}</p>
+                    <p><strong>Fecha ejec.:</strong> {fechaEjecucion || "-"}</p>
+                    <p><strong>Año:</strong> {anio || "-"}</p>
+                    <p><strong>Nº orden:</strong> {numOrden || "-"}</p>
+                  </div>
+                </div>
+              )}
+
+              {pdfOpciones.facturacion && (
+                <div className="mb-6 text-xs border border-sky-200 rounded-lg overflow-hidden">
+                  <div className="bg-sky-600 text-white px-3 py-1.5 font-medium">DATOS DE FACTURACIÓN</div>
+                  <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-1 bg-sky-50/40">
+                    <p><strong>Pedido cliente:</strong> {pedidoCliente || "-"}</p>
+                    <p><strong>Factura inicio:</strong> {facturaInicio || "-"}</p>
+                    <p><strong>Factura prov.:</strong> {facturaProveedor || "-"}</p>
+                    <p><strong>Importe prov.:</strong> {importeProveedor || "-"}</p>
+                    <p className="col-span-2"><strong>Anotaciones:</strong> {anotacionesFacturacion || "-"}</p>
+                  </div>
+                </div>
+              )}
 
               {/* Services */}
               {serviciosDescripcion && (
