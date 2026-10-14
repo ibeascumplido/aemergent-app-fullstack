@@ -13,6 +13,7 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const LIMITE_INICIAL = 6;
+const PASO = 15;
 
 const NotificacionesResumen = () => {
   const navigate = useNavigate();
@@ -20,13 +21,14 @@ const NotificacionesResumen = () => {
   const [sinLeer, setSinLeer] = useState(0);
   const [loading, setLoading] = useState(true);
   const [soloSinLeer, setSoloSinLeer] = useState(false);
-  const [verMas, setVerMas] = useState(false);
+  const [abierto, setAbierto] = useState(false);
+  const [mostrar, setMostrar] = useState(LIMITE_INICIAL);
   const [expandida, setExpandida] = useState(null);
 
   const cargar = useCallback(async () => {
     try {
       const [n, c] = await Promise.all([
-        axios.get(`${API}/notifications`, { params: { limit: 100 } }),
+        axios.get(`${API}/notifications`, { params: { limit: 300 } }),
         axios.get(`${API}/notifications/count`),
       ]);
       setItems(n.data);
@@ -81,18 +83,34 @@ const NotificacionesResumen = () => {
   };
 
   const lista = soloSinLeer ? items.filter((n) => !n.read) : items;
-  const visibles = verMas ? lista : lista.slice(0, LIMITE_INICIAL);
+  const visibles = lista.slice(0, mostrar);
+  const restantes = lista.length - visibles.length;
 
   return (
     <Card className="border-slate-100 shadow-sm" data-testid="notificaciones-resumen">
-      <CardHeader className="border-b border-slate-50 pb-4">
+      <CardHeader className={`pb-4 ${abierto ? "border-b border-slate-50" : ""} ${sinLeer > 0 ? "bg-blue-50/60" : ""}`}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope'] flex items-center gap-2">
-            Notificaciones
-            {sinLeer > 0 && (
-              <span className="bg-red-500 text-white text-xs rounded-full px-2 py-0.5">{sinLeer}</span>
-            )}
-          </CardTitle>
+          <button
+            type="button"
+            className="flex items-center gap-2 text-left flex-1 min-w-0"
+            onClick={() => { setAbierto((v) => !v); setMostrar(LIMITE_INICIAL); }}
+            aria-expanded={abierto}
+            data-testid="notificaciones-toggle"
+          >
+            <Bell className={`w-5 h-5 flex-shrink-0 ${sinLeer > 0 ? "text-red-500" : "text-slate-400"}`} />
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold text-slate-900 font-['Manrope']">Notificaciones</CardTitle>
+              <p className={`text-sm ${sinLeer > 0 ? "text-red-600 font-medium" : "text-slate-500"}`}>
+                {loading
+                  ? "Cargando..."
+                  : sinLeer > 0
+                  ? `Tienes ${sinLeer} ${sinLeer === 1 ? "notificación nueva" : "notificaciones nuevas"}`
+                  : "No hay notificaciones nuevas"}
+              </p>
+            </div>
+            {abierto ? <ChevronUp className="w-5 h-5 text-slate-400 ml-auto" /> : <ChevronDown className="w-5 h-5 text-slate-400 ml-auto" />}
+          </button>
+          {abierto && (
           <div className="flex items-center gap-1">
             <Button
               variant={soloSinLeer ? "default" : "outline"}
@@ -109,8 +127,10 @@ const NotificacionesResumen = () => {
               </Button>
             )}
           </div>
+          )}
         </div>
       </CardHeader>
+      {abierto && (
       <CardContent className="p-0">
         {loading ? (
           <div className="p-6 text-center text-slate-400">Cargando...</div>
@@ -157,16 +177,24 @@ const NotificacionesResumen = () => {
                 );
               })}
             </ul>
-            {lista.length > LIMITE_INICIAL && (
-              <div className="p-2 border-t border-slate-100 text-center">
-                <Button variant="ghost" size="sm" className="text-xs text-slate-600" onClick={() => setVerMas((v) => !v)}>
-                  {verMas ? "Ver menos" : `Ver todas (${lista.length})`}
-                </Button>
+            {(restantes > 0 || mostrar > LIMITE_INICIAL) && (
+              <div className="p-2 border-t border-slate-100 flex justify-center gap-2">
+                {restantes > 0 && (
+                  <Button variant="ghost" size="sm" className="text-xs text-slate-600" onClick={() => setMostrar((m) => m + PASO)}>
+                    Ver {Math.min(PASO, restantes)} más ({restantes} restantes)
+                  </Button>
+                )}
+                {mostrar > LIMITE_INICIAL && (
+                  <Button variant="ghost" size="sm" className="text-xs text-slate-500" onClick={() => setMostrar(LIMITE_INICIAL)}>
+                    Ver menos
+                  </Button>
+                )}
               </div>
             )}
           </>
         )}
       </CardContent>
+      )}
     </Card>
   );
 };
