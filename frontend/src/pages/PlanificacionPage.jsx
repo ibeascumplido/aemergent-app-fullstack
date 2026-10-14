@@ -7,7 +7,9 @@ import {
   X,
   Lock,
   Check,
+  Building2,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,6 +61,7 @@ const formatDateString = (date) =>
   ).padStart(2, "0")}`;
 
 const PlanificacionPage = () => {
+  const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const panelRef = useRef(null);
 
@@ -448,6 +451,19 @@ const PlanificacionPage = () => {
             <p className="text-sm text-slate-500">Quién va a cada sitio, día a día</p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        {isAdmin && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/clients/galp/locations?desde=planificacion")}
+            className="border-slate-200"
+            data-testid="ir-galp-btn"
+          >
+            <Building2 className="w-4 h-4 mr-2" />
+            Ir a GALP
+          </Button>
+        )}
         {isAdmin && (
           <Button
             variant="outline"
@@ -460,6 +476,7 @@ const PlanificacionPage = () => {
             Añadir columna
           </Button>
         )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between mb-4">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   MapPin,
@@ -83,6 +83,8 @@ const emptyForm = {
 
 const ClientLocationsPage = () => {
   const { slug } = useParams();
+  const [searchParams] = useSearchParams();
+  const desdePlanificacion = searchParams.get("desde") === "planificacion";
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
 
@@ -241,15 +243,29 @@ const ClientLocationsPage = () => {
 
   return (
     <div data-testid="client-locations-page">
-      <Button
-        variant="ghost"
-        onClick={() => navigate(cliente ? `/clients/${cliente.slug}` : "/clients")}
-        className="mb-2 text-slate-600 hover:text-slate-900 -ml-3"
-        size="sm"
-      >
-        <ArrowLeft className="w-4 h-4 mr-2" />
-        {cliente ? `Volver a ${cliente.nombre}` : "Volver"}
-      </Button>
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <Button
+          variant="ghost"
+          onClick={() => navigate(cliente ? `/clients/${cliente.slug}` : "/clients")}
+          className="text-slate-600 hover:text-slate-900 -ml-3"
+          size="sm"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          {cliente ? `Volver a ${cliente.nombre}` : "Volver"}
+        </Button>
+        {desdePlanificacion && (
+          <Button
+            variant="outline"
+            onClick={() => navigate("/planificacion")}
+            size="sm"
+            className="border-indigo-200 text-indigo-700"
+            data-testid="volver-planificacion-btn"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Volver a Planificación
+          </Button>
+        )}
+      </div>
 
       <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
         <div className="flex items-center gap-3">
