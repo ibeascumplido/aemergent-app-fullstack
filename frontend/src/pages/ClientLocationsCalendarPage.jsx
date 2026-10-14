@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import NavPlanificacion from "@/components/NavPlanificacion";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -343,6 +344,7 @@ const ClientLocationsCalendarPage = () => {
         <ArrowLeft className="w-4 h-4 mr-2" />
         Volver a centros
       </Button>
+      <NavPlanificacion actual="galp" />
 
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <div className="flex items-center gap-3">

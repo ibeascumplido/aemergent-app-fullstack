@@ -46,6 +46,8 @@ import { toast } from "sonner";
 import { estiloColorTextura, patronTextura } from "@/components/FichaColor";
 import axios from "axios";
 
+import NavPlanificacion from "@/components/NavPlanificacion";
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -405,6 +407,7 @@ const AdminCalendarPage = () => {
 
   return (
     <div data-testid="admin-calendar-page">
+      <NavPlanificacion actual="vacaciones" />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Calendarios</h1>

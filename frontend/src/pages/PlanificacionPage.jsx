@@ -7,9 +7,7 @@ import {
   X,
   Lock,
   Check,
-  Building2,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +40,8 @@ import { estiloColorTextura } from "@/components/FichaColor";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 
+import NavPlanificacion from "@/components/NavPlanificacion";
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const MESES_ES = [
@@ -61,7 +61,6 @@ const formatDateString = (date) =>
   ).padStart(2, "0")}`;
 
 const PlanificacionPage = () => {
-  const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const panelRef = useRef(null);
 
@@ -439,6 +438,7 @@ const PlanificacionPage = () => {
 
   return (
     <div data-testid="planificacion-page">
+      <NavPlanificacion actual="planificacion" />
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
@@ -451,19 +451,6 @@ const PlanificacionPage = () => {
             <p className="text-sm text-slate-500">Quién va a cada sitio, día a día</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-        {isAdmin && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate("/clients/galp/locations?desde=planificacion")}
-            className="border-slate-200"
-            data-testid="ir-galp-btn"
-          >
-            <Building2 className="w-4 h-4 mr-2" />
-            Ir a GALP
-          </Button>
-        )}
         {isAdmin && (
           <Button
             variant="outline"
@@ -476,7 +463,6 @@ const PlanificacionPage = () => {
             Añadir columna
           </Button>
         )}
-        </div>
       </div>
 
       <div className="flex items-center justify-between mb-4">
