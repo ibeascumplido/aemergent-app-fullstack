@@ -15,6 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import FormacionUsuario from "@/components/FormacionUsuario";
+
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Umbral para avisar de una revision medica proxima (dias antes de la fecha)
@@ -352,6 +354,8 @@ const UserDetailPage = () => {
           </p>
         </CardContent>
       </Card>
+
+      <FormacionUsuario userId={userId} />
 
       <Button
         onClick={guardar}

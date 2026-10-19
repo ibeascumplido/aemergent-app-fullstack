@@ -132,6 +132,8 @@ class NotificationType(str, Enum):
     AVISO_REVISION_MEDICA = "aviso_revision_medica"
     INCIDENCIA_SIN_RESOLVER = "incidencia_sin_resolver"
     PARTE_SIN_ACTIVIDAD = "parte_sin_actividad"
+    AVISO_FORMACION_CADUCIDAD = "aviso_formacion_caducidad"
+    CURSO_FORMACION = "curso_formacion"
 
 # ============ EMAIL HELPER FUNCTIONS ============
 async def send_notification_email(to_email: str, subject: str, html_content: str):
@@ -8972,6 +8974,209 @@ async def eliminar_justificante_medico(justificante_id: str, current_user: dict 
 
 
 # =====================================================================
+# FORMACION: documentos de cursos/carnets por operario y convocatorias
+# ---------------------------------------------------------------------
+# El admin sube desde la ficha del usuario los diplomas/carnets (PDF o
+# imagen) con su fecha de caducidad opcional; el sistema avisa al propio
+# operario (y a los admin) cuando se acerca. Tambien puede convocar a un
+# operario a un curso (fecha, hora, lugar) y le llega una notificacion.
+# =====================================================================
+
+
+class FormacionDocCreate(BaseModel):
+    titulo: str = Field(..., min_length=1, max_length=150)
+    archivo: str = Field(..., description="Data-URI base64 (imagen o PDF)")
+    fecha_realizacion: Optional[str] = None
+    fecha_caducidad: Optional[str] = None
+    notas: Optional[str] = Field("", max_length=500)
+
+
+class FormacionDocUpdate(BaseModel):
+    titulo: Optional[str] = Field(None, min_length=1, max_length=150)
+    fecha_realizacion: Optional[str] = None
+    fecha_caducidad: Optional[str] = None
+    notas: Optional[str] = Field(None, max_length=500)
+
+
+class ConvocatoriaCreate(BaseModel):
+    curso: str = Field(..., min_length=1, max_length=150)
+    fecha: str
+    hora: Optional[str] = ""
+    lugar: Optional[str] = Field("", max_length=300)
+    notas: Optional[str] = Field("", max_length=500)
+    user_ids: List[str] = Field(..., min_length=1)
+
+
+def _validar_fecha_iso(valor: Optional[str], campo: str) -> Optional[str]:
+    if not valor:
+        return None
+    try:
+        date.fromisoformat(valor)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{campo}: fecha no válida")
+    return valor
+
+
+def _formacion_doc_out(d: dict) -> dict:
+    return {
+        "id": d["id"],
+        "user_id": d["user_id"],
+        "titulo": d.get("titulo", ""),
+        "url": d.get("url"),
+        "tipo": d.get("tipo", "imagen"),
+        "fecha_realizacion": d.get("fecha_realizacion"),
+        "fecha_caducidad": d.get("fecha_caducidad"),
+        "notas": d.get("notas", ""),
+        "creado_en": d.get("creado_en"),
+    }
+
+
+def _convocatoria_out(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "user_id": c["user_id"],
+        "curso": c.get("curso", ""),
+        "fecha": c.get("fecha"),
+        "hora": c.get("hora", ""),
+        "lugar": c.get("lugar", ""),
+        "notas": c.get("notas", ""),
+        "creado_en": c.get("creado_en"),
+    }
+
+
+@api_router.get("/admin/users/{user_id}/formacion")
+async def admin_listar_formacion(user_id: str, current_user: dict = Depends(require_admin)):
+    docs = [_formacion_doc_out(d) async for d in db.formacion_documentos.find({"user_id": user_id}).sort("creado_en", -1)]
+    convs = [_convocatoria_out(c) async for c in db.formacion_convocatorias.find({"user_id": user_id}).sort("fecha", -1)]
+    return {"documentos": docs, "convocatorias": convs}
+
+
+@api_router.post("/admin/users/{user_id}/formacion")
+async def admin_subir_formacion(user_id: str, payload: FormacionDocCreate, current_user: dict = Depends(require_admin)):
+    if not await db.users.find_one({"user_id": user_id}, {"_id": 0, "user_id": 1}):
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    realizacion = _validar_fecha_iso(payload.fecha_realizacion, "Fecha de realización")
+    caducidad = _validar_fecha_iso(payload.fecha_caducidad, "Fecha de caducidad")
+    tipo = "pdf" if _tipo_documento_base64(payload.archivo) == "pdf" else "imagen"
+    url, public_id, _rt = await _subir_documento_cloudinary(payload.archivo, "inicia-gestion/formacion")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "titulo": payload.titulo.strip(),
+        "url": url,
+        "public_id": public_id,
+        "tipo": tipo,
+        "fecha_realizacion": realizacion,
+        "fecha_caducidad": caducidad,
+        "notas": payload.notas or "",
+        "creado_en": datetime.now(timezone.utc),
+    }
+    await db.formacion_documentos.insert_one(doc)
+    return _formacion_doc_out(doc)
+
+
+@api_router.put("/admin/formacion/{doc_id}")
+async def admin_editar_formacion(doc_id: str, payload: FormacionDocUpdate, current_user: dict = Depends(require_admin)):
+    cambios = payload.model_dump(exclude_unset=True)
+    if "fecha_realizacion" in cambios:
+        cambios["fecha_realizacion"] = _validar_fecha_iso(cambios["fecha_realizacion"], "Fecha de realización")
+    if "fecha_caducidad" in cambios:
+        cambios["fecha_caducidad"] = _validar_fecha_iso(cambios["fecha_caducidad"], "Fecha de caducidad")
+    if "titulo" in cambios and cambios["titulo"]:
+        cambios["titulo"] = cambios["titulo"].strip()
+    if not cambios:
+        raise HTTPException(status_code=400, detail="Nada que actualizar")
+    res = await db.formacion_documentos.find_one_and_update(
+        {"id": doc_id}, {"$set": cambios}, return_document=True
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return _formacion_doc_out(res)
+
+
+@api_router.delete("/admin/formacion/{doc_id}")
+async def admin_borrar_formacion(doc_id: str, current_user: dict = Depends(require_admin)):
+    doc = await db.formacion_documentos.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_documento_cloudinary(doc.get("public_id"), "image")
+    await db.formacion_documentos.delete_one({"id": doc_id})
+    return {"ok": True}
+
+
+@api_router.post("/admin/formacion/convocatorias")
+async def admin_crear_convocatoria(payload: ConvocatoriaCreate, current_user: dict = Depends(require_admin)):
+    fecha = _validar_fecha_iso(payload.fecha, "Fecha")
+    if not fecha:
+        raise HTTPException(status_code=400, detail="Falta la fecha")
+    creadas = []
+    for uid in dict.fromkeys(payload.user_ids):
+        if not await db.users.find_one({"user_id": uid}, {"_id": 0, "user_id": 1}):
+            continue
+        conv = {
+            "id": str(uuid.uuid4()),
+            "user_id": uid,
+            "curso": payload.curso.strip(),
+            "fecha": fecha,
+            "hora": payload.hora or "",
+            "lugar": (payload.lugar or "").strip(),
+            "notas": payload.notas or "",
+            "creado_en": datetime.now(timezone.utc),
+        }
+        await db.formacion_convocatorias.insert_one(conv)
+        await create_notification(
+            user_id=uid,
+            notification_type=NotificationType.CURSO_FORMACION,
+            title=f"Curso de formación: {conv['curso']}",
+            message=_texto_convocatoria(conv),
+            data={"convocatoria_id": conv["id"]},
+        )
+        creadas.append(_convocatoria_out(conv))
+    if not creadas:
+        raise HTTPException(status_code=404, detail="Ningún usuario válido")
+    return {"creadas": creadas}
+
+
+def _texto_convocatoria(c: dict) -> str:
+    try:
+        f = date.fromisoformat(c["fecha"]).strftime("%d/%m/%Y")
+    except Exception:
+        f = c.get("fecha", "")
+    hora = f" a las {c['hora']}" if c.get("hora") else ""
+    lugar = f" en {c['lugar']}" if c.get("lugar") else ""
+    notas = f" {c['notas']}" if c.get("notas") else ""
+    return f"Se te ha convocado al curso «{c['curso']}» el {f}{hora}{lugar}.{notas}"
+
+
+@api_router.delete("/admin/formacion/convocatorias/{conv_id}")
+async def admin_cancelar_convocatoria(conv_id: str, current_user: dict = Depends(require_admin)):
+    conv = await db.formacion_convocatorias.find_one({"id": conv_id})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Convocatoria no encontrada")
+    await db.formacion_convocatorias.delete_one({"id": conv_id})
+    await create_notification(
+        user_id=conv["user_id"],
+        notification_type=NotificationType.CURSO_FORMACION,
+        title=f"Curso cancelado: {conv['curso']}",
+        message=f"Se ha cancelado la convocatoria al curso «{conv['curso']}» del {conv.get('fecha', '')}.",
+        data={},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/mi-formacion")
+async def mi_formacion(current_user: dict = Depends(require_approved)):
+    uid = current_user["user_id"]
+    docs = [_formacion_doc_out(d) async for d in db.formacion_documentos.find({"user_id": uid}).sort("creado_en", -1)]
+    hoy = date.today().isoformat()
+    convs = [
+        _convocatoria_out(c)
+        async for c in db.formacion_convocatorias.find({"user_id": uid, "fecha": {"$gte": hoy}}).sort("fecha", 1)
+    ]
+    return {"documentos": docs, "convocatorias": convs}
+
+
+# =====================================================================
 # FICHAJE (Fase 19)
 # ---------------------------------------------------------------------
 # Sistema de fichaje muy simple: el operario marca entrada/salida, se
@@ -10073,6 +10278,8 @@ logger = logging.getLogger(__name__)
 
 DIAS_AVISO_ITV_VEHICULO = 7
 DIAS_AVISO_REVISION_MEDICA = 7
+# Avisos de caducidad de carnets/cursos: a 2 meses, 1 mes, 1 semana, el dia y vencido.
+UMBRALES_AVISO_FORMACION = (60, 30, 7, 0)
 DIAS_AVISO_INCIDENCIA_ABIERTA = 7
 DIAS_AVISO_PARTE_SIN_ACTIVIDAD = 10
 
@@ -10172,6 +10379,60 @@ async def revisar_avisos_automaticos() -> int:
             data={"user_id": u["user_id"]},
         )
         await _marcar_avisado(clave, "revision_medica", u["user_id"])
+        enviados += 1
+
+    # --- Formacion: carnets/cursos que caducan ------------------------
+    async for d in db.formacion_documentos.find({"fecha_caducidad": {"$nin": [None, ""]}}):
+        fecha_str = d.get("fecha_caducidad")
+        dias = _dias_hasta(fecha_str)
+        if dias is None or dias > UMBRALES_AVISO_FORMACION[0]:
+            continue
+        umbral = "vencido" if dias < 0 else min(u for u in UMBRALES_AVISO_FORMACION if dias <= u)
+        clave = f"formacion:{d['id']}:{fecha_str}:{umbral}"
+        if await _ya_avisado(clave):
+            continue
+        usuario = await db.users.find_one({"user_id": d["user_id"]}, {"_id": 0, "name": 1})
+        nombre_emp = (usuario or {}).get("name", "un empleado")
+        titulo_doc = d.get("titulo", "formación")
+        if dias < 0:
+            msg_op = f"Tu «{titulo_doc}» caducó el {fecha_str}. Hay que renovarlo."
+            msg_adm = f"El «{titulo_doc}» de {nombre_emp} caducó el {fecha_str}."
+        else:
+            meses = f"{dias // 30} mes(es)" if dias >= 30 else f"{dias} día(s)"
+            msg_op = f"Tu «{titulo_doc}» caduca {'hoy' if dias == 0 else 'en ' + meses} ({fecha_str})."
+            msg_adm = f"El «{titulo_doc}» de {nombre_emp} caduca {'hoy' if dias == 0 else 'en ' + meses} ({fecha_str})."
+        await create_notification(
+            user_id=d["user_id"],
+            notification_type=NotificationType.AVISO_FORMACION_CADUCIDAD,
+            title=f"Caducidad próxima: {titulo_doc}",
+            message=msg_op,
+            data={"user_id": d["user_id"], "documento_id": d["id"]},
+        )
+        await notify_admins(
+            notification_type=NotificationType.AVISO_FORMACION_CADUCIDAD,
+            title=f"Caducidad próxima: {titulo_doc} ({nombre_emp})",
+            message=msg_adm,
+            data={"user_id": d["user_id"], "documento_id": d["id"], "para_admin": True},
+        )
+        await _marcar_avisado(clave, "formacion", d["id"])
+        enviados += 1
+
+    # --- Formacion: recordatorio de cursos convocados (dia antes) ----------
+    async for c in db.formacion_convocatorias.find({"fecha": {"$nin": [None, ""]}}):
+        dias = _dias_hasta(c.get("fecha"))
+        if dias is None or dias < 0 or dias > 1:
+            continue
+        clave = f"curso_recordatorio:{c['id']}:{c['fecha']}"
+        if await _ya_avisado(clave):
+            continue
+        await create_notification(
+            user_id=c["user_id"],
+            notification_type=NotificationType.CURSO_FORMACION,
+            title=f"Recordatorio de curso: {c['curso']}",
+            message=("Hoy: " if dias == 0 else "Mañana: ") + _texto_convocatoria(c),
+            data={"convocatoria_id": c["id"]},
+        )
+        await _marcar_avisado(clave, "curso_recordatorio", c["id"])
         enviados += 1
 
     # --- Incidencias abiertas hace demasiado tiempo -------------------

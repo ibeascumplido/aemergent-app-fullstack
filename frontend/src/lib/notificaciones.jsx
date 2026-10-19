@@ -1,4 +1,4 @@
-import { Check, X, Palmtree, AlertCircle, Camera, FileText, Shirt, UserPlus, CloudRain, HardHat, Euro, ListChecks, Truck, Stethoscope, AlertTriangle, Clock } from "lucide-react";
+import { GraduationCap, Check, X, Palmtree, AlertCircle, Camera, FileText, Shirt, UserPlus, CloudRain, HardHat, Euro, ListChecks, Truck, Stethoscope, AlertTriangle, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -43,6 +43,10 @@ export const calcularDestino = (notification) => {
       return data?.user_id ? `/admin/users/${data.user_id}` : "/admin/users";
     case "incidencia_sin_resolver":
       return data?.enlace || null;
+    case "aviso_formacion_caducidad":
+      return data?.para_admin ? `/admin/users/${data.user_id}` : "/mi-formacion";
+    case "curso_formacion":
+      return "/mi-formacion";
     case "parte_sin_actividad":
       return data?.work_order_id ? `/work-orders/${data.work_order_id}` : "/work-orders";
     default:
@@ -93,6 +97,10 @@ export const getNotificationIcon = (type) => {
       return <Stethoscope className="w-4 h-4 text-amber-600" />;
     case "incidencia_sin_resolver":
       return <AlertTriangle className="w-4 h-4 text-orange-500" />;
+    case "aviso_formacion_caducidad":
+      return <AlertTriangle className="w-4 h-4 text-amber-600" />;
+    case "curso_formacion":
+      return <GraduationCap className="w-4 h-4 text-indigo-500" />;
     case "parte_sin_actividad":
       return <Clock className="w-4 h-4 text-slate-500" />;
     default:
