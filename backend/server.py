@@ -9148,6 +9148,19 @@ def _texto_convocatoria(c: dict) -> str:
     return f"Se te ha convocado al curso «{c['curso']}» el {f}{hora}{lugar}.{notas}"
 
 
+@api_router.get("/admin/formacion/convocatorias")
+async def admin_listar_convocatorias(current_user: dict = Depends(require_admin)):
+    """Convocatorias futuras (desde hoy), con el nombre del operario."""
+    hoy = date.today().isoformat()
+    convs = [c async for c in db.formacion_convocatorias.find({"fecha": {"$gte": hoy}}).sort("fecha", 1)]
+    ids = {c["user_id"] for c in convs}
+    nombres = {}
+    if ids:
+        async for u in db.users.find({"user_id": {"$in": list(ids)}}, {"_id": 0, "user_id": 1, "name": 1}):
+            nombres[u["user_id"]] = u.get("name", "")
+    return [{**_convocatoria_out(c), "operario_nombre": nombres.get(c["user_id"], "Operario")} for c in convs]
+
+
 @api_router.delete("/admin/formacion/convocatorias/{conv_id}")
 async def admin_cancelar_convocatoria(conv_id: str, current_user: dict = Depends(require_admin)):
     conv = await db.formacion_convocatorias.find_one({"id": conv_id})

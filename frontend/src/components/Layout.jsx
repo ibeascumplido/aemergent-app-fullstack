@@ -45,6 +45,7 @@ const Layout = () => {
     { to: "/maquinaria", icon: Wrench, label: "Maquinaria", show: isAdmin, section: "admin" },
     { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
     { to: "/admin/prevencion", icon: HardHat, label: "Prevención", show: isAdmin, section: "admin" },
+    { to: "/admin/formacion", icon: GraduationCap, label: "Formación", show: isAdmin, section: "admin" },
     { to: "/admin/fichajes", icon: Clock, label: "Fichajes", show: isAdmin, section: "admin" },
     { to: "/admin/pagos-extra", icon: Euro, label: "Pagos extra", show: isAdmin || isFacturacion, section: "admin" },
     { to: "/admin/tareas-centro", icon: ListChecks, label: "Tareas", show: isAdmin, section: "admin" },
