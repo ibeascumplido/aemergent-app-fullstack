@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import axios from "axios";
 
 // Momento (antes/después) + tema (poda, césped...) -> etiqueta de texto que
 // sale al pie de la foto en el PDF. Ej.: "Antes · Poda".
 const MOMENTOS = ["Antes", "Después"];
 const TEMAS_BASE = ["Poda", "Césped", "Riego", "Plantación", "Limpieza", "Plagas"];
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const CLAVE_TEMAS = "etiquetas_foto_temas_v1";
 
 const leerTemasPropios = () => {
@@ -34,6 +36,14 @@ const SelectorEtiquetaFoto = ({ value, onChange }) => {
   const { momento, tema } = partirEtiqueta(value);
   const [propios, setPropios] = useState(leerTemasPropios);
   const [otro, setOtro] = useState("");
+  const [tareas, setTareas] = useState([]);
+  const [verTareas, setVerTareas] = useState(false);
+
+  useEffect(() => {
+    axios.get(`${API}/work-tasks`)
+      .then((r) => setTareas((r.data || []).map((t) => t.nombre).filter(Boolean)))
+      .catch(() => setTareas([]));
+  }, []);
   const temas = [...TEMAS_BASE, ...propios.filter((t) => !TEMAS_BASE.includes(t))];
 
   const poner = (m, t) => onChange(componerEtiqueta(m, t));
@@ -74,7 +84,7 @@ const SelectorEtiquetaFoto = ({ value, onChange }) => {
             value={otro}
             onChange={(e) => setOtro(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); anadirOtro(); } }}
-            placeholder="Otro tipo (ej. Seto, Fuente...)"
+            placeholder="Escribe tu propia etiqueta (ej. Seto, Fuente...)"
             maxLength={30}
             className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm"
           />
@@ -83,6 +93,20 @@ const SelectorEtiquetaFoto = ({ value, onChange }) => {
           </button>
         </div>
       </div>
+      {tareas.length > 0 && (
+        <div>
+          <button type="button" onClick={() => setVerTareas((v) => !v)} className="text-xs uppercase tracking-wider text-slate-500 font-medium">
+            Tareas del parte {verTareas ? "▲" : "▼"}
+          </button>
+          {verTareas && (
+            <div className="flex gap-2 flex-wrap mt-1.5 max-h-40 overflow-y-auto">
+              {tareas.map((t) => (
+                <button key={t} type="button" className={chip(tema === t, "bg-indigo-600")} onClick={() => poner(momento, t)}>{t}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <p className="text-sm text-slate-600">
         Pie de foto: <strong>{value || "sin etiqueta"}</strong>
       </p>

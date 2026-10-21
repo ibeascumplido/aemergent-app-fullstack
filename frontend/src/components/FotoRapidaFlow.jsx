@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
+import SelectorEtiquetaFoto from "@/components/SelectorEtiquetaFoto";
 import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
 import {
@@ -54,7 +55,7 @@ const FotoRapidaFlow = () => {
   const [subiendoFoto, setSubiendoFoto] = useState(false);
 
   const [clientes, setClientes] = useState([]);
-  const [antesDespues, setAntesDespues] = useState("none");
+  const [etiqueta, setEtiqueta] = useState("");
   const [fecha, setFecha] = useState(hoyISO());
   const [clienteId, setClienteId] = useState("none");
   const [centros, setCentros] = useState([]);
@@ -126,7 +127,7 @@ const FotoRapidaFlow = () => {
   };
 
   const irAClasificar = () => {
-    setAntesDespues("none");
+    setEtiqueta("");
     setFecha(hoyISO());
     setClienteId("none");
     setAudioDataUrl(null);
@@ -196,7 +197,7 @@ const FotoRapidaFlow = () => {
     setEnviando(true);
     try {
       const payload = {
-        antes_despues: antesDespues === "none" ? null : antesDespues,
+        etiqueta: etiqueta || null,
         fecha: fecha || null,
         client_id: clienteId === "none" ? null : clienteId,
         centro_id: centroId === "none" ? null : centroId,
@@ -348,17 +349,8 @@ const FotoRapidaFlow = () => {
 
         <div className="space-y-3 py-1">
           <div className="space-y-1.5">
-            <Label>Antes / Después</Label>
-            <Select value={antesDespues} onValueChange={setAntesDespues}>
-              <SelectTrigger data-testid="foto-antes-despues-select">
-                <SelectValue placeholder="Sin especificar" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Sin especificar</SelectItem>
-                <SelectItem value="antes">Antes</SelectItem>
-                <SelectItem value="despues">Después</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label>Etiqueta de la foto</Label>
+            <SelectorEtiquetaFoto value={etiqueta} onChange={setEtiqueta} />
           </div>
 
           <div className="space-y-1.5">

@@ -3518,6 +3518,7 @@ class ClasificarLotePayload(BaseModel):
 
     antes_despues: Optional[str] = Field(None, pattern=r"^(antes|despues)$")
     fecha: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    etiqueta: Optional[str] = Field(None, max_length=60)
     client_id: Optional[str] = None
     centro_id: Optional[str] = None
     work_order_id: Optional[str] = None
@@ -3770,6 +3771,10 @@ async def clasificar_lote(
     updates = {}
     if payload.antes_despues is not None:
         updates["antes_despues"] = payload.antes_despues
+    if payload.etiqueta is not None:
+        etiqueta = _normalizar_etiqueta(payload.etiqueta)
+        updates["etiqueta"] = etiqueta
+        updates["antes_despues"] = _antes_despues_de_etiqueta(etiqueta)
     if payload.fecha is not None:
         updates["fecha"] = payload.fecha
     if payload.client_id is not None:
