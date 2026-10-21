@@ -3459,6 +3459,46 @@ class FotoCreatePayload(BaseModel):
     work_order_id: Optional[str] = None
     client_id: Optional[str] = None
     centro_id: Optional[str] = None
+    etiqueta: Optional[str] = Field(
+        None, max_length=60,
+        description="Texto libre que sale al pie de la foto en el PDF (p. ej. 'Antes · Poda').",
+    )
+
+
+def _normalizar_etiqueta(texto: Optional[str]) -> Optional[str]:
+    """Limpia el texto de la etiqueta de una foto (espacios, longitud). None si queda vacio."""
+    if not texto:
+        return None
+    limpio = " ".join(texto.split())[:60]
+    return limpio or None
+
+
+def _antes_despues_de_etiqueta(etiqueta: Optional[str]) -> Optional[str]:
+    """Si la etiqueta empieza por 'Antes' o 'Después' devuelve 'antes'/'despues'
+    para mantener funcionando los filtros antiguos; si no, None."""
+    if not etiqueta:
+        return None
+    primera = etiqueta.strip().split(" ")[0].lower().replace("é", "e")
+    if primera == "antes":
+        return "antes"
+    if primera == "despues":
+        return "despues"
+    return None
+
+
+def _etiqueta_de_foto(f: dict) -> Optional[str]:
+    """Etiqueta visible de una foto: la propia o, en fotos antiguas, la derivada de antes_despues."""
+    if f.get("etiqueta"):
+        return f["etiqueta"]
+    if f.get("antes_despues") == "antes":
+        return "Antes"
+    if f.get("antes_despues") == "despues":
+        return "Después"
+    return None
+
+
+class EtiquetaFotoPayload(BaseModel):
+    etiqueta: Optional[str] = Field(None, max_length=60)
 
 
 class FotoClasificarPayload(BaseModel):
@@ -3492,6 +3532,7 @@ class Foto(BaseModel):
     public_id: Optional[str] = None
     lote_id: Optional[str] = None
     antes_despues: Optional[str] = None
+    etiqueta: Optional[str] = None
     fecha: Optional[str] = None
     audio_url: Optional[str] = None
     audio_public_id: Optional[str] = None
@@ -3670,13 +3711,15 @@ async def subir_foto(
     destino = await _destino_de_parte(payload.work_order_id)
     client_id = destino.get("client_id") or payload.client_id
     centro_id = destino.get("centro_id") or payload.centro_id
+    etiqueta = _normalizar_etiqueta(payload.etiqueta)
     doc = {
         "id": str(uuid.uuid4()),
         "operario_id": current_user["user_id"],
         "url": url,
         "public_id": public_id,
         "lote_id": payload.lote_id,
-        "antes_despues": None,
+        "antes_despues": _antes_despues_de_etiqueta(etiqueta),
+        "etiqueta": etiqueta,
         "fecha": None,
         "audio_url": None,
         "audio_public_id": None,
@@ -3970,6 +4013,26 @@ async def marcar_foto_revisada(foto_id: str, _: dict = Depends(require_admin)):
 
 class AnotacionFotoPayload(BaseModel):
     anotacion: str = Field("", max_length=2000)
+
+
+@api_router.put("/fotos/{foto_id}/etiqueta", response_model=Foto)
+async def editar_etiqueta_foto(
+    foto_id: str, payload: EtiquetaFotoPayload, current_user: dict = Depends(require_approved)
+):
+    """Cambia (o quita, con texto vacio) la etiqueta que sale al pie de la
+    foto en el PDF. La puede cambiar quien la subio o un admin."""
+    doc = await db.fotos.find_one({"id": foto_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    if doc["operario_id"] != current_user["user_id"] and current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="No puedes editar esta foto")
+    etiqueta = _normalizar_etiqueta(payload.etiqueta)
+    await db.fotos.update_one(
+        {"id": foto_id},
+        {"$set": {"etiqueta": etiqueta, "antes_despues": _antes_despues_de_etiqueta(etiqueta)}},
+    )
+    doc = await db.fotos.find_one({"id": foto_id})
+    return Foto(**doc)
 
 
 @api_router.put("/fotos/{foto_id}/anotacion", response_model=Foto)
@@ -6792,7 +6855,9 @@ async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -
     fotos. Limita a max_fotos para que el PDF no sea enorme."""
     fotos_docs = [
         f
-        async for f in db.fotos.find({"work_order_id": work_order_id}).sort("creado_en", 1)
+        async for f in db.fotos.find(
+            {"work_order_id": work_order_id, "borrada": {"$ne": True}}
+        ).sort("creado_en", 1)
     ]
     if not fotos_docs:
         return []
@@ -6804,10 +6869,18 @@ async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -
     )
 
     # Descargar cada imagen escalada a un tamaño de miniatura homogéneo.
+    pie_style = ParagraphStyle(
+        "PieFoto", parent=estilos["Normal"], fontSize=8.5, alignment=1,
+        textColor=colors.HexColor("#334155"), fontName="Helvetica-Bold", spaceBefore=3,
+    )
     celdas = []
     for f in fotos_docs:
         img = await _descargar_imagen_pdf(f.get("url"), max_width_cm=5.2, max_height_cm=5.2)
-        celdas.append(img if img else Paragraph("(imagen no disponible)", estilos["Normal"]))
+        contenido = [img if img else Paragraph("(imagen no disponible)", estilos["Normal"])]
+        etiqueta = _etiqueta_de_foto(f)
+        if etiqueta:
+            contenido.append(Paragraph(xml_escape(etiqueta), pie_style))
+        celdas.append(contenido)
 
     # Organizar en filas de 3 columnas
     filas = []

@@ -4,6 +4,7 @@ import { comprimirImagen } from "@/lib/imagen";
 import { toast } from "sonner";
 import { Camera, X, Upload, Images, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import SelectorEtiquetaFoto from "@/components/SelectorEtiquetaFoto";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +21,8 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
   const [open, setOpen] = useState(false);
   const [pestana, setPestana] = useState("nueva"); // nueva | sin_clasificar | cliente
   const [subiendo, setSubiendo] = useState(false);
+  const [etiqueta, setEtiqueta] = useState("");
+  const [subidas, setSubidas] = useState({}); // etiqueta -> nº de fotos subidas en esta sesión
 
   // Fotos existentes (sin clasificar o del cliente) para elegir
   const [candidatas, setCandidatas] = useState([]);
@@ -31,6 +34,7 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
     setPestana("nueva");
     setSeleccionadas(new Set());
     setCandidatas([]);
+    setSubidas({});
     setOpen(true);
   };
 
@@ -41,6 +45,8 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
     if (files.length === 0) return;
     setSubiendo(true);
     const lote = nuevoLoteId();
+    const etiquetaActual = etiqueta;
+    let hechas = 0;
     try {
       for (const file of files) {
         if (!file.type.startsWith("image/")) continue;
@@ -50,14 +56,17 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
           lote_id: lote,
           work_order_id: workOrderId,
           client_id: clientId || null,
+          etiqueta: etiquetaActual || null,
         });
+        hechas += 1;
+        setSubidas((p) => ({ ...p, [etiquetaActual || "Sin etiqueta"]: (p[etiquetaActual || "Sin etiqueta"] || 0) + 1 }));
       }
-      toast.success("Fotos añadidas al parte");
-      setOpen(false);
+      toast.success(`${hechas} foto(s) añadida(s)${etiquetaActual ? ` como «${etiquetaActual}»` : ""}`);
       onCambioFotos?.();
     } catch (err) {
       console.error("Error subiendo fotos:", err);
-      toast.error("No se pudieron subir las fotos");
+      toast.error("No se pudieron subir todas las fotos");
+      if (hechas > 0) onCambioFotos?.();
     } finally {
       setSubiendo(false);
     }
@@ -169,7 +178,10 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
 
           <div className="flex-1 overflow-y-auto p-4">
             {pestana === "nueva" ? (
-              <div className="text-center py-6">
+              <div className="py-2">
+                <p className="text-sm font-medium text-slate-700 mb-2">1. ¿Qué fotos vas a subir?</p>
+                <SelectorEtiquetaFoto value={etiqueta} onChange={setEtiqueta} />
+                <p className="text-sm font-medium text-slate-700 mt-5 mb-3">2. Haz o elige las fotos</p>
                 <div className="flex justify-center gap-4">
                   <label className="inline-flex flex-col items-center gap-2 cursor-pointer">
                     <div className="w-16 h-16 rounded-full bg-indigo-50 flex items-center justify-center">
@@ -202,9 +214,20 @@ const AnadirFotosParte = ({ workOrderId, clientId, clientSlug, onCambioFotos }) 
                     />
                   </label>
                 </div>
-                <p className="text-xs text-slate-400 mt-3">
-                  Puedes seleccionar varias a la vez.
+                <p className="text-xs text-slate-400 mt-3 text-center">
+                  Puedes seleccionar varias a la vez. Después cambia la etiqueta y sube otras.
                 </p>
+                {Object.keys(subidas).length > 0 && (
+                  <div className="mt-4 rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-sm text-emerald-800">
+                    <p className="font-medium mb-1">Subidas ahora:</p>
+                    {Object.entries(subidas).map(([k, n]) => (
+                      <p key={k}>{k}: {n}</p>
+                    ))}
+                    <Button size="sm" className="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setOpen(false)}>
+                      Terminar
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : cargando ? (
               <p className="text-sm text-slate-400 text-center py-6">Cargando...</p>

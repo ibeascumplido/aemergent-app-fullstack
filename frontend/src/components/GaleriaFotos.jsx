@@ -13,6 +13,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import SelectorEtiquetaFoto from "@/components/SelectorEtiquetaFoto";
+
+const etiquetaDe = (f) =>
+  f.etiqueta || (f.antes_despues === "antes" ? "Antes" : f.antes_despues === "despues" ? "Después" : null);
+const colorEtiqueta = (t) =>
+  t.startsWith("Antes") ? "bg-amber-500" : t.startsWith("Después") ? "bg-emerald-500" : "bg-indigo-600";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -55,7 +61,7 @@ const agruparPorLote = (fotos) => {
  * bloque para poder cambiar el filtro).
  */
 const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const navigate = useNavigate();
   const modoArchivo = !!clientId;
 
@@ -66,6 +72,8 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
   const [editandoAnotacion, setEditandoAnotacion] = useState(false);
   const [textoAnotacion, setTextoAnotacion] = useState("");
   const [guardandoAnotacion, setGuardandoAnotacion] = useState(false);
+  const [editandoEtiqueta, setEditandoEtiqueta] = useState(false);
+  const [textoEtiqueta, setTextoEtiqueta] = useState("");
 
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
@@ -121,6 +129,22 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
   const abrirEdicionAnotacion = () => {
     setTextoAnotacion(fotoAmpliada.anotacion || "");
     setEditandoAnotacion(true);
+  };
+
+  const guardarEtiqueta = async () => {
+    try {
+      const res = await axios.put(`${API}/fotos/${fotoAmpliada.id}/etiqueta`, {
+        etiqueta: textoEtiqueta,
+      });
+      const cambios = { etiqueta: res.data.etiqueta, antes_despues: res.data.antes_despues };
+      setFotoAmpliada((prev) => ({ ...prev, ...cambios }));
+      setFotos((prev) => prev.map((f) => (f.id === fotoAmpliada.id ? { ...f, ...cambios } : f)));
+      setEditandoEtiqueta(false);
+      toast.success("Etiqueta guardada");
+    } catch (err) {
+      console.error("Error guardando etiqueta:", err);
+      toast.error("No se pudo guardar la etiqueta");
+    }
   };
 
   const guardarAnotacion = async () => {
@@ -180,13 +204,9 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
           </span>
         )}
         <div className="absolute bottom-1 left-1 right-1 flex items-center gap-1 flex-wrap">
-          {f.antes_despues && (
-            <span
-              className={`text-[9px] font-bold px-1 py-0.5 rounded text-white ${
-                f.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-              }`}
-            >
-              {f.antes_despues === "antes" ? "Antes" : "Después"}
+          {etiquetaDe(f) && (
+            <span className={`text-[9px] font-bold px-1 py-0.5 rounded text-white truncate max-w-full ${colorEtiqueta(etiquetaDe(f))}`}>
+              {etiquetaDe(f)}
             </span>
           )}
           {f.fecha && !modoArchivo && (
@@ -344,12 +364,12 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
       {fotoAmpliada && (
         <div
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); }}
+          onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); setEditandoEtiqueta(false); }}
           data-testid="foto-pantalla-completa"
         >
           <button
             type="button"
-            onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); }}
+            onClick={() => { setFotoAmpliada(null); setEditandoAnotacion(false); setEditandoEtiqueta(false); }}
             className="absolute top-4 right-4 text-white/80 hover:text-white z-10"
             aria-label="Cerrar"
           >
@@ -365,14 +385,20 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
               className="max-w-full max-h-[90vh] rounded-lg object-contain"
             />
             <div className="flex items-center gap-2 flex-wrap justify-center">
-              {fotoAmpliada.antes_despues && (
-                <span
-                  className={`text-xs font-medium px-2 py-1 rounded text-white ${
-                    fotoAmpliada.antes_despues === "antes" ? "bg-amber-500" : "bg-emerald-500"
-                  }`}
-                >
-                  {fotoAmpliada.antes_despues === "antes" ? "Antes" : "Después"}
+              {etiquetaDe(fotoAmpliada) && (
+                <span className={`text-xs font-medium px-2 py-1 rounded text-white ${colorEtiqueta(etiquetaDe(fotoAmpliada))}`}>
+                  {etiquetaDe(fotoAmpliada)}
                 </span>
+              )}
+              {(isAdmin || fotoAmpliada.operario_id === user?.user_id) && (
+              <button
+                type="button"
+                onClick={() => { setTextoEtiqueta(etiquetaDe(fotoAmpliada) || ""); setEditandoEtiqueta((v) => !v); }}
+                className="text-xs text-white/80 bg-white/10 hover:bg-white/20 px-2 py-1 rounded"
+                data-testid="editar-etiqueta-btn"
+              >
+                {etiquetaDe(fotoAmpliada) ? "Cambiar etiqueta" : "Poner etiqueta"}
+              </button>
               )}
               {fotoAmpliada.fecha && (
                 <span className="text-xs text-white/80 bg-white/10 px-2 py-1 rounded">
@@ -380,6 +406,19 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
                 </span>
               )}
             </div>
+            {editandoEtiqueta && (
+              <div className="w-full max-w-lg bg-white rounded-lg p-3" onClick={(e) => e.stopPropagation()}>
+                <SelectorEtiquetaFoto value={textoEtiqueta} onChange={setTextoEtiqueta} />
+                <div className="flex gap-2 justify-end mt-3">
+                  <button type="button" onClick={() => setEditandoEtiqueta(false)} className="px-3 py-1.5 rounded-lg text-sm text-slate-600">
+                    Cancelar
+                  </button>
+                  <button type="button" onClick={guardarEtiqueta} className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-700 text-white" data-testid="etiqueta-guardar-btn">
+                    Guardar
+                  </button>
+                </div>
+              </div>
+            )}
             {editandoAnotacion ? (
               <div className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
                 <textarea
