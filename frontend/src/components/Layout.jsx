@@ -241,6 +241,11 @@ const Layout = () => {
           transition={{ duration: 0.3, ease: "easeOut" }}
           className="p-4 pt-16 md:p-8"
         >
+          {user?.solo_lectura && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" data-testid="banner-solo-lectura">
+              Modo demostración: puedes ver toda la aplicación, pero no modificar nada.
+            </div>
+          )}
           <Outlet />
         </motion.div>
       </main>

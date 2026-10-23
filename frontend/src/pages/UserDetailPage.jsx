@@ -50,6 +50,7 @@ const UserDetailPage = () => {
       setUsuario(res.data);
       setForm({
         role: res.data.role || "user",
+        soloLectura: !!res.data.solo_lectura,
         puesto: res.data.puesto || "",
         fechaUltima: res.data.fecha_ultima_revision_medica || "",
         fechaProxima: res.data.fecha_proxima_revision_medica || "",
@@ -101,6 +102,7 @@ const UserDetailPage = () => {
     try {
       await axios.put(`${API}/admin/users/${userId}`, {
         role: form.role,
+        solo_lectura: form.role === "admin" ? !!form.soloLectura : false,
         puesto: form.puesto.trim(),
         fecha_ultima_revision_medica: form.fechaUltima || null,
         fecha_proxima_revision_medica: form.fechaProxima || null,
@@ -231,6 +233,23 @@ const UserDetailPage = () => {
               />
             </div>
           </div>
+          {form.role === "admin" && (
+            <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.soloLectura}
+                onChange={(e) => setForm((f) => ({ ...f, soloLectura: e.target.checked }))}
+                className="w-4 h-4 mt-0.5"
+                data-testid="solo-lectura-check"
+              />
+              <span className="text-sm text-slate-700">
+                <strong>Cuenta de demostración (solo lectura)</strong>
+                <br />
+                Ve todos los menús como un administrador, pero no puede crear, editar ni borrar nada,
+                y no ve datos personales de los empleados (fichas, fichajes, pagos extra, justificantes médicos).
+              </span>
+            </label>
+          )}
         </CardContent>
       </Card>
 

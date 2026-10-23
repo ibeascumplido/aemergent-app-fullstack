@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -11,6 +12,24 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Cuentas de demostración (solo lectura): si el servidor rechaza un cambio,
+// se avisa con un mensaje claro en lugar de un error genérico.
+let ultimoAvisoSoloLectura = 0;
+axios.interceptors.response.use(
+  (r) => r,
+  (error) => {
+    const detalle = error?.response?.data?.detail;
+    if (error?.response?.status === 403 && typeof detalle === 'string' && detalle.includes('solo lectura')) {
+      const ahora = Date.now();
+      if (ahora - ultimoAvisoSoloLectura > 3000) {
+        ultimoAvisoSoloLectura = ahora;
+        toast.info('Cuenta de demostración: solo se puede consultar, no modificar.');
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 const AuthContext = createContext(null);
 

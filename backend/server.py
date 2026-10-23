@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
 import io
 import base64
 import logging
@@ -233,7 +234,9 @@ async def create_notification(user_id: str, notification_type: str, title: str, 
 
 async def notify_admins(notification_type: str, title: str, message: str, data: dict = None):
     """Send an in-app notification to every admin user."""
-    admins = await db.users.find({"role": UserRole.ADMIN}, {"_id": 0, "user_id": 1}).to_list(1000)
+    admins = await db.users.find(
+        {"role": UserRole.ADMIN, "solo_lectura": {"$ne": True}}, {"_id": 0, "user_id": 1}
+    ).to_list(1000)
     for admin in admins:
         await create_notification(
             user_id=admin["user_id"],
@@ -316,6 +319,7 @@ class UserUpdate(BaseModel):
     hora_proxima_revision_medica: Optional[str] = None
     lugar_proxima_revision_medica: Optional[str] = None
     telefono: Optional[str] = None
+    solo_lectura: Optional[bool] = None
     dni: Optional[str] = None
     direccion: Optional[str] = None
     fecha_nacimiento: Optional[str] = None
@@ -338,6 +342,26 @@ async def _buscar_usuario_por_email(email: str) -> Optional[dict]:
         {"email": {"$regex": f"^{re.escape(email_limpio)}$", "$options": "i"}},
         {"_id": 0},
     )
+
+# Rutas (solo GET) que una cuenta de solo lectura NO puede ver: datos
+# personales, de salud, de nomina o de formacion de los empleados.
+_RUTAS_SENSIBLES_SOLO_LECTURA = re.compile(
+    r"^/api/(justificantes-medicos|admin/pagos-extra|admin/fichajes|admin/users/.+)"
+)
+
+
+def _comprobar_solo_lectura(request: Request) -> None:
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        raise HTTPException(
+            status_code=403,
+            detail="Cuenta de demostración (solo lectura): no se puede modificar nada",
+        )
+    if _RUTAS_SENSIBLES_SOLO_LECTURA.match(request.url.path):
+        raise HTTPException(
+            status_code=403,
+            detail="Cuenta de demostración (solo lectura): este apartado contiene datos personales",
+        )
+
 
 # Helper to get current user from session
 async def get_current_user(request: Request) -> dict:
@@ -381,7 +405,12 @@ async def get_current_user(request: Request) -> dict:
     user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    
+
+    # Cuentas de demostracion (solo lectura): ven la app como un admin pero
+    # no pueden modificar nada ni ver datos personales sensibles.
+    if user.get("solo_lectura"):
+        _comprobar_solo_lectura(request)
+
     return user
 
 # Helper to require admin role
@@ -876,8 +905,16 @@ async def logout(request: Request, response: Response):
 @api_router.get("/admin/users")
 async def get_all_users(request: Request):
     """Get all users (admin only)"""
-    await require_admin(request)
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    admin = await require_admin(request)
+    proyeccion = {"_id": 0, "password_hash": 0}
+    if admin.get("solo_lectura"):
+        # Cuenta de demostracion: sin datos personales de los empleados.
+        for campo in ("dni", "direccion", "fecha_nacimiento", "telefono", "email",
+                      "contacto_emergencia_nombre", "contacto_emergencia_telefono",
+                      "fecha_ultima_revision_medica", "fecha_proxima_revision_medica",
+                      "hora_proxima_revision_medica", "lugar_proxima_revision_medica"):
+            proyeccion[campo] = 0
+    users = await db.users.find({}, proyeccion).to_list(1000)
     return users
 
 @api_router.get("/admin/users/pending")
