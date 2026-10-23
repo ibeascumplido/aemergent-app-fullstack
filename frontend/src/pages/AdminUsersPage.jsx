@@ -13,6 +13,8 @@ import {
   X,
   AlertTriangle,
   ChevronRight,
+  Eye,
+  Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -79,6 +81,32 @@ const AdminUsersPage = () => {
   
   const [editingUser, setEditingUser] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [demoOpen, setDemoOpen] = useState(false);
+  const [demoEmail, setDemoEmail] = useState("demo@iniciagestion.com");
+  const [demoPass, setDemoPass] = useState("");
+  const [demoCreando, setDemoCreando] = useState(false);
+  const [demoListo, setDemoListo] = useState(null);
+
+  const crearDemo = async () => {
+    if (!demoEmail.trim() || demoPass.length < 6) {
+      toast.error("Pon un email y una contraseña de al menos 6 caracteres");
+      return;
+    }
+    setDemoCreando(true);
+    try {
+      await axios.post(`${API}/admin/users/demo`, { email: demoEmail.trim(), name: "Demo", password: demoPass });
+      setDemoListo({ email: demoEmail.trim(), password: demoPass });
+      fetchUsers();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "No se pudo crear la cuenta");
+    } finally {
+      setDemoCreando(false);
+    }
+  };
+
+  const textoDemo = demoListo
+    ? `Puedes ver la aplicación de Inicia Gestión aquí: ${window.location.origin}\nUsuario: ${demoListo.email}\nContraseña: ${demoListo.password}\n(Es una cuenta de demostración: se puede consultar todo, pero no modificar.)`
+    : "";
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   const fetchUsers = useCallback(async () => {
@@ -182,7 +210,52 @@ const AdminUsersPage = () => {
           </h1>
           <p className="text-slate-500 mt-1">Administra los accesos y permisos</p>
         </div>
+        <Button variant="outline" onClick={() => { setDemoListo(null); setDemoOpen(true); }} data-testid="crear-demo-btn">
+          <Eye className="w-4 h-4 mr-2" />
+          Cuenta de demostración
+        </Button>
       </div>
+
+      <Dialog open={demoOpen} onOpenChange={setDemoOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cuenta de demostración (solo lectura)</DialogTitle>
+          </DialogHeader>
+          {!demoListo ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-500">
+                Crea un acceso listo para usar: ve toda la aplicación como administrador pero no puede modificar nada.
+                Si ya existe, esto le cambia la contraseña.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="demo-email">Email de acceso</Label>
+                <Input id="demo-email" value={demoEmail} onChange={(e) => setDemoEmail(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="demo-pass">Contraseña</Label>
+                <Input id="demo-pass" value={demoPass} onChange={(e) => setDemoPass(e.target.value)} placeholder="Mínimo 6 caracteres" />
+              </div>
+              <DialogFooter>
+                <Button onClick={crearDemo} disabled={demoCreando} className="bg-red-500 hover:bg-red-600">
+                  {demoCreando ? "Creando..." : "Crear cuenta"}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-emerald-700">Cuenta lista. Copia este mensaje y envíalo por correo:</p>
+              <pre className="whitespace-pre-wrap text-sm bg-slate-50 border border-slate-200 rounded-lg p-3">{textoDemo}</pre>
+              <DialogFooter>
+                <Button
+                  onClick={() => { navigator.clipboard?.writeText(textoDemo).then(() => toast.success("Copiado")).catch(() => toast.error("No se pudo copiar")); }}
+                >
+                  <Copy className="w-4 h-4 mr-2" /> Copiar mensaje
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">

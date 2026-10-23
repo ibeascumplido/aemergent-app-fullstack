@@ -804,6 +804,51 @@ async def register(user_data: UserCreate, response: Response):
         "session_token": session_token
     }
 
+class DemoUserCreate(BaseModel):
+    email: EmailStr
+    name: str = Field("Demo", min_length=1, max_length=60)
+    password: str = Field(..., min_length=6, max_length=100)
+
+
+@api_router.post("/admin/users/demo")
+async def crear_usuario_demo(payload: DemoUserCreate, request: Request):
+    """Crea (o actualiza) una cuenta de demostracion lista para usar: admin,
+    aprobada y de solo lectura. El admin le pasa a la persona el enlace de
+    la app + este email y contrasena."""
+    await require_admin(request)
+    email = payload.email.strip().lower()
+    existente = await _buscar_usuario_por_email(email)
+    campos = {
+        "name": payload.name.strip(),
+        "password_hash": hash_password(payload.password),
+        "role": UserRole.ADMIN,
+        "status": UserStatus.APPROVED,
+        "solo_lectura": True,
+        "auth_type": "email",
+    }
+    if existente:
+        if not existente.get("solo_lectura"):
+            raise HTTPException(
+                status_code=400,
+                detail="Ese email ya pertenece a un usuario normal; usa otro email para la demo",
+            )
+        await db.users.update_one({"user_id": existente["user_id"]}, {"$set": campos})
+        return {"ok": True, "email": email, "actualizado": True}
+    user = {
+        "user_id": f"user_{uuid.uuid4().hex[:12]}",
+        "email": email,
+        "picture": "",
+        "dias_vacaciones": 32,
+        "dias_libres": 6,
+        "color": "#64748B",
+        "abreviatura": payload.name.strip()[:3].upper(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **campos,
+    }
+    await db.users.insert_one(user)
+    return {"ok": True, "email": email, "actualizado": False}
+
+
 # Email/Password Login
 @api_router.post("/auth/login")
 async def login(user_data: UserLogin, response: Response):
