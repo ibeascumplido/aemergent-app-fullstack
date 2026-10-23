@@ -245,8 +245,7 @@ const UserDetailPage = () => {
               <span className="text-sm text-slate-700">
                 <strong>Cuenta de demostración (solo lectura)</strong>
                 <br />
-                Ve todos los menús como un administrador, pero no puede crear, editar ni borrar nada,
-                y no ve datos personales de los empleados (fichas, fichajes, pagos extra, justificantes médicos).
+                Ve todos los menús y datos como un administrador, pero no puede crear, editar ni borrar nada.
               </span>
             </label>
           )}
