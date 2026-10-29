@@ -62,6 +62,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
+    KeepInFrame,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -7029,7 +7030,12 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     observaciones.sort(key=lambda x: x[0])
 
     ANCHO_PAGINA = landscape(A4)[0]
+    ALTO_PAGINA = landscape(A4)[1]
     MARGEN = 1.2 * cm
+    # El marco de SimpleDocTemplate descuenta 6 pt de relleno por cada lado:
+    # se mide el contenido contra el espacio realmente util.
+    ANCHO_UTIL = ANCHO_PAGINA - 2 * MARGEN - 12
+    ALTO_UTIL = ALTO_PAGINA - 2 * MARGEN - 12 - 2
 
     buffer = io.BytesIO()
     pdf_doc = SimpleDocTemplate(
@@ -7069,10 +7075,10 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     # Logo del cliente (si tiene), centrado arriba
     logo_img = await _descargar_imagen_pdf(
-        cliente.get("logo_url") if cliente else None, max_width_cm=5.0, max_height_cm=2.2
+        cliente.get("logo_url") if cliente else None, max_width_cm=4.2, max_height_cm=1.7
     )
     if logo_img:
-        logo_tabla = Table([[logo_img]], colWidths=[ANCHO_PAGINA - 2 * MARGEN])
+        logo_tabla = Table([[logo_img]], colWidths=[ANCHO_UTIL])
         logo_tabla.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
         story.append(logo_tabla)
         story.append(Spacer(1, 6))
@@ -7081,7 +7087,7 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     banner = Table(
         [[Paragraph("CONTROL DE CALIDAD DEL SERVICIO DE JARDINERÍA", titulo_banner_style),
           Paragraph(str(year), anio_style)]],
-        colWidths=[ANCHO_PAGINA - 2 * MARGEN - 3 * cm, 3 * cm],
+        colWidths=[ANCHO_UTIL - 3 * cm, 3 * cm],
     )
     banner.setStyle(
         TableStyle(
@@ -7106,7 +7112,7 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
             Paragraph(periodo_label, label_style),
             Paragraph(_p(periodo_txt), valor_style),
         ]],
-        colWidths=[2.4 * cm, ANCHO_PAGINA - 2 * MARGEN - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
+        colWidths=[2.4 * cm, ANCHO_UTIL - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
     )
     info_fila.setStyle(
         TableStyle(
@@ -7126,8 +7132,9 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     story.append(Spacer(1, 8))
 
     # --- Columna izquierda: cuadrante + observaciones ---
-    ANCHO_DERECHA = 8.5 * cm
-    ANCHO_IZQUIERDA = ANCHO_PAGINA - 2 * MARGEN - ANCHO_DERECHA - 0.6 * cm
+    ANCHO_DERECHA = 7.8 * cm
+    SEPARACION = 0.6 * cm  # hueco real entre la tabla y el mapa
+    ANCHO_IZQUIERDA = ANCHO_UTIL - ANCHO_DERECHA - SEPARACION
 
     cabecera = [Paragraph("Tareas\nrealizadas", label_style)] + [
         str(int(d.split("-")[2])) for d in dias
@@ -7195,7 +7202,7 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     # desborda a una segunda pagina.
     mapa_img = await _descargar_imagen_pdf(
         cliente.get("mapa_zonas_url") if cliente else None,
-        max_width_cm=ANCHO_DERECHA / cm - 0.4,
+        max_width_cm=ANCHO_DERECHA / cm - 0.7,
         max_height_cm=11.0,
     )
     columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style)]
@@ -7207,20 +7214,27 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
         )
 
     layout_dos_columnas = Table(
-        [[columna_izquierda, columna_derecha]],
-        colWidths=[ANCHO_IZQUIERDA, ANCHO_DERECHA],
+        [[columna_izquierda, "", columna_derecha]],
+        colWidths=[ANCHO_IZQUIERDA, SEPARACION, ANCHO_DERECHA],
     )
     layout_dos_columnas.setStyle(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("BOX", (1, 0), (1, 0), 0.6, colors.HexColor("#94a3b8")),
-                ("TOPPADDING", (1, 0), (1, 0), 6),
-                ("LEFTPADDING", (1, 0), (1, 0), 8),
+                ("BOX", (2, 0), (2, 0), 0.6, colors.HexColor("#94a3b8")),
+                ("TOPPADDING", (2, 0), (2, 0), 6),
+                ("LEFTPADDING", (2, 0), (2, 0), 8),
+                ("LEFTPADDING", (0, 0), (0, 0), 0),
+                ("RIGHTPADDING", (0, 0), (0, 0), 0),
             ]
         )
     )
     story.append(layout_dos_columnas)
+
+    # Cabecera + cuadrante + observaciones + mapa: todo en UNA pagina. Si el
+    # contenido es mas alto que la pagina (muchas tareas u observaciones), se
+    # reduce proporcionalmente (letra incluida) hasta que quepa.
+    story = [KeepInFrame(ANCHO_UTIL, ALTO_UTIL, story, mode="shrink")]
 
     # Sección de fotografías del parte (si tiene fotos).
     try:
