@@ -7169,6 +7169,18 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
             ]
         )
     )
+    # Sabados y domingos (dias sin servicio): cabecera en rojo suave y la
+    # columna entera con un tinte muy claro, para distinguirlos de un vistazo.
+    for idx, fecha in enumerate(dias):
+        if date.fromisoformat(fecha).weekday() >= 5:
+            tabla_grid.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (idx + 1, 0), (idx + 1, 0), colors.HexColor("#fca5a5")),
+                        ("BACKGROUND", (idx + 1, 1), (idx + 1, -1), colors.HexColor("#fef2f2")),
+                    ]
+                )
+            )
 
     # Observaciones e incidencias, en un recuadro con titulo resaltado
     obs_filas = [[Paragraph("OBSERVACIONES E INCIDENCIAS", seccion_style)]]
