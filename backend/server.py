@@ -7523,6 +7523,119 @@ async def actualizar_celda_rejilla(
     return {"ok": True}
 
 
+# --- Rellenar la rejilla desde una foto del parte en papel ------------------
+# La operaria manda una foto del parte en papel; se lee con el modelo de
+# vision de Anthropic y se DEVUELVE UNA PROPUESTA (no se guarda nada): el
+# usuario la revisa en pantalla y solo entonces se aplica celda a celda con
+# los endpoints de siempre.
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+
+
+class RejillaFotoPayload(BaseModel):
+    imagen: str = Field(..., description="Data-URI base64 de la foto del parte")
+
+
+def _extraer_json(texto: str) -> dict:
+    """Saca el primer objeto JSON de la respuesta del modelo (tolera ```json ... ```)."""
+    import json as _json
+    inicio = texto.find("{")
+    fin = texto.rfind("}")
+    if inicio == -1 or fin == -1 or fin < inicio:
+        raise ValueError("sin JSON")
+    return _json.loads(texto[inicio : fin + 1])
+
+
+@api_router.post("/work-orders/{work_order_id}/rejilla-desde-foto")
+async def rejilla_desde_foto(
+    work_order_id: str,
+    payload: RejillaFotoPayload,
+    current_user: dict = Depends(require_approved),
+):
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+    if not doc.get("usa_zonas"):
+        raise HTTPException(status_code=400, detail="Este parte no usa zonas")
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Falta configurar ANTHROPIC_API_KEY en el servidor para leer fotos",
+        )
+    m = re.match(r"^data:(image/(?:jpeg|png|webp|gif));base64,(.+)$", payload.imagen, re.S)
+    if not m:
+        raise HTTPException(status_code=400, detail="Formato de imagen no valido")
+    media_type, b64 = m.group(1), m.group(2)
+
+    rejilla = await obtener_rejilla_zonas(work_order_id, current_user)
+    dias = rejilla.dias
+    tareas = [{"id": t.tarea_id, "nombre": t.tarea_nombre} for t in rejilla.tareas]
+    ids_tarea = {t["id"] for t in tareas}
+    dias_set = set(dias)
+
+    instrucciones = (
+        "Esta imagen es la foto de un parte de trabajo de jardinería en papel con una rejilla: "
+        "las filas son tareas y las columnas son días. En cada casilla marcada hay letras de zona "
+        "(de la A a la M, hasta 3 por casilla) o una X.\n\n"
+        f"Tareas de la rejilla (usa exactamente estos ids): {tareas}\n"
+        f"Días de la rejilla (fechas ISO, en orden de columna): {dias}\n\n"
+        "Lee la foto y devuelve SOLO un JSON con esta forma, sin texto extra:\n"
+        '{"celdas":[{"tarea_id":"...","fecha":"YYYY-MM-DD","zonas":["A","B"]}],'
+        '"notas":[{"fecha":"YYYY-MM-DD","texto":"..."}],'
+        '"dudas":"cosas que no se leen bien o que no has podido casar con una tarea o un día"}\n'
+        "Reglas: solo incluye casillas que veas marcadas; si una tarea del papel no coincide con "
+        "ninguna de la lista, no la inventes y menciónala en dudas; las observaciones escritas a mano "
+        "van en notas con su día; si no estás seguro de una letra, mejor déjala fuera y menciónalo en dudas."
+    )
+    cuerpo = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 4000,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                    {"type": "text", "text": instrucciones},
+                ],
+            }
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as http:
+            resp = await http.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=cuerpo,
+            )
+        resp.raise_for_status()
+        texto = "".join(b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text")
+        bruto = _extraer_json(texto)
+    except Exception as e:
+        logger.error("Error leyendo la foto del parte", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo leer la foto, prueba con otra más nítida") from e
+
+    letras_validas = set("ABCDEFGHIJKLM")
+    celdas = []
+    for c in bruto.get("celdas", []):
+        if c.get("tarea_id") not in ids_tarea or c.get("fecha") not in dias_set:
+            continue
+        zonas = [str(z).strip().upper() for z in (c.get("zonas") or [])]
+        zonas = [z for z in dict.fromkeys(zonas) if z in letras_validas or z == "X"][:3]
+        if zonas:
+            celdas.append({"tarea_id": c["tarea_id"], "fecha": c["fecha"], "zonas": zonas})
+    notas = [
+        {"fecha": n["fecha"], "texto": str(n.get("texto", "")).strip()[:2000]}
+        for n in bruto.get("notas", [])
+        if n.get("fecha") in dias_set and str(n.get("texto", "")).strip()
+    ]
+    return {"celdas": celdas, "notas": notas, "dudas": str(bruto.get("dudas", ""))[:1000]}
+
+
 # --- Notas por dia (parte de mantenimiento / rejilla) ---------------------
 # Anotaciones libres asociadas a un dia concreto de la rejilla, sin pasar
 # por sesiones. Viven en su propia coleccion rejilla_notas.

@@ -14,6 +14,7 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
+import RejillaDesdeFoto from "@/components/RejillaDesdeFoto";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -320,6 +321,10 @@ const RejillaZonasPage = () => {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+        {parteAbierto && (
+          <RejillaDesdeFoto workOrderId={id} tareas={tareas} onAplicado={cargar} />
+        )}
         {cliente?.mapa_zonas_url && (
           <Button
             variant="outline"
@@ -332,6 +337,7 @@ const RejillaZonasPage = () => {
             Ver mapa de zonas
           </Button>
         )}
+        </div>
       </div>
 
       {!parteAbierto && (
