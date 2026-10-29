@@ -7574,23 +7574,43 @@ async def rejilla_desde_foto(
     ids_tarea = {t["id"] for t in tareas}
     dias_set = set(dias)
 
+    letras_semana = ["L", "M", "X", "J", "V", "S", "D"]
+    mapa_dias = ", ".join(
+        f"{int(d[8:])}={letras_semana[date.fromisoformat(d).weekday()]}->{d}" for d in dias
+    )
     instrucciones = (
-        "Esta imagen es la foto de un parte de trabajo de jardinería en papel con una rejilla: "
-        "las filas son tareas y las columnas son días. En cada casilla marcada hay letras de zona "
-        "(de la A a la M, hasta 3 por casilla) o una X.\n\n"
-        f"Tareas de la rejilla (usa exactamente estos ids): {tareas}\n"
-        f"Días de la rejilla (fechas ISO, en orden de columna): {dias}\n\n"
-        "Lee la foto y devuelve SOLO un JSON con esta forma, sin texto extra:\n"
-        '{"celdas":[{"tarea_id":"...","fecha":"YYYY-MM-DD","zonas":["A","B"]}],'
+        "La imagen es la foto (a veces torcida o con perspectiva) de un parte de trabajo de jardinería "
+        "en papel con una rejilla de control: cada FILA es un servicio/tarea (el nombre está impreso a la "
+        "izquierda) y cada COLUMNA es un día del mes. La fila de arriba lleva los números de día "
+        "(1, 2, 3...) y, encima, las iniciales de los días laborables (L M X J V); las columnas de "
+        "sábado y domingo suelen no llevar inicial. Úsalo para no desplazarte de columna: cada número "
+        "de día debe corresponder a la inicial de su día de la semana.\n\n"
+        "Qué hay dentro de las casillas (a mano, con bolígrafo): una X significa 'tarea hecha' sin zona "
+        "concreta; una o varias letras mayúsculas (de la A a la M, hasta 3 en la misma casilla, por "
+        "ejemplo 'G H I') son las zonas donde se hizo; una casilla vacía significa que no se hizo. "
+        "Una misma casilla puede mezclar letras; las letras escritas en vertical en una columna son "
+        "casillas de filas distintas, una por fila.\n\n"
+        f"Tareas de la rejilla de la aplicación (usa exactamente estos ids): {tareas}\n"
+        "Los nombres del papel pueden diferir un poco de los de la aplicación (mayúsculas, abreviaturas, "
+        "'Recorte setos y arbustos' = 'Recorte de setos y arbustos'): casa cada fila del papel con la "
+        "tarea más parecida; si una fila del papel no se parece a ninguna, no la inventes y menciónala "
+        "en dudas.\n"
+        f"Días de la rejilla (número de día = inicial -> fecha ISO): {mapa_dias}\n\n"
+        "Procedimiento: primero transcribe fila por fila, de arriba abajo, lo que hay en cada casilla "
+        "marcada indicando el número de día (mirando con cuidado la columna exacta con ayuda del número "
+        "de la cabecera). Después construye el resultado.\n\n"
+        "Devuelve SOLO un JSON con esta forma, sin texto fuera del JSON:\n"
+        '{"transcripcion":"fila por fila: Tarea del papel: día=marcas, día=marcas...",'
+        '"celdas":[{"tarea_id":"...","fecha":"YYYY-MM-DD","zonas":["A","B"]}],'
         '"notas":[{"fecha":"YYYY-MM-DD","texto":"..."}],'
-        '"dudas":"cosas que no se leen bien o que no has podido casar con una tarea o un día"}\n'
-        "Reglas: solo incluye casillas que veas marcadas; si una tarea del papel no coincide con "
-        "ninguna de la lista, no la inventes y menciónala en dudas; las observaciones escritas a mano "
-        "van en notas con su día; si no estás seguro de una letra, mejor déjala fuera y menciónalo en dudas."
+        '"dudas":"casillas dudosas, letras ilegibles o filas sin tarea equivalente"}\n'
+        "Reglas: solo casillas que veas marcadas; una X va como zonas [\"X\"]; si una letra no se lee "
+        "bien o dudas de la columna, no la incluyas y menciónala en dudas (es mejor omitir que inventar); "
+        "las anotaciones escritas a mano fuera de la rejilla van en notas con su día."
     )
     cuerpo = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 4000,
+        "max_tokens": 8000,
         "messages": [
             {
                 "role": "user",
@@ -7612,6 +7632,8 @@ async def rejilla_desde_foto(
                 },
                 json=cuerpo,
             )
+        if resp.status_code >= 400:
+            logger.error("Anthropic API %s: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         texto = "".join(b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text")
         bruto = _extraer_json(texto)
