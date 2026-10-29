@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import DashboardTileVisual from "@/components/DashboardTileVisual";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import BotonDictado from "@/components/BotonDictado";
 import {
   Select,
   SelectContent,
@@ -410,6 +411,7 @@ const FotoRapidaFlow = () => {
               placeholder="Ej. Jardinera sin drenaje, regar poco"
               data-testid="foto-anotacion-input"
             />
+<BotonDictado onTexto={(t) => setAnotacion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
           </div>
 
           <div className="space-y-1.5">

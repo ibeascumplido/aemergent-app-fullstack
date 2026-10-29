@@ -28,6 +28,7 @@ import { X, Plus, Search, UserPlus, Users, Check, Eye, MapPin, ChevronDown } fro
 import { toast } from "sonner";
 import axios from "axios";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Campos que el cliente vera (o no) en el PDF/vista publica (Fase 5A.3).
@@ -863,6 +864,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
               rows={3}
               data-testid="sesion-notas-input"
             />
+<BotonDictado onTexto={(t) => setNotas((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
           </div>
           {/* Visibilidad para el cliente (plegable, cerrada por defecto:
               asi el operario no ve todos los toggles de golpe, y si el

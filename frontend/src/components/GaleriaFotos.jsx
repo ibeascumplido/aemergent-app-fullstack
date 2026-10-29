@@ -15,6 +15,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import SelectorEtiquetaFoto from "@/components/SelectorEtiquetaFoto";
 
+import BotonDictado from "@/components/BotonDictado";
 const etiquetaDe = (f) =>
   f.etiqueta || (f.antes_despues === "antes" ? "Antes" : f.antes_despues === "despues" ? "Después" : null);
 const colorEtiqueta = (t) =>
@@ -429,6 +430,7 @@ const GaleriaFotos = ({ workOrderId, clientId, centroId, titulo = "Fotos" }) => 
                   className="w-full rounded-lg p-2 text-sm text-slate-900"
                   data-testid="anotacion-edit-textarea"
                 />
+<BotonDictado onTexto={(t) => setTextoAnotacion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
                 <div className="flex gap-2 justify-end mt-2">
                   <button
                     type="button"

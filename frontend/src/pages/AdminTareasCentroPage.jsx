@@ -34,6 +34,7 @@ import {
 import EditarIncidenciaDialog from "@/components/EditarIncidenciaDialog";
 import SelectorFotos from "@/components/SelectorFotos";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const PRIORIDAD_DOT = {
@@ -424,6 +425,7 @@ const AdminTareasCentroPage = () => {
                 maxLength={500}
                 data-testid="editar-tarea-descripcion"
               />
+<BotonDictado onTexto={(t) => setEditDescripcion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
             </div>
             <div className="space-y-1.5">
               <Label>Prioridad</Label>

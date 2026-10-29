@@ -21,6 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Trash2 } from "lucide-react";
 import ComentariosLote from "@/components/ComentariosLote";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
@@ -405,6 +406,7 @@ const FotosPorClasificarPage = () => {
                   placeholder="Ej. Jardinera sin drenaje, regar poco"
                   data-testid="anotacion-input"
                 />
+<BotonDictado onTexto={(t) => setAnotacion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
               </div>
 
               <div className="space-y-1.5">

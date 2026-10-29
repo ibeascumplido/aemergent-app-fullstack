@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/contexts/AuthContext";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const PRIORIDAD_COLOR = {
@@ -308,6 +309,7 @@ const TareasCliente = ({ clientId, clientSlug }) => {
                 placeholder="Ej. Podar el seto de la entrada"
                 data-testid="descripcion-tarea-input"
               />
+<BotonDictado onTexto={(t) => setDescripcion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">

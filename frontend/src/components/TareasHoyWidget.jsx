@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import DashboardTileVisual from "@/components/DashboardTileVisual";
+import BotonDictado from "@/components/BotonDictado";
 import {
   Select,
   SelectContent,
@@ -352,6 +353,7 @@ const TareasHoyWidget = () => {
                   placeholder="Ej. Falta agua en el riego"
                   data-testid="descripcion-tarea-hoy-input"
                 />
+<BotonDictado onTexto={(t) => setDescripcion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
               </div>
             )}
 
@@ -364,6 +366,7 @@ const TareasHoyWidget = () => {
                 placeholder="Ej. junto a los cipreses de la entrada"
                 data-testid="zona-tarea-hoy-input"
               />
+<BotonDictado onTexto={(t) => setZonaTexto((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
             </div>
 
             <div className="space-y-1.5">

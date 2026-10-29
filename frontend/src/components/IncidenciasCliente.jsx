@@ -44,6 +44,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import EditarIncidenciaDialog from "@/components/EditarIncidenciaDialog";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 // Convierte una lista de File (input de fotos) en data-URIs base64, que es
@@ -436,6 +437,7 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
                 onChange={(e) => setDescripcion(e.target.value)}
                 rows={3}
               />
+<BotonDictado onTexto={(t) => setDescripcion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
             </div>
             {puedeElegirCentro && (
               <div className="space-y-1.5">
@@ -587,6 +589,7 @@ const IncidenciasCliente = ({ clientId, centroId, centros }) => {
                     placeholder="Ej. Revisado el riego, cambiado el aspersor de zona 2"
                     data-testid="cierre-notas-input"
                   />
+<BotonDictado onTexto={(t) => setCierreNotas((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Fotos del después (opcional)</Label>

@@ -17,6 +17,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import ComentariosLote from "@/components/ComentariosLote";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
@@ -209,6 +210,7 @@ const FotoLoteDetallePage = () => {
                   className="mt-1"
                   data-testid={`anotacion-foto-${f.id}`}
                 />
+<BotonDictado onTexto={(t) => setAnotaciones((prev) => { const a = prev[f.id] ?? f.anotacion ?? ""; return { ...prev, [f.id]: (a ? a.trimEnd() + " " : "") + t }; })} className="mt-1.5" />
                 {isAdmin && (
                   <div className="flex justify-end mt-1.5">
                     <Button

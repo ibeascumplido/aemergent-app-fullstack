@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { comprimirImagen } from "@/lib/imagen";
 
+import BotonDictado from "@/components/BotonDictado";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
@@ -91,6 +92,7 @@ const EditarIncidenciaDialog = ({ incidencia, onClose, onSaved }) => {
           <div className="space-y-1.5">
             <Label>Descripción</Label>
             <Textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} rows={4} />
+<BotonDictado onTexto={(t) => setDescripcion((prev) => (prev ? prev.trimEnd() + " " : "") + t)} className="mt-1.5" />
           </div>
           <div className="space-y-1.5">
             <Label>Fotos</Label>
