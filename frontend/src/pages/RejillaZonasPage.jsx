@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
 import RejillaDesdeFoto from "@/components/RejillaDesdeFoto";
+import BotonDictado from "@/components/BotonDictado";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -458,6 +459,11 @@ const RejillaZonasPage = () => {
                 className="flex-1"
                 data-testid="nota-dia-textarea"
                 disabled={!diaNotaSeleccionado}
+              />
+              <BotonDictado
+                disabled={!diaNotaSeleccionado}
+                onTexto={(t) => setTextoNota((prev) => (prev ? prev.trimEnd() + " " : "") + t)}
+                className="shrink-0"
               />
               <Button
                 onClick={guardarNotaDia}
