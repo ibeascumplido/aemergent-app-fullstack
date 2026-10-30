@@ -7126,21 +7126,29 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     story = []
 
-    # Logo del cliente (si tiene), centrado arriba
+    # Logo del cliente (si tiene) a la izquierda de la cabecera, mas grande
     logo_img = await _descargar_imagen_pdf(
-        cliente.get("logo_url") if cliente else None, max_width_cm=4.2, max_height_cm=1.7
+        cliente.get("logo_url") if cliente else None, max_width_cm=5.2, max_height_cm=2.6
     )
-    if logo_img:
-        logo_tabla = Table([[logo_img]], colWidths=[ANCHO_UTIL])
-        logo_tabla.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
-        story.append(logo_tabla)
-        story.append(Spacer(1, 6))
+    ANCHO_LOGO = 5.8 * cm if logo_img else 0
+    HUECO_LOGO = 0.4 * cm if logo_img else 0
+    ANCHO_CAB = ANCHO_UTIL - ANCHO_LOGO - HUECO_LOGO
+
+    # Nombre del centro: el registrado o el escrito a mano
+    centro_nombre = None
+    if doc.get("centro_id"):
+        centro_doc = await db.client_locations.find_one(
+            {"id": doc["centro_id"]}, {"_id": 0, "nombre": 1}
+        )
+        centro_nombre = centro_doc.get("nombre") if centro_doc else None
+    centro_nombre = centro_nombre or doc.get("centro_libre")
+    cliente_nombre = (cliente or {}).get("nombre") or doc.get("client_libre") or ""
 
     # Cabecera: banner de titulo + año
     banner = Table(
         [[Paragraph("CONTROL DE CALIDAD DEL SERVICIO DE JARDINERÍA", titulo_banner_style),
           Paragraph(str(year), anio_style)]],
-        colWidths=[ANCHO_UTIL - 3 * cm, 3 * cm],
+        colWidths=[ANCHO_CAB - 3 * cm, 3 * cm],
     )
     banner.setStyle(
         TableStyle(
@@ -7154,34 +7162,60 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
             ]
         )
     )
-    story.append(banner)
-    story.append(Spacer(1, 1))
 
-    # Fila CLIENTE / MES o SEMANA segun el tipo de rejilla
+    # Filas CLIENTE / MES (o SEMANA) y, si hay, CENTRO
+    filas_info = [[
+        Paragraph("CLIENTE", label_style),
+        Paragraph(_p(cliente_nombre), valor_style),
+        Paragraph(periodo_label, label_style),
+        Paragraph(_p(periodo_txt), valor_style),
+    ]]
+    if centro_nombre:
+        filas_info.append([
+            Paragraph("CENTRO", label_style),
+            Paragraph(_p(centro_nombre), valor_style),
+            "",
+            "",
+        ])
+    estilo_info = [
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e2e8f0")),
+        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e2e8f0")),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    if centro_nombre:
+        estilo_info.append(("SPAN", (1, 1), (3, 1)))
     info_fila = Table(
-        [[
-            Paragraph("CLIENTE", label_style),
-            Paragraph(_p(cliente["nombre"]) if cliente else "", valor_style),
-            Paragraph(periodo_label, label_style),
-            Paragraph(_p(periodo_txt), valor_style),
-        ]],
-        colWidths=[2.4 * cm, ANCHO_UTIL - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
+        filas_info,
+        colWidths=[2.4 * cm, ANCHO_CAB - 2.4 * cm - 2.2 * cm - 4 * cm, 2.2 * cm, 4 * cm],
     )
-    info_fila.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#e2e8f0")),
-                ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e2e8f0")),
-                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#94a3b8")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
+    info_fila.setStyle(TableStyle(estilo_info))
+
+    bloque_cabecera = [banner, Spacer(1, 1), info_fila]
+    if logo_img:
+        cabecera_tabla = Table(
+            [[logo_img, "", bloque_cabecera]],
+            colWidths=[ANCHO_LOGO, HUECO_LOGO, ANCHO_CAB],
         )
-    )
-    story.append(info_fila)
+        cabecera_tabla.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (0, 0), "CENTER"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        story.append(cabecera_tabla)
+    else:
+        story.extend(bloque_cabecera)
     story.append(Spacer(1, 8))
 
     # --- Mapa de zonas (opcional) ---
