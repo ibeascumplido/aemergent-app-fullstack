@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta, date
 from enum import Enum
@@ -5950,6 +5950,10 @@ class WorkOrder(WorkOrderBase):
         "su cuenta. Un operario o admin tiene que habilitarlo explicitamente aqui (un solo "
         "uso: se desactiva solo en cuanto se registra la firma siguiente)."
     )
+    # Actuaciones pendientes / futuros trabajos (pagina extra del PDF)
+    actuaciones_activas: bool = False
+    actuaciones_pendientes: List[Dict[str, Any]] = Field(default_factory=list)
+    actuaciones_plano_url: Optional[str] = None
 
 
 class WorkSessionBase(BaseModel):
@@ -7260,6 +7264,234 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     return buffer.getvalue()
 
 
+# --- Actuaciones pendientes / futuros trabajos -----------------------------
+# Pagina extra (A4 vertical) que se anade al final del PDF del parte cuando
+# el parte tiene activada la opcion. Reproduce la plantilla "ACTUACIONES
+# PENDIENTES": logos, tabla Tipo de trabajo / Presupuesto / Zona / Estado /
+# Anotaciones y debajo el plano. Se genera como PDF aparte y se une con
+# pypdf, porque el PDF de rejilla es apaisado y esta pagina es vertical.
+
+ESTADOS_ACTUACION = ("Pendiente", "Presupuestado", "Aprobado", "En curso", "Realizado")
+_MIN_FILAS_ACTUACIONES = 7
+
+
+class ActuacionPendiente(BaseModel):
+    tipo_trabajo: str = Field("", max_length=300)
+    presupuesto: str = Field("", max_length=200)
+    zona: str = Field("", max_length=200)
+    estado: str = Field("Pendiente", max_length=40)
+    anotaciones: str = Field("", max_length=1000)
+
+
+class ActuacionesPendientesPayload(BaseModel):
+    activas: bool = True
+    filas: List[ActuacionPendiente] = Field(default_factory=list, max_length=40)
+    plano: Optional[str] = Field(
+        None,
+        description="None = no tocar el plano; data-URI de imagen = subir plano propio "
+        "de este parte; cadena vacia = quitar el plano propio (se vuelve a usar el mapa "
+        "de zonas del cliente).",
+    )
+
+
+async def _generar_pagina_actuaciones_pdf(doc: dict, cliente: Optional[dict]) -> Optional[bytes]:
+    if not doc.get("actuaciones_activas"):
+        return None
+
+    buffer = io.BytesIO()
+    margen = 1.2 * cm
+    pdf_doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=margen, bottomMargin=margen,
+        leftMargin=margen, rightMargin=margen, title="Actuaciones pendientes",
+    )
+    ancho = A4[0] - 2 * margen - 12
+    alto = A4[1] - 2 * margen - 14
+    styles = getSampleStyleSheet()
+    gris = colors.HexColor("#d9d9d9")
+    azul_zona = colors.HexColor("#dce6f1")
+    borde = colors.HexColor("#1f2937")
+
+    titulo_style = ParagraphStyle(
+        "TituloAct", parent=styles["Normal"], fontName="Times-Bold", fontSize=13, leading=16,
+    )
+    cab_style = ParagraphStyle(
+        "CabAct", parent=styles["Normal"], fontName="Times-Bold", fontSize=9.5,
+        leading=11, alignment=1,
+    )
+    sub_style = ParagraphStyle(
+        "SubAct", parent=cab_style, fontName="Times-Bold", fontSize=6.5, leading=7.5,
+    )
+    celda_style = ParagraphStyle(
+        "CeldaAct", parent=styles["Normal"], fontSize=8.5, leading=10.5,
+    )
+    celda_centro = ParagraphStyle("CeldaActC", parent=celda_style, alignment=1)
+    zona_titulo_style = ParagraphStyle(
+        "ZonaTit", parent=cab_style, fontSize=12, leading=14,
+    )
+    nota_style = ParagraphStyle(
+        "NotaAct", parent=styles["Normal"], fontSize=8, alignment=1,
+        textColor=colors.HexColor("#64748b"),
+    )
+
+    story = []
+
+    # Cabecera: logo Inicia + titulo a la izquierda, logo del cliente a la derecha
+    logo_inicia = _logo_inicia_image(max_width_cm=5.0, max_height_cm=1.7)
+    logo_cliente = await _descargar_imagen_pdf(
+        cliente.get("logo_url") if cliente else None, max_width_cm=10.5, max_height_cm=2.6
+    )
+    izquierda = []
+    if logo_inicia:
+        izquierda += [logo_inicia, Spacer(1, 10)]
+    izquierda.append(Paragraph("ACTUACIONES PENDIENTES", titulo_style))
+    derecha = [logo_cliente] if logo_cliente else [
+        Paragraph(f"<b>{_p(cliente['nombre'])}</b>" if cliente else "", titulo_style)
+    ]
+    cabecera = Table([[izquierda, derecha]], colWidths=[ancho * 0.36, ancho * 0.64])
+    cabecera.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(cabecera)
+
+    # Tabla de actuaciones
+    filas_datos = list(doc.get("actuaciones_pendientes") or [])
+    cab = [
+        Paragraph("TIPO DE TRABAJO", cab_style),
+        [Paragraph("PRESUPUESTO", cab_style),
+         Paragraph("(Si es fuera de mantenimiento)", sub_style)],
+        Paragraph("ZONA (Numerada)", cab_style),
+        Paragraph("ESTADO", cab_style),
+        Paragraph("ANOTACIONES", cab_style),
+    ]
+    filas = [cab]
+    for f in filas_datos:
+        filas.append([
+            Paragraph(_p(f.get("tipo_trabajo")), celda_style),
+            Paragraph(_p(f.get("presupuesto")), celda_centro),
+            Paragraph(_p(f.get("zona")), celda_centro),
+            Paragraph(_p(f.get("estado")), celda_centro),
+            Paragraph(_p(f.get("anotaciones")), celda_style),
+        ])
+    while len(filas) - 1 < _MIN_FILAS_ACTUACIONES:
+        filas.append(["", "", "", "", ""])
+
+    anchos = [0.17, 0.17, 0.22, 0.14, 0.30]
+    col_widths = [ancho * a for a in anchos]
+    # Filas vacias con altura fija (como en la plantilla); las rellenas, la que necesiten
+    alturas = [None] + [
+        (0.95 * cm if not any(str(x) for x in fila) else None) for fila in filas[1:]
+    ]
+    tabla = Table(filas, colWidths=col_widths, rowHeights=alturas, repeatRows=1)
+    estilo = [
+        ("BOX", (0, 0), (-1, -1), 1.2, borde),
+        ("INNERGRID", (0, 0), (-1, -1), 0.6, borde),
+        ("BACKGROUND", (0, 0), (-1, 0), gris),
+        ("BACKGROUND", (2, 1), (2, -1), azul_zona),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    tabla.setStyle(TableStyle(estilo))
+    story.append(tabla)
+
+    # Bloque ZONA (Grafico) con el plano
+    plano_url = doc.get("actuaciones_plano_url") or (cliente.get("mapa_zonas_url") if cliente else None)
+    plano_img = await _descargar_imagen_pdf(plano_url, max_width_cm=(ancho / cm) - 0.8, max_height_cm=16.0)
+    contenido_plano = plano_img if plano_img else Paragraph(
+        "(no hay plano subido para este parte ni mapa de zonas del cliente)", nota_style
+    )
+    bloque_plano = Table(
+        [[Paragraph("ZONA (Gráfico)", zona_titulo_style)], [contenido_plano]],
+        colWidths=[ancho],
+    )
+    bloque_plano.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.2, borde),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.2, borde),
+        ("BACKGROUND", (0, 0), (-1, 0), gris),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 1), (-1, 1), 8),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
+    ]))
+    story.append(bloque_plano)
+
+    # Todo en una sola pagina: si hay muchas filas, se reduce proporcionalmente.
+    pdf_doc.build([KeepInFrame(ancho, alto, story, mode="shrink")])
+    return buffer.getvalue()
+
+
+def _unir_pdfs(principal: bytes, extra: Optional[bytes]) -> bytes:
+    if not extra:
+        return principal
+    writer = PdfWriter()
+    for datos in (principal, extra):
+        for pagina in PdfReader(io.BytesIO(datos)).pages:
+            writer.add_page(pagina)
+    salida = io.BytesIO()
+    writer.write(salida)
+    return salida.getvalue()
+
+
+@api_router.put("/work-orders/{work_order_id}/actuaciones-pendientes", response_model=WorkOrder)
+async def guardar_actuaciones_pendientes(
+    work_order_id: str,
+    payload: ActuacionesPendientesPayload,
+    current_user: dict = Depends(require_approved),
+):
+    """Guarda la tabla de actuaciones pendientes / futuros trabajos del parte.
+    El admin puede editarla siempre (tambien con el parte cerrado, porque es
+    informacion de cara al futuro); el resto solo con el parte abierto."""
+    doc = await _cargar_parte(work_order_id)
+    if doc["estado"] != "abierto" and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="El parte no esta abierto")
+
+    filas = []
+    for f in payload.filas:
+        fila = {k: (v or "").strip() for k, v in f.model_dump().items()}
+        if not any(fila[k] for k in ("tipo_trabajo", "presupuesto", "zona", "anotaciones")):
+            continue  # fila totalmente vacia: no se guarda
+        if not fila["estado"]:
+            fila["estado"] = "Pendiente"
+        filas.append(fila)
+
+    updates = {
+        "actuaciones_activas": payload.activas,
+        "actuaciones_pendientes": filas,
+        "actualizado_en": datetime.now(timezone.utc),
+    }
+
+    if payload.plano is not None:
+        anterior_public_id = doc.get("actuaciones_plano_public_id")
+        if payload.plano == "":
+            updates["actuaciones_plano_url"] = None
+            updates["actuaciones_plano_public_id"] = None
+            await _borrar_logo_cloudinary(anterior_public_id)
+        elif _es_logo_base64(payload.plano):
+            try:
+                resultado = await asyncio.to_thread(
+                    cloudinary.uploader.upload,
+                    payload.plano,
+                    folder="inicia-gestion/planos-actuaciones",
+                    resource_type="image",
+                )
+            except Exception as e:
+                logger.error("Error subiendo plano de actuaciones", exc_info=True)
+                raise HTTPException(status_code=502, detail="No se pudo subir el plano") from e
+            updates["actuaciones_plano_url"] = resultado["secure_url"]
+            updates["actuaciones_plano_public_id"] = resultado["public_id"]
+            await _borrar_logo_cloudinary(anterior_public_id)
+        else:
+            raise HTTPException(status_code=400, detail="El plano debe ser una imagen")
+
+    await db.work_orders.update_one({"id": work_order_id}, {"$set": updates})
+    doc = await _cargar_parte(work_order_id)
+    return WorkOrder(**doc)
+
+
 @api_router.get("/work-orders/{work_order_id}/pdf")
 async def descargar_pdf_parte(
     work_order_id: str, _: dict = Depends(require_approved)
@@ -7268,9 +7500,19 @@ async def descargar_pdf_parte(
     if doc.get("usa_zonas"):
         cliente = await db.clients.find_one({"id": doc["client_id"]})
         pdf_bytes = await _generar_pdf_rejilla_zonas(doc, cliente)
+        pagina_actuaciones_cliente = cliente
     else:
         vista = await _construir_vista_publica(doc)
         pdf_bytes = await _generar_pdf_parte(vista, work_order_id=doc["id"])
+        pagina_actuaciones_cliente = (
+            await db.clients.find_one({"id": doc["client_id"]}) if doc.get("client_id") else None
+        )
+    # Pagina extra de actuaciones pendientes / futuros trabajos (si esta activada)
+    try:
+        extra = await _generar_pagina_actuaciones_pdf(doc, pagina_actuaciones_cliente)
+        pdf_bytes = _unir_pdfs(pdf_bytes, extra)
+    except Exception:
+        logger.warning("No se pudo anadir la pagina de actuaciones pendientes", exc_info=True)
     filename = f"{(doc.get('numero') or doc['id'][:8])}.pdf"
     return Response(
         content=pdf_bytes,

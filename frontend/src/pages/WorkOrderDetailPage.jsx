@@ -57,6 +57,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import SessionDialog from "@/components/SessionDialog";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import AnadirFotosParte from "@/components/AnadirFotosParte";
+import ActuacionesPendientesParte from "@/components/ActuacionesPendientesParte";
 import SignaturePad from "@/components/SignaturePad";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -1024,6 +1025,14 @@ const WorkOrderDetailPage = () => {
         />
       </div>
       <GaleriaFotos key={recargaFotos} workOrderId={id} titulo="" />
+
+      {/* Futuros trabajos / actuaciones pendientes (página extra del PDF) */}
+      <ActuacionesPendientesParte
+        parte={parte}
+        cliente={cliente}
+        editable={isAdmin || parteAbierto}
+        onGuardado={(data) => setParte((prev) => ({ ...prev, ...data }))}
+      />
 
       {/* Notas del parte */}
       {parte.notas && (
