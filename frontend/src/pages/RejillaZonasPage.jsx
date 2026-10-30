@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, MapPin, Image as ImageIcon, Check, StickyNote, Trash2 } from "lucide-react";
+import { ArrowLeft, MapPin, Image as ImageIcon, Check, StickyNote, Trash2, Eye, EyeOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -136,6 +136,21 @@ const RejillaZonasPage = () => {
 
   const parteAbierto = parte?.estado === "abierto";
   const mapaZonasUrl = parte?.mapa_zonas_url || cliente?.mapa_zonas_url || null;
+  const mapaOculto = Boolean(parte?.ocultar_mapa_zonas);
+  const [cambiandoMapa, setCambiandoMapa] = useState(false);
+
+  const alternarMapa = async () => {
+    setCambiandoMapa(true);
+    try {
+      await axios.patch(`${API}/work-orders/${id}`, { ocultar_mapa_zonas: !mapaOculto });
+      setParte((p) => ({ ...p, ocultar_mapa_zonas: !mapaOculto }));
+      toast.success(!mapaOculto ? "Mapa oculto en la rejilla y en el PDF" : "Mapa visible de nuevo");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "No se pudo cambiar");
+    } finally {
+      setCambiandoMapa(false);
+    }
+  };
 
   const abrirPanel = (e, tareaId, tareaNombre, fecha) => {
     if (!parteAbierto) return;
@@ -340,7 +355,20 @@ const RejillaZonasPage = () => {
             onAplicado={cargar}
           />
         )}
-        {mapaZonasUrl && (
+        {mapaZonasUrl && (isAdmin || parteAbierto) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={alternarMapa}
+            disabled={cambiandoMapa}
+            className="border-slate-200"
+            data-testid="alternar-mapa-zonas-btn"
+          >
+            {mapaOculto ? <Eye className="w-4 h-4 mr-2" /> : <EyeOff className="w-4 h-4 mr-2" />}
+            {mapaOculto ? "Mostrar mapa" : "Ocultar mapa"}
+          </Button>
+        )}
+        {mapaZonasUrl && !mapaOculto && (
           <Button
             variant="outline"
             size="sm"

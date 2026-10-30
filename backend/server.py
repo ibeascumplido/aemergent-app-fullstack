@@ -5946,6 +5946,9 @@ class WorkOrderUpdate(BaseModel):
         None, description="Solo para vincular un parte de centro libre a un centro real ya "
         "dado de alta (admin). Al establecerlo se borra centro_libre."
     )
+    ocultar_mapa_zonas: Optional[bool] = Field(
+        None, description="True = no mostrar el mapa de zonas en la rejilla ni en el PDF."
+    )
 
 
 class WorkOrder(WorkOrderBase):
@@ -5977,6 +5980,7 @@ class WorkOrder(WorkOrderBase):
     actuaciones_activas: bool = False
     actuaciones_pendientes: List[Dict[str, Any]] = Field(default_factory=list)
     actuaciones_plano_url: Optional[str] = None
+    ocultar_mapa_zonas: bool = False
 
 
 class WorkSessionBase(BaseModel):
@@ -7180,10 +7184,22 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     story.append(info_fila)
     story.append(Spacer(1, 8))
 
-    # --- Columna izquierda: cuadrante + observaciones ---
+    # --- Mapa de zonas (opcional) ---
+    # Si el parte lo tiene oculto o no hay mapa (ni del centro ni del
+    # cliente), no se reserva hueco: la rejilla ocupa todo el ancho.
     ANCHO_DERECHA = 7.8 * cm
     SEPARACION = 0.6 * cm  # hueco real entre la tabla y el mapa
-    ANCHO_IZQUIERDA = ANCHO_UTIL - ANCHO_DERECHA - SEPARACION
+    mapa_img = None
+    if not doc.get("ocultar_mapa_zonas"):
+        # Altura maxima ajustada para que quepa en una sola pagina apaisada.
+        mapa_img = await _descargar_imagen_pdf(
+            await _mapa_zonas_de_parte(doc, cliente),
+            max_width_cm=ANCHO_DERECHA / cm - 0.7,
+            max_height_cm=11.0,
+        )
+
+    # --- Columna izquierda: cuadrante + observaciones ---
+    ANCHO_IZQUIERDA = (ANCHO_UTIL - ANCHO_DERECHA - SEPARACION) if mapa_img else ANCHO_UTIL
 
     cabecera = [Paragraph("Tareas\nrealizadas", label_style)] + [
         str(int(d.split("-")[2])) for d in dias
@@ -7256,41 +7272,27 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     columna_izquierda = [tabla_grid, Spacer(1, 8), tabla_obs]
 
-    # --- Columna derecha: mapa de zonas ---
-    # Altura maxima ajustada para que quepa en una sola pagina apaisada:
-    # la pagina util mide ~18.6cm de alto: cabecera (logo+banner+datos del
-    # cliente) ya ocupa ~5cm, así que el mapa no puede pasar de ~11cm o se
-    # desborda a una segunda pagina.
-    mapa_img = await _descargar_imagen_pdf(
-        await _mapa_zonas_de_parte(doc, cliente),
-        max_width_cm=ANCHO_DERECHA / cm - 0.7,
-        max_height_cm=11.0,
-    )
-    columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style)]
-    if mapa_img:
-        columna_derecha.append(mapa_img)
+    if not mapa_img:
+        story.extend(columna_izquierda)
     else:
-        columna_derecha.append(
-            Paragraph("(el cliente no tiene un mapa de zonas subido todavía)", normal_style)
+        columna_derecha = [Paragraph("MAPA DE ZONAS", seccion_style), mapa_img]
+        layout_dos_columnas = Table(
+            [[columna_izquierda, "", columna_derecha]],
+            colWidths=[ANCHO_IZQUIERDA, SEPARACION, ANCHO_DERECHA],
         )
-
-    layout_dos_columnas = Table(
-        [[columna_izquierda, "", columna_derecha]],
-        colWidths=[ANCHO_IZQUIERDA, SEPARACION, ANCHO_DERECHA],
-    )
-    layout_dos_columnas.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("BOX", (2, 0), (2, 0), 0.6, colors.HexColor("#94a3b8")),
-                ("TOPPADDING", (2, 0), (2, 0), 6),
-                ("LEFTPADDING", (2, 0), (2, 0), 8),
-                ("LEFTPADDING", (0, 0), (0, 0), 0),
-                ("RIGHTPADDING", (0, 0), (0, 0), 0),
-            ]
+        layout_dos_columnas.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("BOX", (2, 0), (2, 0), 0.6, colors.HexColor("#94a3b8")),
+                    ("TOPPADDING", (2, 0), (2, 0), 6),
+                    ("LEFTPADDING", (2, 0), (2, 0), 8),
+                    ("LEFTPADDING", (0, 0), (0, 0), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 0),
+                ]
+            )
         )
-    )
-    story.append(layout_dos_columnas)
+        story.append(layout_dos_columnas)
 
     # Cabecera + cuadrante + observaciones + mapa: todo en UNA pagina. Si el
     # contenido es mas alto que la pagina (muchas tareas u observaciones), se
@@ -7444,11 +7446,13 @@ async def _generar_pagina_actuaciones_pdf(doc: dict, cliente: Optional[dict]) ->
     story.append(tabla)
 
     # Bloque ZONA (Grafico) con el plano
-    plano_url = doc.get("actuaciones_plano_url") or await _mapa_zonas_de_parte(doc, cliente)
+    # Un plano propio del parte se muestra siempre; el mapa del centro o del
+    # cliente solo si no esta oculto. Si no hay nada, el bloque no aparece.
+    plano_url = doc.get("actuaciones_plano_url")
+    if not plano_url and not doc.get("ocultar_mapa_zonas"):
+        plano_url = await _mapa_zonas_de_parte(doc, cliente)
     plano_img = await _descargar_imagen_pdf(plano_url, max_width_cm=(ancho / cm) - 0.8, max_height_cm=16.0)
-    contenido_plano = plano_img if plano_img else Paragraph(
-        "(no hay plano subido para este parte ni mapa de zonas del cliente)", nota_style
-    )
+    contenido_plano = plano_img
     bloque_plano = Table(
         [[Paragraph("ZONA (Gráfico)", zona_titulo_style)], [contenido_plano]],
         colWidths=[ancho],
@@ -7462,7 +7466,8 @@ async def _generar_pagina_actuaciones_pdf(doc: dict, cliente: Optional[dict]) ->
         ("TOPPADDING", (0, 1), (-1, 1), 8),
         ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
     ]))
-    story.append(bloque_plano)
+    if plano_img:
+        story.append(bloque_plano)
 
     # Todo en una sola pagina: si hay muchas filas, se reduce proporcionalmente.
     pdf_doc.build([KeepInFrame(ancho, alto, story, mode="shrink")])
