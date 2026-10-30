@@ -7,6 +7,8 @@ import os
 import re
 import io
 import math
+import unicodedata
+from urllib.parse import quote
 import base64
 import logging
 from pathlib import Path
@@ -7549,13 +7551,15 @@ async def _generar_pagina_actuaciones_pdf(doc: dict, cliente: Optional[dict]) ->
     return buffer.getvalue()
 
 
-def _unir_pdfs(principal: bytes, extra: Optional[bytes]) -> bytes:
+def _unir_pdfs(principal: bytes, extra: Optional[bytes], titulo: Optional[str] = None) -> bytes:
     if not extra:
         return principal
     writer = PdfWriter()
     for datos in (principal, extra):
         for pagina in PdfReader(io.BytesIO(datos)).pages:
             writer.add_page(pagina)
+    if titulo:
+        writer.add_metadata({"/Title": titulo})
     salida = io.BytesIO()
     writer.write(salida)
     return salida.getvalue()
@@ -7635,15 +7639,37 @@ async def descargar_pdf_parte(
     # Pagina extra de actuaciones pendientes / futuros trabajos (si esta activada)
     try:
         extra = await _generar_pagina_actuaciones_pdf(doc, pagina_actuaciones_cliente)
-        pdf_bytes = _unir_pdfs(pdf_bytes, extra)
+        pdf_bytes = _unir_pdfs(pdf_bytes, extra, titulo=doc.get("titulo"))
     except Exception:
         logger.warning("No se pudo anadir la pagina de actuaciones pendientes", exc_info=True)
-    filename = f"{(doc.get('numero') or doc['id'][:8])}.pdf"
+    # Nombre del archivo = titulo del parte (sin caracteres prohibidos en
+    # nombres de archivo). filename* lleva tildes y eñes; filename, la
+    # version ASCII para navegadores antiguos.
+    nombre = _nombre_archivo_seguro(doc.get("titulo")) or (doc.get("numero") or doc["id"][:8])
+    nombre_ascii = (
+        unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode() or "parte"
+    )
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{nombre_ascii}.pdf"; '
+                f"filename*=UTF-8''{quote(nombre + '.pdf')}"
+            ),
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
     )
+
+
+def _nombre_archivo_seguro(texto: Optional[str]) -> str:
+    """Quita los caracteres que Windows/Android no admiten en un nombre de
+    archivo y recorta espacios. Mantiene tildes, eñes y espacios."""
+    if not texto:
+        return ""
+    limpio = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", texto)
+    limpio = re.sub(r"\s+", " ", limpio).strip(" .")
+    return limpio[:150]
 
 
 # --- Sesiones -------------------------------------------------------------

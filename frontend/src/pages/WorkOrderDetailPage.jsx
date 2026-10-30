@@ -362,6 +362,17 @@ const WorkOrderDetailPage = () => {
     }
   };
 
+  // Nombre del PDF = titulo del parte (sin caracteres no validos en archivos)
+  const nombreArchivoPdf = () => {
+    const limpio = (parte?.titulo || "")
+      .replace(/[\\/:*?"<>|\r\n\t]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\.+|\.+$/g, "")
+      .slice(0, 150);
+    return `${limpio || `parte-${id.slice(0, 8)}`}.pdf`;
+  };
+
   const handleDescargarPdf = async () => {
     setDescargandoPdf(true);
     try {
@@ -369,7 +380,7 @@ const WorkOrderDetailPage = () => {
       const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.download = `parte-${id.slice(0, 8)}.pdf`;
+      a.download = nombreArchivoPdf();
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -392,7 +403,7 @@ const WorkOrderDetailPage = () => {
     setCompartiendoPdf(true);
     try {
       const res = await axios.get(`${API}/work-orders/${id}/pdf`, { responseType: "blob" });
-      const archivo = new File([res.data], `parte-${id.slice(0, 8)}.pdf`, {
+      const archivo = new File([res.data], nombreArchivoPdf(), {
         type: "application/pdf",
       });
       if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
