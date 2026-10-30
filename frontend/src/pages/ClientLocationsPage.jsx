@@ -10,6 +10,8 @@ import {
   Search,
   ExternalLink,
   Calendar,
+  Upload,
+  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,6 +45,7 @@ import {
 import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
+import { comprimirImagen } from "@/lib/imagen";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -79,6 +82,7 @@ const emptyForm = {
   responsable_texto_libre: "",
   dificultad: "none",
   notas: "",
+  mapa_zonas_url: null,
 };
 
 const ClientLocationsPage = () => {
@@ -158,8 +162,21 @@ const ClientLocationsPage = () => {
       responsable_texto_libre: u.responsable_texto_libre || "",
       dificultad: u.dificultad || "none",
       notas: u.notas || "",
+      mapa_zonas_url: u.mapa_zonas_url || null,
     });
     setDialogOpen(true);
+  };
+
+  const cambiarMapaZonas = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("El archivo debe ser una imagen");
+      return;
+    }
+    const dataUrl = await comprimirImagen(file, 2000, 0.85);
+    setForm((f) => ({ ...f, mapa_zonas_url: dataUrl }));
   };
 
   const cambiarFrecuencia = (v) => {
@@ -203,6 +220,7 @@ const ClientLocationsPage = () => {
         responsable_texto_libre: form.responsable_texto_libre.trim(),
         dificultad: form.dificultad === "none" ? null : form.dificultad,
         notas: form.notas.trim(),
+        mapa_zonas_url: form.mapa_zonas_url || null,
       };
       if (editando) {
         await axios.put(`${API}/locations/${editando.id}`, payload);
@@ -634,6 +652,47 @@ const ClientLocationsPage = () => {
                 onChange={(e) => setForm((f) => ({ ...f, notas: e.target.value }))}
                 rows={3}
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Mapa de zonas de este centro (opcional)</Label>
+              <p className="text-xs text-slate-400 -mt-1">
+                Si no subes ninguno, se usa el mapa de zonas del cliente.
+              </p>
+              {form.mapa_zonas_url && (
+                <div className="rounded-lg border border-slate-200 overflow-hidden">
+                  <img
+                    src={form.mapa_zonas_url}
+                    alt="Mapa de zonas del centro"
+                    className="w-full max-h-48 object-contain bg-slate-50"
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={cambiarMapaZonas}
+                    data-testid="loc-mapa-zonas-input"
+                  />
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-200 text-sm hover:bg-slate-50">
+                    <Upload className="w-4 h-4" />
+                    {form.mapa_zonas_url ? "Cambiar mapa" : "Subir mapa"}
+                  </span>
+                </label>
+                {form.mapa_zonas_url && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, mapa_zonas_url: null }))}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"
+                  >
+                    <X className="w-3 h-3" />
+                    Quitar mapa
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

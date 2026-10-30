@@ -135,6 +135,7 @@ const RejillaZonasPage = () => {
   }, [panelAbierto]);
 
   const parteAbierto = parte?.estado === "abierto";
+  const mapaZonasUrl = parte?.mapa_zonas_url || cliente?.mapa_zonas_url || null;
 
   const abrirPanel = (e, tareaId, tareaNombre, fecha) => {
     if (!parteAbierto) return;
@@ -339,7 +340,7 @@ const RejillaZonasPage = () => {
             onAplicado={cargar}
           />
         )}
-        {cliente?.mapa_zonas_url && (
+        {mapaZonasUrl && (
           <Button
             variant="outline"
             size="sm"
@@ -582,9 +583,9 @@ const RejillaZonasPage = () => {
       <Dialog open={mapaAbierto} onOpenChange={setMapaAbierto}>
         <DialogContent className="max-w-3xl">
           <DialogTitle>Mapa de zonas — {cliente?.nombre}</DialogTitle>
-          {cliente?.mapa_zonas_url && (
+          {mapaZonasUrl && (
             <img
-              src={cliente.mapa_zonas_url}
+              src={mapaZonasUrl}
               alt="Mapa de zonas"
               className="w-full h-auto rounded-lg border border-slate-200"
             />

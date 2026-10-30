@@ -123,11 +123,11 @@ const ActuacionesPendientesParte = ({ parte, cliente, editable, onGuardado }) =>
   };
 
   const planoParte = quitarPlano ? null : planoNuevo || parte.actuaciones_plano_url;
-  const planoMostrado = planoParte || cliente?.mapa_zonas_url || null;
+  const planoMostrado = planoParte || (parte?.mapa_zonas_url || cliente?.mapa_zonas_url) || null;
   const origenPlano = planoParte
     ? "Plano propio de este parte"
-    : cliente?.mapa_zonas_url
-    ? "Mapa de zonas del cliente"
+    : (parte?.mapa_zonas_url || cliente?.mapa_zonas_url)
+    ? "Mapa de zonas del centro o del cliente"
     : null;
 
   // Solo lectura: si no está activado no se muestra nada

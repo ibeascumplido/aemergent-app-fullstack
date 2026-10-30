@@ -2763,6 +2763,11 @@ class ClientLocationBase(BaseModel):
     )
     dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
     notas: Optional[str] = Field("", max_length=2000)
+    mapa_zonas_url: Optional[str] = Field(
+        None,
+        description="Data-URI base64 (entrada) o URL de Cloudinary (salida) del plano de zonas "
+        "de ESTE centro. Si no hay, se usa el mapa de zonas del cliente.",
+    )
 
 
 class ClientLocationCreate(ClientLocationBase):
@@ -2783,6 +2788,7 @@ class ClientLocationUpdate(BaseModel):
     dificultad: Optional[str] = Field(None, pattern=_DIFICULTAD_PATTERN)
     notas: Optional[str] = Field(None, max_length=2000)
     activo: Optional[bool] = None
+    mapa_zonas_url: Optional[str] = None
 
 
 class ClientLocation(ClientLocationBase):
@@ -2901,11 +2907,17 @@ async def create_client_location(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     now = datetime.now(timezone.utc)
+    datos = payload.model_dump()
+    datos["mapa_zonas_public_id"] = None
+    if _es_logo_base64(datos.get("mapa_zonas_url")):
+        datos["mapa_zonas_url"], datos["mapa_zonas_public_id"] = await _subir_logo_cloudinary(
+            datos["mapa_zonas_url"]
+        )
     doc = {
         "id": str(uuid.uuid4()),
         "client_id": cliente["id"],
         "client_slug": slug,
-        **payload.model_dump(),
+        **datos,
         "activo": True,
         "creado_en": now,
         "actualizado_en": now,
@@ -2926,6 +2938,17 @@ async def update_client_location(
         return ClientLocation(**doc)
     if "nombre" in updates and updates["nombre"] is not None:
         updates["nombre"] = updates["nombre"].strip()
+    if "mapa_zonas_url" in updates:
+        nuevo_mapa = updates["mapa_zonas_url"]
+        if _es_logo_base64(nuevo_mapa):
+            url, public_id = await _subir_logo_cloudinary(nuevo_mapa)
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_url"] = url
+            updates["mapa_zonas_public_id"] = public_id
+        elif not nuevo_mapa:
+            await _borrar_logo_cloudinary(doc.get("mapa_zonas_public_id"))
+            updates["mapa_zonas_url"] = None
+            updates["mapa_zonas_public_id"] = None
     updates["actualizado_en"] = datetime.now(timezone.utc)
     await db.client_locations.update_one({"id": location_id}, {"$set": updates})
     doc = await db.client_locations.find_one({"id": location_id})
@@ -6016,6 +6039,25 @@ class WorkSession(WorkSessionBase):
 
 class WorkOrderWithSessions(WorkOrder):
     sessions: List[WorkSession] = Field(default_factory=list)
+    mapa_zonas_url: Optional[str] = Field(
+        None, description="Mapa de zonas que aplica a este parte: el del centro si lo tiene, "
+        "si no el del cliente."
+    )
+
+
+async def _mapa_zonas_de_parte(doc: dict, cliente: Optional[dict] = None) -> Optional[str]:
+    """Mapa de zonas que corresponde a un parte: primero el del centro
+    (si el parte tiene centro_id y ese centro tiene mapa), si no el del
+    cliente."""
+    if doc.get("centro_id"):
+        centro = await db.client_locations.find_one(
+            {"id": doc["centro_id"]}, {"_id": 0, "mapa_zonas_url": 1}
+        )
+        if centro and centro.get("mapa_zonas_url"):
+            return centro["mapa_zonas_url"]
+    if cliente is None and doc.get("client_id"):
+        cliente = await db.clients.find_one({"id": doc["client_id"]}, {"_id": 0, "mapa_zonas_url": 1})
+    return cliente.get("mapa_zonas_url") if cliente else None
 
 
 class SesionPublica(BaseModel):
@@ -6196,7 +6238,10 @@ async def get_work_order(work_order_id: str, _: dict = Depends(require_approved)
         [("fecha", 1), ("hora_inicio", 1)]
     )
     sessions = [WorkSession(**s) async for s in sessions_cursor]
-    return WorkOrderWithSessions(**doc, sessions=sessions)
+    datos = {k: v for k, v in doc.items() if k != "mapa_zonas_url"}
+    return WorkOrderWithSessions(
+        **datos, sessions=sessions, mapa_zonas_url=await _mapa_zonas_de_parte(doc)
+    )
 
 
 @api_router.post("/work-orders", response_model=WorkOrder)
@@ -7217,7 +7262,7 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
     # cliente) ya ocupa ~5cm, así que el mapa no puede pasar de ~11cm o se
     # desborda a una segunda pagina.
     mapa_img = await _descargar_imagen_pdf(
-        cliente.get("mapa_zonas_url") if cliente else None,
+        await _mapa_zonas_de_parte(doc, cliente),
         max_width_cm=ANCHO_DERECHA / cm - 0.7,
         max_height_cm=11.0,
     )
@@ -7399,7 +7444,7 @@ async def _generar_pagina_actuaciones_pdf(doc: dict, cliente: Optional[dict]) ->
     story.append(tabla)
 
     # Bloque ZONA (Grafico) con el plano
-    plano_url = doc.get("actuaciones_plano_url") or (cliente.get("mapa_zonas_url") if cliente else None)
+    plano_url = doc.get("actuaciones_plano_url") or await _mapa_zonas_de_parte(doc, cliente)
     plano_img = await _descargar_imagen_pdf(plano_url, max_width_cm=(ancho / cm) - 0.8, max_height_cm=16.0)
     contenido_plano = plano_img if plano_img else Paragraph(
         "(no hay plano subido para este parte ni mapa de zonas del cliente)", nota_style
