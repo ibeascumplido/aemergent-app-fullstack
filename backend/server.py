@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
 import io
+import math
 import base64
 import logging
 from pathlib import Path
@@ -6969,10 +6970,18 @@ async def _descargar_imagen_pdf(
         return None
 
 
-async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -> list:
-    """Genera los elementos (flowables) de una seccion 'Fotografias' con las
-    fotos del parte, en una cuadricula de 3 columnas. Devuelve [] si no hay
-    fotos. Limita a max_fotos para que el PDF no sea enorme."""
+async def _seccion_fotos_pdf(
+    work_order_id: str,
+    estilos,
+    max_fotos: int = 30,
+    ancho_disponible: float = 17.6 * cm,
+    alto_disponible: float = 24.5 * cm,
+) -> list:
+    """Seccion 'Fotografias' del PDF: todas las fotos del parte en UNA sola
+    pagina. El numero de columnas y el tamaño de cada foto se calculan segun
+    cuantas fotos hay y el espacio de la pagina (vertical u horizontal), para
+    que salgan lo mas grandes posible sin pasar a otra pagina. Devuelve [] si
+    no hay fotos."""
     fotos_docs = [
         f
         async for f in db.fotos.find(
@@ -6982,47 +6991,77 @@ async def _seccion_fotos_pdf(work_order_id: str, estilos, max_fotos: int = 12) -
     if not fotos_docs:
         return []
     fotos_docs = fotos_docs[:max_fotos]
+    n = len(fotos_docs)
 
     titulo_style = ParagraphStyle(
         "TituloFotos", parent=estilos["Normal"], fontSize=11,
-        textColor=_COLOR_MARCA, fontName="Helvetica-Bold", spaceAfter=8,
+        textColor=_COLOR_MARCA, fontName="Helvetica-Bold", spaceAfter=6,
+    )
+    pie_style = ParagraphStyle(
+        "PieFoto", parent=estilos["Normal"], fontSize=7.5, leading=9, alignment=1,
+        textColor=colors.HexColor("#334155"), fontName="Helvetica-Bold", spaceBefore=2,
     )
 
-    # Descargar cada imagen escalada a un tamaño de miniatura homogéneo.
-    pie_style = ParagraphStyle(
-        "PieFoto", parent=estilos["Normal"], fontSize=8.5, alignment=1,
-        textColor=colors.HexColor("#334155"), fontName="Helvetica-Bold", spaceBefore=3,
-    )
+    etiquetas = [_etiqueta_de_foto(f) for f in fotos_docs]
+    hay_etiquetas = any(etiquetas)
+    ALTO_TITULO = 1.1 * cm
+    ALTO_PIE = 0.55 * cm if hay_etiquetas else 0
+    RELLENO = 0.3 * cm  # hueco alrededor de cada foto
+    alto_rejilla = alto_disponible - ALTO_TITULO
+
+    # Elegir el nº de columnas que da la foto mas grande
+    mejor = None
+    for cols in range(1, 7):
+        filas = math.ceil(n / cols)
+        lado = min(
+            ancho_disponible / cols - RELLENO,
+            alto_rejilla / filas - ALTO_PIE - RELLENO,
+            9.0 * cm,  # tope para que 1-2 fotos no salgan gigantes
+        )
+        if mejor is None or lado > mejor[1]:
+            mejor = (cols, lado)
+    cols, lado = mejor
+    lado = max(lado, 1.5 * cm)
+
     celdas = []
-    for f in fotos_docs:
-        img = await _descargar_imagen_pdf(f.get("url"), max_width_cm=5.2, max_height_cm=5.2)
+    for f, etiqueta in zip(fotos_docs, etiquetas):
+        img = await _descargar_imagen_pdf(
+            f.get("url"), max_width_cm=lado / cm, max_height_cm=lado / cm
+        )
         contenido = [img if img else Paragraph("(imagen no disponible)", estilos["Normal"])]
-        etiqueta = _etiqueta_de_foto(f)
         if etiqueta:
             contenido.append(Paragraph(xml_escape(etiqueta), pie_style))
         celdas.append(contenido)
 
-    # Organizar en filas de 3 columnas
     filas = []
-    for i in range(0, len(celdas), 3):
-        fila = celdas[i:i + 3]
-        while len(fila) < 3:
-            fila.append("")  # rellenar la última fila
+    for i in range(0, len(celdas), cols):
+        fila = celdas[i:i + cols]
+        while len(fila) < cols:
+            fila.append("")
         filas.append(fila)
 
-    tabla = Table(filas, colWidths=[5.7 * cm, 5.7 * cm, 5.7 * cm])
+    ancho_col = ancho_disponible / cols
+    tabla = Table(filas, colWidths=[ancho_col] * cols)
     tabla.setStyle(
         TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), RELLENO / 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), RELLENO / 2),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ])
     )
 
-    # Todas las fotos van juntas a partir de una página nueva, para que la
-    # primera página quede solo con los datos y anotaciones del parte.
-    return [PageBreak(), Paragraph("Fotografías", titulo_style), Spacer(1, 8), tabla]
+    # Pagina nueva solo para las fotos; KeepInFrame reduce un poco si algo
+    # (pies de foto largos) no cupiera, en vez de partir en dos paginas.
+    bloque = KeepInFrame(
+        ancho_disponible,
+        alto_disponible,
+        [Paragraph("Fotografías", titulo_style), tabla],
+        mode="shrink",
+    )
+    return [PageBreak(), bloque]
 
 
 async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> bytes:
@@ -7335,7 +7374,9 @@ async def _generar_pdf_rejilla_zonas(doc: dict, cliente: Optional[dict]) -> byte
 
     # Sección de fotografías del parte (si tiene fotos).
     try:
-        elementos_fotos = await _seccion_fotos_pdf(doc["id"], styles)
+        elementos_fotos = await _seccion_fotos_pdf(
+            doc["id"], styles, ancho_disponible=ANCHO_UTIL, alto_disponible=ALTO_UTIL - 4
+        )
         for el in elementos_fotos:
             story.append(el)
     except Exception:
