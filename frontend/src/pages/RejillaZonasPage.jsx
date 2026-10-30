@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import axios from "axios";
 import RejillaDesdeFoto from "@/components/RejillaDesdeFoto";
+import RejillaRellenoAleatorio from "@/components/RejillaRellenoAleatorio";
 import BotonDictado from "@/components/BotonDictado";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -325,6 +326,16 @@ const RejillaZonasPage = () => {
         <div className="flex items-center gap-2 flex-wrap">
         {parteAbierto && (
           <RejillaDesdeFoto workOrderId={id} tareas={tareas} onAplicado={cargar} />
+        )}
+        {parteAbierto && (
+          <RejillaRellenoAleatorio
+            workOrderId={id}
+            clientSlug={parte.client_slug}
+            dias={dias}
+            tareas={tareas}
+            celdas={celdas}
+            onAplicado={cargar}
+          />
         )}
         {cliente?.mapa_zonas_url && (
           <Button
