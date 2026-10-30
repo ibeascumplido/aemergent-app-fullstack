@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import axios from "axios";
 import RejillaDesdeFoto from "@/components/RejillaDesdeFoto";
 import RejillaRellenoAleatorio from "@/components/RejillaRellenoAleatorio";
+import { useAuth } from "@/contexts/AuthContext";
 import BotonDictado from "@/components/BotonDictado";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -44,6 +45,7 @@ const formatearDiaCorto = (fechaISO) => {
 const RejillaZonasPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const panelRef = useRef(null);
 
   const [parte, setParte] = useState(null);
@@ -327,7 +329,7 @@ const RejillaZonasPage = () => {
         {parteAbierto && (
           <RejillaDesdeFoto workOrderId={id} tareas={tareas} onAplicado={cargar} />
         )}
-        {parteAbierto && (
+        {parteAbierto && isAdmin && (
           <RejillaRellenoAleatorio
             workOrderId={id}
             clientSlug={parte.client_slug}
