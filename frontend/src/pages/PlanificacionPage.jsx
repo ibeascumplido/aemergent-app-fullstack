@@ -177,6 +177,15 @@ const PlanificacionPage = () => {
     return set;
   }, [vacaciones]);
 
+  // { fecha: [vacacion,...] } -> quién está de vacaciones o libre cada día
+  const vacacionesPorFecha = useMemo(() => {
+    const map = {};
+    vacaciones.forEach((v) => {
+      (map[v.fecha] = map[v.fecha] || []).push(v);
+    });
+    return map;
+  }, [vacaciones]);
+
   // { fecha: { columnaId: [asignacion,...] } }
   const asignacionesPorCelda = useMemo(() => {
     const map = {};
@@ -504,6 +513,12 @@ const PlanificacionPage = () => {
                 <th className="sticky left-0 top-0 z-20 bg-slate-50 border-b-2 border-r-2 border-slate-300 px-2 py-2 text-center font-medium text-slate-600 w-12">
                   Día
                 </th>
+                <th
+                  className="sticky left-12 top-0 z-20 bg-amber-50 border-b-2 border-r-2 border-slate-300 px-2 py-2 text-center font-medium text-amber-800 min-w-[110px] shadow-[0_1px_0_0_#cbd5e1]"
+                  data-testid="cabecera-vacaciones"
+                >
+                  De vacaciones
+                </th>
                 {columnas.map((c, idx) => (
                   <th
                     key={c.id}
@@ -626,6 +641,27 @@ const PlanificacionPage = () => {
                       <span className="text-[9px] text-slate-400 ml-1">
                         {diaSemanaCorto(fecha)}
                       </span>
+                    </td>
+                    <td
+                      className={`sticky left-12 z-10 bg-inherit border-r-2 border-slate-300 px-1 py-1 ${bordeSemana}`}
+                      data-testid={`vacaciones-${fecha}`}
+                    >
+                      <div className="flex flex-wrap items-center justify-center gap-0.5 min-h-[22px]">
+                        {(vacacionesPorFecha[fecha] || []).map((v) => {
+                          const op = operariosPorId[v.user_id];
+                          if (!op) return null;
+                          return (
+                            <span
+                              key={v.user_id}
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold"
+                              style={estiloColorTextura(op.color, op.textura)}
+                              title={`${op.name} (${v.tipo === "libre" ? "día libre" : "vacaciones"})`}
+                            >
+                              {op.abreviatura || op.name?.slice(0, 2).toUpperCase()}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </td>
                     {columnas.map((c) => {
                       const asignados = asignacionesPorCelda[fecha]?.[c.id] || [];
