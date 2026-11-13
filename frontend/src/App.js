@@ -21,6 +21,7 @@ import RopaPage from "@/pages/RopaPage";
 import PrevencionPage from "@/pages/PrevencionPage";
 import MiFormacionPage from "@/pages/MiFormacionPage";
 import AdminFormacionPage from "@/pages/AdminFormacionPage";
+import AdminTramitesPage from "@/pages/AdminTramitesPage";
 import AdminPrevencionPage from "@/pages/AdminPrevencionPage";
 import AdminFichajesPage from "@/pages/AdminFichajesPage";
 import PagosExtraPage from "@/pages/PagosExtraPage";
@@ -136,6 +137,11 @@ function App() {
               <Route path="prevencion" element={<PrevencionPage />} />
               <Route path="mi-formacion" element={<MiFormacionPage />} />
               <Route path="documentos-firma/:docId" element={<DocumentoFirmaPage />} />
+              <Route path="admin/tramites" element={
+                <ProtectedRoute requireAdmin>
+                  <AdminTramitesPage />
+                </ProtectedRoute>
+              } />
               <Route path="admin/formacion" element={
                 <ProtectedRoute requireAdmin>
                   <AdminFormacionPage />

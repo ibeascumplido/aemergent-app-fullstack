@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro, ListChecks, ClipboardList, GraduationCap } from "lucide-react";
+import { LayoutDashboard, FileText, Calendar, Users, LogOut, User, Building2, CalendarDays, Menu, X, Camera, ChevronDown, MapPin, UsersRound, Truck, Wrench, Shirt, HardHat, Clock, Euro, ListChecks, ClipboardList, GraduationCap, ScrollText } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ const Layout = () => {
     { to: "/ropa", icon: Shirt, label: "Ropa", show: isAdmin, section: "admin" },
     { to: "/admin/prevencion", icon: HardHat, label: "Prevención", show: isAdmin, section: "admin" },
     { to: "/admin/formacion", icon: GraduationCap, label: "Formación", show: isAdmin, section: "admin" },
+    { to: "/admin/tramites", icon: ScrollText, label: "Trámites", show: isAdmin, section: "admin" },
     { to: "/admin/fichajes", icon: Clock, label: "Fichajes", show: isAdmin, section: "admin" },
     { to: "/admin/pagos-extra", icon: Euro, label: "Pagos extra", show: isAdmin || isFacturacion, section: "admin" },
     { to: "/admin/tareas-centro", icon: ListChecks, label: "Tareas", show: isAdmin, section: "admin" },

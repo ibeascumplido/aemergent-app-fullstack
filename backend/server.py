@@ -10945,6 +10945,353 @@ async def importar_maquinaria_2023(_: dict = Depends(require_admin)):
     }
 
 
+# =====================================================================
+# TRAMITES Y LICENCIAS (solo administrador)
+# ---------------------------------------------------------------------
+# Protocolos paso a paso (tala, poda, ocupacion de via publica...),
+# expedientes por cliente con checklist + documentacion subida, y una
+# agenda de contactos de ayuntamientos/oficinas. TODO exige admin.
+# =====================================================================
+
+def _paso(titulo: str, detalle: str = "") -> dict:
+    return {"titulo": titulo, "detalle": detalle}
+
+
+PLANTILLAS_TRAMITES_BASE = [
+    {
+        "clave": "tala_madrid",
+        "nombre": "Tala o trasplante de árboles (Madrid capital)",
+        "descripcion": "Licencia de tala y trasplante de árboles, masas arbóreas o vegetación arbustiva. Se tramita por SLIM (sede.madrid.es). Datos de la web oficial: verificar antes de presentar.",
+        "plataforma": "https://sede.madrid.es → «Solicitud de licencia de tala y trasplante de árboles, de masas arbóreas o de vegetación arbustiva» (Tramitar en línea → SLIM)",
+        "pasos": [
+            _paso("Confirmar con el cliente que es el titular", "Propietario o comunidad. Si actuamos en su nombre: autorización/representación y certificado electrónico. Las personas jurídicas (comunidades, empresas) están obligadas a tramitar por vía electrónica."),
+            _paso("Fotos y datos de cada árbol", "Ubicación exacta, especie, fotos de conjunto y detalle, motivo de la tala (riesgo, enfermedad, obra...)."),
+            _paso("Informe técnico firmado por técnico titulado", "Plano de ubicación a escala; por árbol: especie, datos dendrométricos, altura de la primera rama viva, estado fitosanitario; justificación y definición de la actuación, fechas aproximadas y fotografías."),
+            _paso("Documentación técnica / declaración del técnico", "Proyecto o documentación técnica firmada. Si no está visado: documento que acredite identidad y habilitación del autor. Declaración de conformidad con la ordenación urbanística y legislación sectorial (y certificado de viabilidad geométrica si procede)."),
+            _paso("Pagar las tasas (autoliquidación)", "Tasa por Prestación de Servicios Urbanísticos (TPSU/ICIO) y, si procede, tasa por utilización privativa del dominio público. Impresos en la Agencia Tributaria Madrid. Guardar justificante de pago."),
+            _paso("Presentar la solicitud en SLIM", "Con certificado electrónico/Cl@ve. También se puede presentar en una oficina de registro del Ayuntamiento (sin cita). Guardar número de registro y justificante."),
+            _paso("Atender requerimientos del Ayuntamiento", "Si piden más documentación el plazo se suspende. Responder cuanto antes. El informe de Zonas Verdes forma parte del procedimiento."),
+            _paso("Recibir la licencia concedida", "No talar NUNCA antes de tener la licencia. Subir aquí el PDF de la resolución."),
+            _paso("¿Hace falta ocupar la vía pública?", "Camión, cesta, vallas, contenedor, corte de carril... Abrir otro expediente «Ocupación de la vía pública» con al menos 20 días de antelación."),
+            _paso("Ejecutar la tala y gestionar los residuos", "Llevar copia de la licencia al sitio. Retirar los residuos vegetales según la Ordenanza de Limpieza y Residuos (art. 55)."),
+        ],
+    },
+    {
+        "clave": "poda_madrid",
+        "nombre": "Poda de arbolado privado (Madrid capital)",
+        "descripcion": "Poda de mantenimiento = comunicación previa. Poda drástica = instancia general con informe técnico. Verificar en sede.madrid.es.",
+        "plataforma": "https://sede.madrid.es → poda de arbolado en parcela privada (comunicación previa / instancia general)",
+        "pasos": [
+            _paso("Decidir el tipo de poda", "Mantenimiento (aclareo, limpieza, formación) o drástica/severa (reducción fuerte). Cambia el trámite."),
+            _paso("Fotos y datos del arbolado", "Especie, ubicación, estado, qué se va a podar."),
+            _paso("Si es drástica: informe técnico", "Informe de técnico competente que justifique la actuación."),
+            _paso("Presentar comunicación previa o instancia general", "Por la sede electrónica (obligatorio para personas jurídicas) o en registro."),
+            _paso("Esperar plazo / respuesta", "Guardar justificante de registro y resolución."),
+            _paso("Ejecutar la poda y retirar residuos", "Llevar copia del justificante al sitio."),
+        ],
+    },
+    {
+        "clave": "ocupacion_via_madrid",
+        "nombre": "Ocupación de la vía pública (Madrid capital)",
+        "descripcion": "Vallas, andamios, plataformas elevadoras, grúas, contenedores, vehículos/maquinaria en calzada, cortes de carril, mudanzas. Presentar con al menos 20 días de antelación. Verificar en sede.madrid.es.",
+        "plataforma": "https://sede.madrid.es → «Ocupación de la vía pública por vallas, andamios y otros» / «Ocupación temporal de la vía pública por obras, trabajos o utilización de vehículos especiales» (SLIM)",
+        "pasos": [
+            _paso("Definir qué, dónde y cuándo", "Calle y número, metros ocupados, fechas y horario exactos (la autorización es para un lugar, fecha y horario concretos, nunca abierta)."),
+            _paso("Ver si ya va incluida en la licencia de tala", "Si la ocupación está prevista en una licencia, puede resolverse en ella. Si no, se pide por separado."),
+            _paso("Identificar el órgano competente", "Aceras y estacionamiento: Distrito. Cortes de circulación, carriles, mudanzas: Gestión y Vigilancia de la Circulación. Contenedores: Servicios de Limpieza y Residuos."),
+            _paso("Plano a escala con la ocupación acotada", "Con bordillos, arbolado, vados, pasos de peatones y mobiliario urbano; justificar señalización/balizamiento y accesibilidad."),
+            _paso("Fotos de la vía en ambos sentidos", "Incluyendo ocupaciones cercanas."),
+            _paso("Si hay grúa / plataforma elevadora", "Dirección facultativa de montaje, plano con áreas de barrido de la pluma, seguro con mínimo 300.000 € (grúas)."),
+            _paso("Presentar la solicitud con ≥ 20 días de antelación", "SLIM con certificado electrónico, o registro. Si llega con menos de 20 días se archiva."),
+            _paso("Pagar tasas si las piden y recibir la autorización", "Subir aquí la resolución."),
+            _paso("Señalizar y ocupar solo lo autorizado", "Llevar copia de la autorización al sitio."),
+        ],
+    },
+    {
+        "clave": "otro_municipio",
+        "nombre": "Licencia en otro municipio (genérico)",
+        "descripcion": "Para ayuntamientos distintos de Madrid capital (Pozuelo, Alcalá, etc.), cada uno con su procedimiento.",
+        "plataforma": "",
+        "pasos": [
+            _paso("Localizar el trámite en la web del ayuntamiento", "Buscar «licencia de tala» / «ocupación vía pública» en su sede electrónica."),
+            _paso("Llamar para confirmar documentación y plazos", "Anotar el contacto en la pestaña Contactos."),
+            _paso("Preparar informe técnico y fotos", ""),
+            _paso("Pagar tasas y presentar la solicitud", "Guardar justificantes."),
+            _paso("Recibir resolución y ejecutar", "No empezar antes de tener la licencia."),
+        ],
+    },
+]
+
+CONTACTOS_TRAMITES_BASE = [
+    {"organismo": "Ayuntamiento de Madrid – Línea Madrid", "telefono": "010 / 914 800 010", "email": "", "web": "https://sede.madrid.es", "notas": "Información general y de cada trámite. Verificar."},
+    {"organismo": "Ayuntamiento de Madrid – Zonas Verdes (arbolado)", "telefono": "", "email": "dgazv@madrid.es", "web": "", "notas": "Dirección General de Áreas de Zonas Verdes. Verificar."},
+    {"organismo": "Juntas de Distrito de Madrid", "telefono": "", "email": "gd[distrito]@madrid.es", "web": "", "notas": "Cambiar [distrito] por el nombre del distrito. Aceras y estacionamiento."},
+    {"organismo": "Gestión y Vigilancia de la Circulación (Agentes de Movilidad)", "telefono": "", "email": "", "web": "", "notas": "Cortes de carril/circulación y mudanzas. Teléfono: pedir al 010."},
+]
+
+
+async def asegurar_plantillas_tramites():
+    if await db.tramite_plantillas.count_documents({}) == 0:
+        for p in PLANTILLAS_TRAMITES_BASE:
+            await db.tramite_plantillas.insert_one({
+                "id": str(uuid.uuid4()), "clave": p["clave"], "nombre": p["nombre"],
+                "descripcion": p["descripcion"], "plataforma": p["plataforma"],
+                "pasos": [{"id": str(uuid.uuid4()), **s} for s in p["pasos"]],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+    if await db.tramite_contactos.count_documents({}) == 0:
+        for c in CONTACTOS_TRAMITES_BASE:
+            await db.tramite_contactos.insert_one({
+                "id": str(uuid.uuid4()), **c,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+
+class TramitePasoIn(BaseModel):
+    titulo: str = Field(min_length=1, max_length=200)
+    detalle: str = Field(default="", max_length=2000)
+
+
+class TramitePlantillaIn(BaseModel):
+    nombre: str = Field(min_length=1, max_length=150)
+    descripcion: str = Field(default="", max_length=1000)
+    plataforma: str = Field(default="", max_length=500)
+    pasos: List[TramitePasoIn] = []
+
+
+class TramiteExpedienteIn(BaseModel):
+    plantilla_id: str
+    titulo: str = Field(min_length=1, max_length=200)
+    cliente: str = Field(default="", max_length=200)
+    direccion: str = Field(default="", max_length=300)
+    notas: str = Field(default="", max_length=3000)
+
+
+class TramiteExpedienteUpdate(BaseModel):
+    titulo: Optional[str] = Field(default=None, max_length=200)
+    cliente: Optional[str] = Field(default=None, max_length=200)
+    direccion: Optional[str] = Field(default=None, max_length=300)
+    notas: Optional[str] = Field(default=None, max_length=3000)
+    estado: Optional[str] = None  # en_curso | concedida | cerrada
+
+
+class TramitePasoUpdate(BaseModel):
+    hecho: Optional[bool] = None
+    nota: Optional[str] = Field(default=None, max_length=2000)
+
+
+class TramiteDocumentoIn(BaseModel):
+    archivo: str
+    nombre: str = Field(default="", max_length=200)
+    paso_id: Optional[str] = None
+
+
+class TramiteContactoIn(BaseModel):
+    organismo: str = Field(min_length=1, max_length=200)
+    telefono: str = Field(default="", max_length=100)
+    email: str = Field(default="", max_length=200)
+    web: str = Field(default="", max_length=300)
+    notas: str = Field(default="", max_length=2000)
+
+
+def _tr_out(d: dict) -> dict:
+    d = dict(d)
+    d.pop("_id", None)
+    return d
+
+
+@api_router.get("/admin/tramites/plantillas")
+async def tramites_listar_plantillas(_: dict = Depends(require_admin)):
+    return [_tr_out(p) async for p in db.tramite_plantillas.find({}).sort("created_at", 1)]
+
+
+@api_router.post("/admin/tramites/plantillas")
+async def tramites_crear_plantilla(payload: TramitePlantillaIn, _: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()), "clave": "", "nombre": payload.nombre.strip(),
+        "descripcion": payload.descripcion, "plataforma": payload.plataforma,
+        "pasos": [{"id": str(uuid.uuid4()), **s.model_dump()} for s in payload.pasos],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.tramite_plantillas.insert_one(doc)
+    return _tr_out(doc)
+
+
+@api_router.put("/admin/tramites/plantillas/{plantilla_id}")
+async def tramites_editar_plantilla(plantilla_id: str, payload: TramitePlantillaIn, _: dict = Depends(require_admin)):
+    pl = await db.tramite_plantillas.find_one({"id": plantilla_id})
+    if not pl:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    upd = {
+        "nombre": payload.nombre.strip(), "descripcion": payload.descripcion,
+        "plataforma": payload.plataforma,
+        "pasos": [{"id": str(uuid.uuid4()), **s.model_dump()} for s in payload.pasos],
+    }
+    await db.tramite_plantillas.update_one({"id": plantilla_id}, {"$set": upd})
+    return _tr_out(await db.tramite_plantillas.find_one({"id": plantilla_id}))
+
+
+@api_router.delete("/admin/tramites/plantillas/{plantilla_id}")
+async def tramites_borrar_plantilla(plantilla_id: str, _: dict = Depends(require_admin)):
+    await db.tramite_plantillas.delete_one({"id": plantilla_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/tramites/contactos")
+async def tramites_listar_contactos(_: dict = Depends(require_admin)):
+    return [_tr_out(c) async for c in db.tramite_contactos.find({}).sort("organismo", 1)]
+
+
+@api_router.post("/admin/tramites/contactos")
+async def tramites_crear_contacto(payload: TramiteContactoIn, _: dict = Depends(require_admin)):
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.tramite_contactos.insert_one(doc)
+    return _tr_out(doc)
+
+
+@api_router.put("/admin/tramites/contactos/{contacto_id}")
+async def tramites_editar_contacto(contacto_id: str, payload: TramiteContactoIn, _: dict = Depends(require_admin)):
+    res = await db.tramite_contactos.update_one({"id": contacto_id}, {"$set": payload.model_dump()})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    return _tr_out(await db.tramite_contactos.find_one({"id": contacto_id}))
+
+
+@api_router.delete("/admin/tramites/contactos/{contacto_id}")
+async def tramites_borrar_contacto(contacto_id: str, _: dict = Depends(require_admin)):
+    await db.tramite_contactos.delete_one({"id": contacto_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/tramites/expedientes")
+async def tramites_listar_expedientes(_: dict = Depends(require_admin)):
+    out = []
+    async for e in db.tramite_expedientes.find({}).sort("created_at", -1):
+        e = _tr_out(e)
+        pasos = e.get("pasos", [])
+        e["pasos_total"] = len(pasos)
+        e["pasos_hechos"] = sum(1 for p in pasos if p.get("hecho"))
+        out.append(e)
+    return out
+
+
+@api_router.post("/admin/tramites/expedientes")
+async def tramites_crear_expediente(payload: TramiteExpedienteIn, user: dict = Depends(require_admin)):
+    pl = await db.tramite_plantillas.find_one({"id": payload.plantilla_id})
+    if not pl:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    ahora = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()), "plantilla_id": pl["id"], "tipo": pl["nombre"],
+        "plataforma": pl.get("plataforma", ""),
+        "titulo": payload.titulo.strip(), "cliente": payload.cliente.strip(),
+        "direccion": payload.direccion.strip(), "notas": payload.notas,
+        "estado": "en_curso",
+        "pasos": [
+            {"id": str(uuid.uuid4()), "titulo": s["titulo"], "detalle": s.get("detalle", ""),
+             "hecho": False, "fecha_hecho": None, "nota": ""}
+            for s in pl.get("pasos", [])
+        ],
+        "documentos": [],
+        "created_at": ahora, "updated_at": ahora,
+    }
+    await db.tramite_expedientes.insert_one(doc)
+    return _tr_out(doc)
+
+
+@api_router.get("/admin/tramites/expedientes/{exp_id}")
+async def tramites_obtener_expediente(exp_id: str, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    return _tr_out(e)
+
+
+@api_router.put("/admin/tramites/expedientes/{exp_id}")
+async def tramites_editar_expediente(exp_id: str, payload: TramiteExpedienteUpdate, _: dict = Depends(require_admin)):
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "estado" in upd and upd["estado"] not in ("en_curso", "concedida", "cerrada"):
+        raise HTTPException(status_code=400, detail="Estado no valido")
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.tramite_expedientes.update_one({"id": exp_id}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.delete("/admin/tramites/expedientes/{exp_id}")
+async def tramites_borrar_expediente(exp_id: str, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    for d in e.get("documentos", []):
+        await _borrar_documento_cloudinary(d.get("public_id"), d.get("resource_type", "image"))
+    await db.tramite_expedientes.delete_one({"id": exp_id})
+    return {"ok": True}
+
+
+@api_router.put("/admin/tramites/expedientes/{exp_id}/pasos/{paso_id}")
+async def tramites_actualizar_paso(exp_id: str, paso_id: str, payload: TramitePasoUpdate, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    pasos = e.get("pasos", [])
+    p = next((x for x in pasos if x["id"] == paso_id), None)
+    if not p:
+        raise HTTPException(status_code=404, detail="Paso no encontrado")
+    if payload.hecho is not None:
+        p["hecho"] = payload.hecho
+        p["fecha_hecho"] = datetime.now(timezone.utc).isoformat() if payload.hecho else None
+    if payload.nota is not None:
+        p["nota"] = payload.nota
+    await db.tramite_expedientes.update_one(
+        {"id": exp_id}, {"$set": {"pasos": pasos, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.post("/admin/tramites/expedientes/{exp_id}/pasos")
+async def tramites_anadir_paso(exp_id: str, payload: TramitePasoIn, _: dict = Depends(require_admin)):
+    paso = {"id": str(uuid.uuid4()), "titulo": payload.titulo.strip(), "detalle": payload.detalle,
+            "hecho": False, "fecha_hecho": None, "nota": ""}
+    res = await db.tramite_expedientes.update_one({"id": exp_id}, {"$push": {"pasos": paso}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.post("/admin/tramites/expedientes/{exp_id}/documentos")
+async def tramites_subir_documento(exp_id: str, payload: TramiteDocumentoIn, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    url, public_id, resource_type = await _subir_documento_cloudinary(payload.archivo, "tramites")
+    doc = {
+        "id": str(uuid.uuid4()), "nombre": payload.nombre.strip() or "Documento",
+        "paso_id": payload.paso_id, "url": url, "public_id": public_id,
+        "resource_type": resource_type, "es_pdf": _tipo_documento_base64(payload.archivo) == "pdf",
+        "subido_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.tramite_expedientes.update_one(
+        {"id": exp_id},
+        {"$push": {"documentos": doc}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.delete("/admin/tramites/expedientes/{exp_id}/documentos/{doc_id}")
+async def tramites_borrar_documento(exp_id: str, doc_id: str, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    d = next((x for x in e.get("documentos", []) if x["id"] == doc_id), None)
+    if not d:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_documento_cloudinary(d.get("public_id"), d.get("resource_type", "image"))
+    await db.tramite_expedientes.update_one({"id": exp_id}, {"$pull": {"documentos": {"id": doc_id}}})
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -11223,6 +11570,10 @@ async def on_startup():
     await seed_work_tasks_if_empty()
     await asegurar_tareas_extra_catalogo()
     await sincronizar_fotos_con_partes()
+    try:
+        await asegurar_plantillas_tramites()
+    except Exception:
+        logger.warning("No se pudieron sembrar los tramites", exc_info=True)
 
     global _scheduler
     if _APSCHEDULER_DISPONIBLE:
