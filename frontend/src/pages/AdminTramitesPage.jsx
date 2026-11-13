@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ScrollText, Plus, Trash2, ArrowLeft, Upload, FileText, ExternalLink, Phone, Mail, Pencil, Check, ArrowUp, ArrowDown, Copy, X } from "lucide-react";
+import { ScrollText, Plus, Trash2, ArrowLeft, Upload, FileText, ExternalLink, Phone, Mail, Pencil, Check, ArrowUp, ArrowDown, Copy, X, Download } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,16 @@ const leerArchivo = (file) =>
     r.onerror = rej;
     r.readAsDataURL(file);
   });
+
+const descargarPlantilla = async (clave, nombre) => {
+  try {
+    const r = await axios.get(`${API}/admin/tramites/documentos-plantilla/${clave}`, { responseType: "blob" });
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch { toast.error("No se pudo descargar"); }
+};
 
 /* ---------------- Detalle de un expediente ---------------- */
 const Expediente = ({ id, onVolver }) => {
@@ -194,6 +204,17 @@ const Expediente = ({ id, onVolver }) => {
         <Button variant="outline" onClick={anadirPaso}><Plus className="w-4 h-4" /></Button>
       </div>
 
+      {/tala/i.test(e.tipo) && (
+        <Card className="border-amber-200 bg-amber-50/40 mt-4">
+          <CardContent className="p-3 flex items-center gap-3">
+            <FileText className="w-4 h-4 text-amber-700" />
+            <p className="text-sm text-slate-700 flex-1">Plantilla del informe de tala (Word): rellena los campos [entre corchetes].</p>
+            <Button variant="outline" size="sm" onClick={() => descargarPlantilla("informe_tala", "PLANTILLA_INFORME_TALA.docx")}>
+              <Download className="w-4 h-4 mr-1" />Descargar
+            </Button>
+          </CardContent>
+        </Card>
+      )}
       <Card className="border-slate-100 mt-4">
         <CardContent className="p-3 space-y-2">
           <div className="flex items-center justify-between">

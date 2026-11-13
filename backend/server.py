@@ -11143,6 +11143,33 @@ async def tramites_borrar_plantilla(plantilla_id: str, _: dict = Depends(require
     return {"ok": True}
 
 
+DOCUMENTOS_PLANTILLA_TRAMITES = {
+    "informe_tala": {
+        "nombre": "Plantilla informe de tala (Word)",
+        "archivo": "informe_tala.docx",
+        "descarga": "PLANTILLA_INFORME_TALA.docx",
+    },
+}
+
+
+@api_router.get("/admin/tramites/documentos-plantilla")
+async def tramites_listar_docs_plantilla(_: dict = Depends(require_admin)):
+    return [{"clave": k, "nombre": v["nombre"]} for k, v in DOCUMENTOS_PLANTILLA_TRAMITES.items()]
+
+
+@api_router.get("/admin/tramites/documentos-plantilla/{clave}")
+async def tramites_descargar_doc_plantilla(clave: str, _: dict = Depends(require_admin)):
+    info = DOCUMENTOS_PLANTILLA_TRAMITES.get(clave)
+    ruta = ROOT_DIR / "plantillas_doc" / info["archivo"] if info else None
+    if not info or not ruta.exists():
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    return Response(
+        content=ruta.read_bytes(),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{info["descarga"]}"'},
+    )
+
+
 @api_router.get("/admin/tramites/contactos")
 async def tramites_listar_contactos(_: dict = Depends(require_admin)):
     return [_tr_out(c) async for c in db.tramite_contactos.find({}).sort("organismo", 1)]
