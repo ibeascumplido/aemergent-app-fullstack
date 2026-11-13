@@ -314,7 +314,7 @@ const Expediente = ({ id, onVolver }) => {
         <Button variant="outline" onClick={anadirPaso}><Plus className="w-4 h-4" /></Button>
       </div>
 
-      {/tala/i.test(e.tipo) && (
+      {/tala/i.test(`${e.tipo} ${e.titulo}`) && (
         <Card className="border-amber-200 bg-amber-50/40 mt-4">
           <CardContent className="p-3 flex items-center gap-3">
             <FileText className="w-4 h-4 text-amber-700" />
@@ -326,7 +326,7 @@ const Expediente = ({ id, onVolver }) => {
           </CardContent>
         </Card>
       )}
-      {informe && /tala/i.test(e.tipo) && <InformeTala exp={e} onCerrar={() => setInforme(false)} />}
+      {informe && /tala/i.test(`${e.tipo} ${e.titulo}`) && <InformeTala exp={e} onCerrar={() => setInforme(false)} />}
       <Card className="border-slate-100 mt-4">
         <CardContent className="p-3 space-y-2">
           <div className="flex items-center justify-between">
