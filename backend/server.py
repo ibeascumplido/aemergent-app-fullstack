@@ -11078,6 +11078,12 @@ class TramiteExpedienteUpdate(BaseModel):
 class TramitePasoUpdate(BaseModel):
     hecho: Optional[bool] = None
     nota: Optional[str] = Field(default=None, max_length=2000)
+    titulo: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    detalle: Optional[str] = Field(default=None, max_length=2000)
+
+
+class TramiteOrdenIn(BaseModel):
+    ids: List[str]
 
 
 class TramiteDocumentoIn(BaseModel):
@@ -11244,6 +11250,10 @@ async def tramites_actualizar_paso(exp_id: str, paso_id: str, payload: TramitePa
         p["fecha_hecho"] = datetime.now(timezone.utc).isoformat() if payload.hecho else None
     if payload.nota is not None:
         p["nota"] = payload.nota
+    if payload.titulo is not None:
+        p["titulo"] = payload.titulo.strip()
+    if payload.detalle is not None:
+        p["detalle"] = payload.detalle
     await db.tramite_expedientes.update_one(
         {"id": exp_id}, {"$set": {"pasos": pasos, "updated_at": datetime.now(timezone.utc).isoformat()}}
     )
@@ -11255,6 +11265,29 @@ async def tramites_anadir_paso(exp_id: str, payload: TramitePasoIn, _: dict = De
     paso = {"id": str(uuid.uuid4()), "titulo": payload.titulo.strip(), "detalle": payload.detalle,
             "hecho": False, "fecha_hecho": None, "nota": ""}
     res = await db.tramite_expedientes.update_one({"id": exp_id}, {"$push": {"pasos": paso}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.post("/admin/tramites/expedientes/{exp_id}/pasos/orden")
+async def tramites_reordenar_pasos(exp_id: str, payload: TramiteOrdenIn, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    por_id = {p["id"]: p for p in e.get("pasos", [])}
+    if set(payload.ids) != set(por_id) or len(payload.ids) != len(por_id):
+        raise HTTPException(status_code=400, detail="Lista de pasos no valida")
+    await db.tramite_expedientes.update_one(
+        {"id": exp_id},
+        {"$set": {"pasos": [por_id[i] for i in payload.ids], "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
+
+
+@api_router.delete("/admin/tramites/expedientes/{exp_id}/pasos/{paso_id}")
+async def tramites_borrar_paso(exp_id: str, paso_id: str, _: dict = Depends(require_admin)):
+    res = await db.tramite_expedientes.update_one({"id": exp_id}, {"$pull": {"pasos": {"id": paso_id}}})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Expediente no encontrado")
     return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ScrollText, Plus, Trash2, ArrowLeft, Upload, FileText, ExternalLink, Phone, Mail, Pencil, Check } from "lucide-react";
+import { ScrollText, Plus, Trash2, ArrowLeft, Upload, FileText, ExternalLink, Phone, Mail, Pencil, Check, ArrowUp, ArrowDown, Copy, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,6 +78,39 @@ const Expediente = ({ id, onVolver }) => {
       setNuevoPaso("");
     } catch (x) { toast.error(err(x, "No se pudo añadir")); }
   };
+  const mover = async (i, d) => {
+    const ids = e.pasos.map((p) => p.id);
+    const j = i + d;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try { setE((await axios.post(`${API}/admin/tramites/expedientes/${id}/pasos/orden`, { ids })).data); }
+    catch { toast.error("No se pudo reordenar"); }
+  };
+  const quitarPaso = async (p) => {
+    if (!window.confirm(`¿Quitar el paso «${p.titulo}»?`)) return;
+    try { setE((await axios.delete(`${API}/admin/tramites/expedientes/${id}/pasos/${p.id}`)).data); }
+    catch { toast.error("No se pudo quitar"); }
+  };
+  const editarPaso = async (p) => {
+    const titulo = window.prompt("Título del paso", p.titulo);
+    if (titulo === null || !titulo.trim()) return;
+    const detalle = window.prompt("Detalle (opcional)", p.detalle || "");
+    if (detalle === null) return;
+    actPaso(p.id, { titulo: titulo.trim(), detalle });
+  };
+  // Añade un paso nuevo y lo coloca justo después de `despuesDe` (índice) o al final.
+  const anadirEn = async (despuesDe) => {
+    const titulo = window.prompt("Nuevo paso");
+    if (!titulo || !titulo.trim()) return;
+    try {
+      let r = (await axios.post(`${API}/admin/tramites/expedientes/${id}/pasos`, { titulo: titulo.trim() })).data;
+      const ids = r.pasos.map((p) => p.id);
+      const nuevo = ids.pop();
+      ids.splice(despuesDe + 1, 0, nuevo);
+      r = (await axios.post(`${API}/admin/tramites/expedientes/${id}/pasos/orden`, { ids })).data;
+      setE(r);
+    } catch (x) { toast.error(err(x, "No se pudo añadir")); }
+  };
   const borrar = async () => {
     if (!window.confirm("¿Borrar este expediente y sus documentos?")) return;
     try { await axios.delete(`${API}/admin/tramites/expedientes/${id}`); onVolver(); }
@@ -137,12 +170,19 @@ const Expediente = ({ id, onVolver }) => {
                   {p.detalle && <p className="text-xs text-slate-500 mt-0.5">{p.detalle}</p>}
                   {p.hecho && p.fecha_hecho && <p className="text-xs text-emerald-600 mt-0.5">Hecho el {fmt(p.fecha_hecho)}</p>}
                 </div>
+                <div className="flex flex-col">
+                  <button disabled={i === 0} onClick={() => mover(i, -1)} className="text-slate-400 hover:text-slate-800 disabled:opacity-20" title="Subir"><ArrowUp className="w-4 h-4" /></button>
+                  <button disabled={i === e.pasos.length - 1} onClick={() => mover(i, 1)} className="text-slate-400 hover:text-slate-800 disabled:opacity-20" title="Bajar"><ArrowDown className="w-4 h-4" /></button>
+                </div>
+                <button onClick={() => editarPaso(p)} className="text-slate-400 hover:text-slate-800" title="Editar paso"><Pencil className="w-4 h-4" /></button>
+                <button onClick={() => quitarPaso(p)} className="text-slate-300 hover:text-red-500" title="Quitar paso"><Trash2 className="w-4 h-4" /></button>
                 <Button variant="ghost" size="sm" disabled={subiendo} title="Subir documento a este paso"
                   onClick={() => { pasoDoc.current = p.id; fileRef.current?.click(); }}>
                   <Upload className="w-4 h-4" />
                 </Button>
               </div>
               {docsDe(p.id).map((d) => <DocLinea key={d.id} d={d} />)}
+              <button onClick={() => anadirEn(i)} className="text-xs text-slate-400 hover:text-blue-600 flex items-center gap-1"><Plus className="w-3 h-3" />Añadir un paso después de este</button>
               <Input defaultValue={p.nota} placeholder="Nota de este paso…" className="h-8 text-sm"
                 onBlur={(x) => x.target.value !== (p.nota || "") && actPaso(p.id, { nota: x.target.value })} />
             </CardContent>
@@ -230,16 +270,26 @@ const Expedientes = ({ plantillas, abrir }) => {
 };
 
 /* ---------------- Protocolos (plantillas) ---------------- */
-const aTexto = (pasos) => pasos.map((p) => (p.detalle ? `${p.titulo} | ${p.detalle}` : p.titulo)).join("\n");
-const dePasos = (t) => t.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
-  const [titulo, ...r] = l.split("|");
-  return { titulo: titulo.trim().slice(0, 200), detalle: r.join("|").trim() };
-});
-
 const Protocolos = ({ plantillas, recargar }) => {
   const [edit, setEdit] = useState(null);
+  const setPaso = (i, campo, v) => setEdit((ed) => ({ ...ed, pasos: ed.pasos.map((p, k) => (k === i ? { ...p, [campo]: v } : p)) }));
+  const mover = (i, d) => setEdit((ed) => {
+    const j = i + d;
+    if (j < 0 || j >= ed.pasos.length) return ed;
+    const a = [...ed.pasos];
+    [a[i], a[j]] = [a[j], a[i]];
+    return { ...ed, pasos: a };
+  });
+  const quitar = (i) => setEdit((ed) => ({ ...ed, pasos: ed.pasos.filter((_, k) => k !== i) }));
+  const insertar = (i) => setEdit((ed) => {
+    const a = [...ed.pasos];
+    a.splice(i + 1, 0, { titulo: "", detalle: "" });
+    return { ...ed, pasos: a };
+  });
   const guardar = async () => {
-    const body = { nombre: edit.nombre, descripcion: edit.descripcion || "", plataforma: edit.plataforma || "", pasos: dePasos(edit.texto) };
+    const pasos = edit.pasos.filter((p) => p.titulo.trim()).map((p) => ({ titulo: p.titulo.trim(), detalle: p.detalle || "" }));
+    const body = { nombre: edit.nombre, descripcion: edit.descripcion || "", plataforma: edit.plataforma || "", pasos };
+    if (!body.nombre.trim()) return toast.error("Pon un nombre");
     try {
       if (edit.id) await axios.put(`${API}/admin/tramites/plantillas/${edit.id}`, body);
       else await axios.post(`${API}/admin/tramites/plantillas`, body);
@@ -250,34 +300,57 @@ const Protocolos = ({ plantillas, recargar }) => {
     if (!window.confirm(`¿Borrar el protocolo «${p.nombre}»? Los expedientes ya creados no se pierden.`)) return;
     await axios.delete(`${API}/admin/tramites/plantillas/${p.id}`); recargar();
   };
+  const abrir = (p, copia) => setEdit({
+    id: copia ? undefined : p.id,
+    nombre: copia ? `${p.nombre} (copia)` : p.nombre,
+    descripcion: p.descripcion || "", plataforma: p.plataforma || "",
+    pasos: p.pasos.map((s) => ({ titulo: s.titulo, detalle: s.detalle || "" })),
+  });
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-500">Pasos recopilados de la web oficial del Ayuntamiento de Madrid. Confirma siempre en la sede antes de presentar: los requisitos cambian. Puedes editarlos.</p>
-      <Button variant="outline" onClick={() => setEdit({ nombre: "", descripcion: "", plataforma: "", texto: "" })}><Plus className="w-4 h-4 mr-1" />Nuevo protocolo</Button>
+      <p className="text-xs text-slate-500">Pasos recopilados de la web oficial del Ayuntamiento de Madrid. Confirma siempre en la sede antes de presentar. Edita, reordena, añade o duplica un protocolo para otro ayuntamiento.</p>
+      <Button variant="outline" onClick={() => setEdit({ nombre: "", descripcion: "", plataforma: "", pasos: [{ titulo: "", detalle: "" }] })}><Plus className="w-4 h-4 mr-1" />Nuevo protocolo</Button>
       {edit && (
-        <Card className="border-slate-100"><CardContent className="p-4 space-y-3">
+        <Card className="border-amber-200"><CardContent className="p-4 space-y-3">
           <div><Label>Nombre</Label><Input value={edit.nombre} onChange={(x) => setEdit({ ...edit, nombre: x.target.value })} /></div>
           <div><Label>Descripción</Label><Textarea rows={2} value={edit.descripcion} onChange={(x) => setEdit({ ...edit, descripcion: x.target.value })} /></div>
           <div><Label>Plataforma / dirección donde se presenta</Label><Input value={edit.plataforma} onChange={(x) => setEdit({ ...edit, plataforma: x.target.value })} /></div>
-          <div><Label>Pasos (uno por línea; opcional «título | detalle»)</Label><Textarea rows={10} value={edit.texto} onChange={(x) => setEdit({ ...edit, texto: x.target.value })} /></div>
+          <div className="space-y-2">
+            <Label>Pasos (en orden)</Label>
+            {edit.pasos.map((p, i) => (
+              <div key={i} className="border border-slate-200 rounded-md p-2 space-y-1.5">
+                <div className="flex items-center gap-1">
+                  <span className="text-sm text-slate-400 w-6">{i + 1}.</span>
+                  <Input value={p.titulo} onChange={(x) => setPaso(i, "titulo", x.target.value)} placeholder="Título del paso" className="h-8" />
+                  <button disabled={i === 0} onClick={() => mover(i, -1)} className="text-slate-400 hover:text-slate-800 disabled:opacity-20"><ArrowUp className="w-4 h-4" /></button>
+                  <button disabled={i === edit.pasos.length - 1} onClick={() => mover(i, 1)} className="text-slate-400 hover:text-slate-800 disabled:opacity-20"><ArrowDown className="w-4 h-4" /></button>
+                  <button onClick={() => quitar(i)} className="text-slate-300 hover:text-red-500"><X className="w-4 h-4" /></button>
+                </div>
+                <Textarea rows={2} value={p.detalle} onChange={(x) => setPaso(i, "detalle", x.target.value)} placeholder="Detalle (opcional)" className="text-sm" />
+                <button onClick={() => insertar(i)} className="text-xs text-slate-400 hover:text-blue-600 flex items-center gap-1"><Plus className="w-3 h-3" />Añadir un paso después</button>
+              </div>
+            ))}
+            {edit.pasos.length === 0 && <Button variant="outline" size="sm" onClick={() => insertar(-1)}><Plus className="w-4 h-4 mr-1" />Añadir paso</Button>}
+          </div>
           <div className="flex gap-2"><Button onClick={guardar}><Check className="w-4 h-4 mr-1" />Guardar</Button><Button variant="ghost" onClick={() => setEdit(null)}>Cancelar</Button></div>
-          {edit.id && <p className="text-xs text-slate-400">Los cambios solo afectan a expedientes nuevos.</p>}
+          {edit.id && <p className="text-xs text-slate-400">Los cambios afectan a expedientes nuevos. Los ya creados se editan dentro de cada expediente.</p>}
         </CardContent></Card>
       )}
       {plantillas.map((p) => (
         <Card key={p.id} className="border-slate-100"><CardContent className="p-4">
-          <div className="flex items-start gap-2">
+          <div className="flex items-start gap-1">
             <div className="flex-1">
               <p className="font-semibold text-slate-900">{p.nombre}</p>
               {p.descripcion && <p className="text-xs text-slate-500 mt-1">{p.descripcion}</p>}
               {p.plataforma && <p className="text-xs text-blue-700 mt-1 break-words">📍 {p.plataforma}</p>}
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ ...p, texto: aTexto(p.pasos) })}><Pencil className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="sm" title="Editar" onClick={() => abrir(p, false)}><Pencil className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="sm" title="Duplicar para otro ayuntamiento" onClick={() => abrir(p, true)}><Copy className="w-4 h-4" /></Button>
             <Button variant="ghost" size="sm" className="text-red-500" onClick={() => borrar(p)}><Trash2 className="w-4 h-4" /></Button>
           </div>
           <ol className="mt-3 space-y-1.5 list-decimal list-inside text-sm text-slate-700">
-            {p.pasos.map((s) => (
-              <li key={s.id}><span className="font-medium">{s.titulo}</span>{s.detalle && <span className="block ml-5 text-xs text-slate-500">{s.detalle}</span>}</li>
+            {p.pasos.map((st) => (
+              <li key={st.id}><span className="font-medium">{st.titulo}</span>{st.detalle && <span className="block ml-5 text-xs text-slate-500">{st.detalle}</span>}</li>
             ))}
           </ol>
         </CardContent></Card>
