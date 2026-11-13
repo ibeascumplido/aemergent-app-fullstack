@@ -11170,6 +11170,136 @@ async def tramites_descargar_doc_plantilla(clave: str, _: dict = Depends(require
     )
 
 
+# Campo del formulario -> textos de la plantilla Word que se sustituyen.
+_CAMPOS_INFORME_TALA = {
+    "lugar": ["[LUGAR / NOMBRE DEL CENTRO]"],
+    "solicitante_nombre": ["[NOMBRE Y APELLIDOS / RAZÓN SOCIAL DEL SOLICITANTE]"],
+    "solicitante_dni": ["[DNI / NIE / CIF]"],
+    "solicitante_direccion": ["[DIRECCIÓN POSTAL DEL SOLICITANTE]"],
+    "telefono": ["[TELÉFONO DE CONTACTO]"],
+    "email": ["[CORREO ELECTRÓNICO]"],
+    "direccion_terreno": ["[DIRECCIÓN DEL TERRENO O PARCELA]"],
+    "ref_catastral": ["[REFERENCIA CATASTRAL]"],
+    "tipo_suelo": ["[URBANO / RÚSTICO]"],
+    "especie_cientifica": ["[ESPECIE (nombre científico)]", "[ESPECIE]"],
+    "especie_comun": ["[ESPECIE (nombre común)]"],
+    "altura": ["[ALTURA EN METROS]"],
+    "diametro": ["[DIÁMETRO EN CM]"],
+    "antiguedad": ["[AÑOS]"],
+    "estado_fito": ["[ESTADO FITOSANITARIO: descripción]"],
+    "peligro_caida": ["[PELIGRO DE CAÍDA: describir el riesgo]"],
+    "interferencia": ["[INTERFERENCIA CON INFRAESTRUCTURAS: describir o indicar que no hay]"],
+    "obras": ["[OBRAS O PROYECTOS URBANÍSTICOS: describir o indicar que no existen]"],
+    "fecha": ["[FECHA]"],
+    "ubicacion_entorno": ["[UBICACIÓN Y ENTORNO DEL EJEMPLAR]"],
+    "follaje": ["[ESTADO GENERAL DEL FOLLAJE]"],
+    "ramas": ["[ESTADO DE LAS RAMAS]"],
+    "tronco_danos": ["[DAÑOS VISIBLES EN EL TRONCO]"],
+    "infecciones": ["[INFECCIONES POTENCIALES]"],
+    "raices": ["[FACTORES AMBIENTALES / ESTADO DEL SUELO Y RAÍCES]"],
+    "falta_agua": ["[FALTA DE AGUA O NUTRIENTES: valorar]"],
+    "compactacion": ["[COMPACTACIÓN DEL SUELO: valorar]"],
+    "plagas": ["[PLAGAS: valorar]"],
+    "hongos": ["[ENFERMEDADES FÚNGICAS: valorar]"],
+    "dano_mecanico": ["[DAÑO MECÁNICO: describir o indicar que no se observa]"],
+    "nivel_riesgo": ["[NIVEL DE RIESGO]"],
+    "motivo_riesgo": ["[MOTIVO]"],
+    "riesgo_caida": ["[PELIGRO DE CAÍDA: valorar]"],
+    "proximidad": ["[PROXIMIDAD A INFRAESTRUCTURAS O ZONAS TRANSITADAS: valorar]"],
+    "recom_tala": ["[RECOMENDACIÓN SOBRE LA TALA: inmediata / programada y por qué]"],
+    "recom_suelo": ["[ANÁLISIS DEL SUELO: recomendar o no]"],
+    "recom_sustitucion": ["[SUSTITUCIÓN DEL ÁRBOL: recomendar especie o no]"],
+    "conclusion": ["[CONCLUSIÓN DEL ESTADO DEL EJEMPLAR]"],
+    "justificacion_final": ["[JUSTIFICACIÓN FINAL DE LA TALA Y, SI PROCEDE, RECOMENDACIÓN DE REPLANTACIÓN.]"],
+}
+
+
+class InformeTalaIn(BaseModel):
+    datos: Dict[str, str] = {}
+    fotos: List[str] = []
+    plano: Optional[str] = None
+
+
+def _datauri_a_bytes(uri: str) -> bytes:
+    import base64
+    return base64.b64decode(uri.split(",", 1)[1])
+
+
+def _generar_informe_tala_docx(datos: dict, fotos: list, plano: Optional[str]) -> bytes:
+    import io
+    import docx as _docx
+    from docx.shared import Cm
+    d = _docx.Document(str(ROOT_DIR / "plantillas_doc" / "informe_tala.docx"))
+    # Los textos largos primero (para que [ESPECIE (...)] no lo pise [ESPECIE]).
+    pares = []
+    for campo, marcadores in _CAMPOS_INFORME_TALA.items():
+        valor = (datos.get(campo) or "").strip()
+        if not valor:
+            continue
+        for m in marcadores:
+            pares.append((m, valor))
+    pares.sort(key=lambda x: -len(x[0]))
+
+    def _runs(doc):
+        for p in doc.paragraphs:
+            for r in p.runs:
+                yield r
+
+    for r in _runs(d):
+        t = r.text
+        if "[" not in t:
+            continue
+        for m, v in pares:
+            if m in t:
+                t = t.replace(m, v)
+        r.text = t
+
+    def _poner_imagenes(marcador: str, imagenes: list, ancho_cm: float):
+        for p in d.paragraphs:
+            if marcador in p.text:
+                for r in p.runs:
+                    if marcador in r.text:
+                        r.text = ""
+                        r.italic = False
+                for img in imagenes:
+                    try:
+                        p.add_run().add_picture(io.BytesIO(_datauri_a_bytes(img)), width=Cm(ancho_cm))
+                        p.add_run("  ")
+                    except Exception:
+                        logger.warning("Imagen no valida en informe de tala", exc_info=True)
+                return
+
+    if fotos:
+        _poner_imagenes("[INSERTAR AQUÍ LAS FOTOGRAFÍAS DEL ÁRBOL]", fotos[:6], 7.5)
+    if plano:
+        _poner_imagenes("[INSERTAR AQUÍ EL PLANO DE UBICACIÓN]", [plano], 15)
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+@api_router.post("/admin/tramites/expedientes/{exp_id}/informe-tala")
+async def tramites_generar_informe_tala(exp_id: str, payload: InformeTalaIn, _: dict = Depends(require_admin)):
+    e = await db.tramite_expedientes.find_one({"id": exp_id})
+    if not e:
+        raise HTTPException(status_code=404, detail="Expediente no encontrado")
+    datos = {k: v for k, v in payload.datos.items() if k in _CAMPOS_INFORME_TALA}
+    await db.tramite_expedientes.update_one(
+        {"id": exp_id},
+        {"$set": {"informe_tala_datos": datos, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    try:
+        contenido = await asyncio.to_thread(_generar_informe_tala_docx, datos, payload.fotos, payload.plano)
+    except Exception as ex:
+        logger.error("Error generando informe de tala", exc_info=True)
+        raise HTTPException(status_code=500, detail="No se pudo generar el informe") from ex
+    return Response(
+        content=contenido,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="INFORME_TALA.docx"'},
+    )
+
+
 @api_router.get("/admin/tramites/contactos")
 async def tramites_listar_contactos(_: dict = Depends(require_admin)):
     return [_tr_out(c) async for c in db.tramite_contactos.find({}).sort("organismo", 1)]

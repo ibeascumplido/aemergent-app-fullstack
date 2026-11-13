@@ -33,11 +33,121 @@ const descargarPlantilla = async (clave, nombre) => {
   } catch { toast.error("No se pudo descargar"); }
 };
 
+const GRUPOS_INFORME = [
+  ["1. Solicitante", [
+    ["solicitante_nombre", "Nombre y apellidos / razón social"], ["solicitante_dni", "DNI / NIE / CIF"],
+    ["solicitante_direccion", "Dirección del solicitante"], ["telefono", "Teléfono"], ["email", "Correo electrónico"]]],
+  ["2. Propiedad", [
+    ["lugar", "Lugar / nombre del centro (título del informe)"], ["direccion_terreno", "Dirección del terreno o parcela"],
+    ["ref_catastral", "Referencia catastral"], ["tipo_suelo", "Tipo de suelo (Urbano / Rústico)"]]],
+  ["3. Árbol", [
+    ["especie_cientifica", "Especie (nombre científico)"], ["especie_comun", "Especie (nombre común)"],
+    ["altura", "Altura aproximada (m)"], ["diametro", "Diámetro a 1,30 m (cm)"], ["antiguedad", "Antigüedad estimada (años)"],
+    ["estado_fito", "Estado fitosanitario", true]]],
+  ["4. Motivos de la tala", [
+    ["peligro_caida", "Peligro de caída", true], ["interferencia", "Interferencia con infraestructuras", true],
+    ["obras", "Obras o proyectos urbanísticos", true]]],
+  ["Informe técnico: observación", [
+    ["ubicacion_entorno", "Ubicación y entorno", true], ["follaje", "Follaje: estado general", true], ["ramas", "Ramas", true],
+    ["tronco_danos", "Tronco: daños visibles", true], ["infecciones", "Tronco: infecciones potenciales", true],
+    ["raices", "Raíces / suelo / factores ambientales", true]]],
+  ["Informe técnico: causas", [
+    ["falta_agua", "Falta de agua o nutrientes", true], ["compactacion", "Compactación del suelo", true],
+    ["plagas", "Plagas", true], ["hongos", "Enfermedades fúngicas", true], ["dano_mecanico", "Daño mecánico", true]]],
+  ["Informe técnico: riesgo y conclusión", [
+    ["nivel_riesgo", "Nivel de riesgo (elevado, medio…)"], ["motivo_riesgo", "Motivo del riesgo", true],
+    ["riesgo_caida", "Peligro de caída (valoración)", true], ["proximidad", "Proximidad a infraestructuras / zonas transitadas", true],
+    ["recom_tala", "Recomendación sobre la tala", true], ["recom_suelo", "Análisis del suelo", true],
+    ["recom_sustitucion", "Sustitución del árbol", true], ["conclusion", "Conclusión: estado del ejemplar", true],
+    ["justificacion_final", "Justificación final", true], ["fecha", "Fecha"]]],
+];
+
+const hoyLargo = () => new Date().toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" });
+
+const InformeTala = ({ exp, onCerrar }) => {
+  const [d, setD] = useState(() => ({
+    lugar: exp.titulo || "", direccion_terreno: exp.direccion || "", solicitante_nombre: exp.cliente || "",
+    fecha: hoyLargo(), ...(exp.informe_tala_datos || {}),
+  }));
+  const [fotos, setFotos] = useState([]);
+  const [plano, setPlano] = useState(null);
+  const [gen, setGen] = useState(false);
+
+  const addFotos = async (ev) => {
+    const fs = [...(ev.target.files || [])];
+    ev.target.value = "";
+    const nuevas = await Promise.all(fs.map((f) => comprimirImagen(f, 1200, 0.75)));
+    setFotos((p) => [...p, ...nuevas].slice(0, 6));
+  };
+  const addPlano = async (ev) => {
+    const f = ev.target.files?.[0];
+    ev.target.value = "";
+    if (f) setPlano(await comprimirImagen(f, 1600, 0.8));
+  };
+  const generar = async () => {
+    setGen(true);
+    try {
+      const r = await axios.post(`${API}/admin/tramites/expedientes/${exp.id}/informe-tala`,
+        { datos: d, fotos, plano }, { responseType: "blob" });
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = `INFORME_TALA_${(d.lugar || "").replace(/[^\w]+/g, "_")}.docx`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast.success("Informe generado. Los campos vacíos quedan [entre corchetes] en el Word.");
+    } catch { toast.error("No se pudo generar el informe"); }
+    finally { setGen(false); }
+  };
+
+  return (
+    <Card className="border-amber-300 mt-4">
+      <CardContent className="p-4 space-y-4">
+        <div className="flex items-center">
+          <p className="font-semibold text-slate-900 flex-1">Rellenar informe de tala</p>
+          <button onClick={onCerrar} className="text-slate-400 hover:text-slate-800"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-xs text-slate-500">Rellena lo que tengas; lo que dejes vacío saldrá como [CAMPO] para completar en Word. Se guarda lo escrito.</p>
+        {GRUPOS_INFORME.map(([titulo, campos]) => (
+          <div key={titulo} className="space-y-2">
+            <p className="text-xs uppercase tracking-wider text-slate-500">{titulo}</p>
+            {campos.map(([k, etq, largo]) => (
+              <div key={k}>
+                <Label className="text-xs">{etq}</Label>
+                {largo
+                  ? <Textarea rows={2} value={d[k] || ""} onChange={(x) => setD({ ...d, [k]: x.target.value })} />
+                  : <Input value={d[k] || ""} onChange={(x) => setD({ ...d, [k]: x.target.value })} />}
+              </div>
+            ))}
+          </div>
+        ))}
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-wider text-slate-500">Imágenes</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer border border-slate-200 rounded-md px-3 py-1.5 text-sm hover:bg-slate-50">
+              Fotos del árbol (máx. 6)<input type="file" accept="image/*" multiple className="hidden" onChange={addFotos} />
+            </label>
+            <span className="text-xs text-slate-500">{fotos.length} foto(s)</span>
+            {fotos.length > 0 && <button className="text-xs text-red-500" onClick={() => setFotos([])}>quitar</button>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer border border-slate-200 rounded-md px-3 py-1.5 text-sm hover:bg-slate-50">
+              Plano de ubicación<input type="file" accept="image/*" className="hidden" onChange={addPlano} />
+            </label>
+            <span className="text-xs text-slate-500">{plano ? "plano añadido" : "sin plano"}</span>
+            {plano && <button className="text-xs text-red-500" onClick={() => setPlano(null)}>quitar</button>}
+          </div>
+        </div>
+        <Button onClick={generar} disabled={gen}><Download className="w-4 h-4 mr-1" />{gen ? "Generando…" : "Generar Word"}</Button>
+      </CardContent>
+    </Card>
+  );
+};
+
 /* ---------------- Detalle de un expediente ---------------- */
 const Expediente = ({ id, onVolver }) => {
   const [e, setE] = useState(null);
   const [nuevoPaso, setNuevoPaso] = useState("");
   const [subiendo, setSubiendo] = useState(false);
+  const [informe, setInforme] = useState(false);
   const fileRef = useRef(null);
   const pasoDoc = useRef(null);
 
@@ -208,13 +318,15 @@ const Expediente = ({ id, onVolver }) => {
         <Card className="border-amber-200 bg-amber-50/40 mt-4">
           <CardContent className="p-3 flex items-center gap-3">
             <FileText className="w-4 h-4 text-amber-700" />
-            <p className="text-sm text-slate-700 flex-1">Plantilla del informe de tala (Word): rellena los campos [entre corchetes].</p>
+            <p className="text-sm text-slate-700 flex-1">Informe de tala: rellénalo aquí y genera el Word, o descarga la plantilla en blanco.</p>
+            <Button size="sm" onClick={() => setInforme(true)}>Rellenar informe</Button>
             <Button variant="outline" size="sm" onClick={() => descargarPlantilla("informe_tala", "PLANTILLA_INFORME_TALA.docx")}>
-              <Download className="w-4 h-4 mr-1" />Descargar
+              <Download className="w-4 h-4 mr-1" />En blanco
             </Button>
           </CardContent>
         </Card>
       )}
+      {informe && /tala/i.test(e.tipo) && <InformeTala exp={e} onCerrar={() => setInforme(false)} />}
       <Card className="border-slate-100 mt-4">
         <CardContent className="p-3 space-y-2">
           <div className="flex items-center justify-between">
