@@ -354,6 +354,12 @@ const Expedientes = ({ plantillas, abrir }) => {
   }, []);
   useEffect(() => { cargar(); }, [cargar]);
 
+  const borrarExp = async (x) => {
+    if (!window.confirm(`¿Borrar el expediente «${x.titulo}» y todos sus documentos?`)) return;
+    try { await axios.delete(`${API}/admin/tramites/expedientes/${x.id}`); cargar(); }
+    catch { toast.error("No se pudo borrar"); }
+  };
+
   const crear = async () => {
     if (!f.plantilla_id || !f.titulo.trim()) return toast.error("Elige el tipo y pon un título");
     try {
@@ -395,6 +401,9 @@ const Expedientes = ({ plantillas, abrir }) => {
               <p className="text-sm font-medium">{x.pasos_hechos}/{x.pasos_total}</p>
               <p className="text-xs text-slate-400">{ESTADOS[x.estado] || x.estado}</p>
             </div>
+            <button onClick={(ev) => { ev.stopPropagation(); borrarExp(x); }} className="text-slate-300 hover:text-red-500 p-1" title="Borrar expediente">
+              <Trash2 className="w-4 h-4" />
+            </button>
           </CardContent>
         </Card>
       ))}
