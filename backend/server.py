@@ -7173,7 +7173,7 @@ async def _generar_pdf_hoja_parte(vista: WorkOrderPublicView, work_order_id: Opt
         if work_order_id:
             fotos = await _seccion_fotos_pdf(work_order_id, styles)
             if fotos:
-                story.append(PageBreak())
+                # _seccion_fotos_pdf ya empieza con su propio salto de pagina.
                 story.extend(fotos)
     except Exception:
         logger.warning("No se pudieron añadir fotos al PDF de la hoja de parte", exc_info=True)
