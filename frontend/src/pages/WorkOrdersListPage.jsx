@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ClipboardList, Search, ChevronRight, MapPin, Building2 } from "lucide-react";
+import { ClipboardList, Search, ChevronRight, MapPin, Building2, FileDown, Lock, Unlock, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import axios from "axios";
@@ -21,6 +26,70 @@ const ESTADOS = {
   archivado: { txt: "Archivado", cls: "bg-amber-100 text-amber-700" },
 };
 
+// Fila que se desliza hacia la izquierda y deja ver acciones rapidas.
+// Funciona con el dedo (tablet/movil) y con el raton.
+const FilaDeslizable = ({ abierta, onAbrirFila, onCerrarFila, onPulsar, acciones, children }) => {
+  const ancho = acciones.length * 76;
+  const [arrastre, setArrastre] = useState(null); // desplazamiento en px mientras se arrastra
+  const ini = useRef(null);
+  const movida = useRef(false);
+
+  const aplicado = arrastre != null ? arrastre : abierta ? ancho : 0;
+
+  const down = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    ini.current = { x: e.clientX, y: e.clientY, base: abierta ? ancho : 0, horizontal: null };
+    movida.current = false;
+  };
+  const move = (e) => {
+    const i = ini.current;
+    if (!i) return;
+    const dx = e.clientX - i.x;
+    const dy = e.clientY - i.y;
+    if (i.horizontal == null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) i.horizontal = Math.abs(dx) > Math.abs(dy);
+    if (i.horizontal) {
+      movida.current = true;
+      setArrastre(Math.max(0, Math.min(ancho, i.base - dx)));
+    }
+  };
+  const up = () => {
+    const i = ini.current;
+    ini.current = null;
+    if (!i || !i.horizontal) return;
+    const final = arrastre ?? i.base;
+    setArrastre(null);
+    if (final > ancho / 2) onAbrirFila(); else onCerrarFila();
+  };
+
+  return (
+    <div className="relative overflow-hidden">
+      <div className="absolute inset-y-0 right-0 flex" style={{ width: ancho }}>
+        {acciones.map((a) => (
+          <button key={a.clave} type="button" onClick={a.onClick}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 text-white text-[11px] font-medium ${a.cls}`}>
+            {a.icono}{a.etiqueta}
+          </button>
+        ))}
+      </div>
+      <div
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        onClickCapture={(e) => {
+          if (movida.current) { e.preventDefault(); e.stopPropagation(); movida.current = false; return; }
+          if (abierta) { e.preventDefault(); e.stopPropagation(); onCerrarFila(); }
+        }}
+        style={{
+          transform: `translateX(-${aplicado}px)`,
+          transition: arrastre == null ? "transform 180ms ease" : "none",
+          touchAction: "pan-y",
+        }}
+        className="relative bg-white"
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
 const WorkOrdersListPage = () => {
   const [partes, setPartes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +97,66 @@ const WorkOrdersListPage = () => {
   const [filtroEstado, setFiltroEstado] = useState("");
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
+  const [filaAbierta, setFilaAbierta] = useState(null);
+  const [aBorrar, setABorrar] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+
+  const descargarPdf = async (wo) => {
+    setFilaAbierta(null);
+    const t = toast.loading("Generando PDF…");
+    try {
+      const res = await axios.get(`${API}/work-orders/${wo.id}/pdf`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(wo.titulo || wo.numero || "parte").replace(/[\\/:*?"<>|\r\n\t]+/g, " ").trim().slice(0, 150)}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("PDF listo", { id: t });
+    } catch {
+      toast.error("No se pudo generar el PDF", { id: t });
+    }
+  };
+  const cambiarEstado = async (wo, estado) => {
+    setFilaAbierta(null);
+    try {
+      await axios.patch(`${API}/work-orders/${wo.id}`, { estado });
+      setPartes((ps) => ps.map((p) => (p.id === wo.id ? { ...p, estado } : p)));
+      toast.success(estado === "cerrado" ? "Parte cerrado" : "Parte reabierto");
+    } catch (e) {
+      toast.error(e.response?.status === 403 ? "No tienes permisos para esta acción" : "No se pudo cambiar el estado");
+    }
+  };
+  const borrar = async () => {
+    const wo = aBorrar;
+    setTrabajando(true);
+    try {
+      await axios.delete(`${API}/work-orders/${wo.id}`);
+      setPartes((ps) => ps.filter((p) => p.id !== wo.id));
+      toast.success("Parte eliminado");
+    } catch (e) {
+      const st = e.response?.status;
+      if (st === 400) toast.error("No se puede borrar: el parte tiene sesiones registradas");
+      else if (st === 403) toast.error("Solo se pueden borrar partes abiertos");
+      else toast.error("No se pudo eliminar el parte");
+    } finally {
+      setTrabajando(false);
+      setABorrar(null);
+      setFilaAbierta(null);
+    }
+  };
+  const accionesDe = (wo) => {
+    const a = [{ clave: "pdf", etiqueta: "PDF", icono: <FileDown className="w-5 h-5" />, cls: "bg-indigo-600", onClick: () => descargarPdf(wo) }];
+    if (isAdmin) {
+      a.push(wo.estado === "abierto"
+        ? { clave: "cerrar", etiqueta: "Cerrar", icono: <Lock className="w-5 h-5" />, cls: "bg-slate-600", onClick: () => cambiarEstado(wo, "cerrado") }
+        : { clave: "reabrir", etiqueta: "Reabrir", icono: <Unlock className="w-5 h-5" />, cls: "bg-emerald-600", onClick: () => cambiarEstado(wo, "abierto") });
+    }
+    if (wo.estado === "abierto") {
+      a.push({ clave: "borrar", etiqueta: "Borrar", icono: <Trash2 className="w-5 h-5" />, cls: "bg-red-600", onClick: () => setABorrar(wo) });
+    }
+    return a;
+  };
 
   useEffect(() => {
     let cancelado = false;
@@ -123,8 +252,14 @@ const WorkOrdersListPage = () => {
               {partesFiltrados.map((wo) => {
                 const b = ESTADOS[wo.estado] || ESTADOS.abierto;
                 return (
-                  <button
+                  <FilaDeslizable
                     key={wo.id}
+                    abierta={filaAbierta === wo.id}
+                    onAbrirFila={() => setFilaAbierta(wo.id)}
+                    onCerrarFila={() => setFilaAbierta(null)}
+                    acciones={accionesDe(wo)}
+                  >
+                  <button
                     type="button"
                     onClick={() => navigate(`/work-orders/${wo.id}`)}
                     className="w-full flex items-center gap-3 py-3 px-2 text-left hover:bg-slate-50 transition-colors rounded"
@@ -160,12 +295,31 @@ const WorkOrdersListPage = () => {
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                   </button>
+                  </FilaDeslizable>
                 );
               })}
             </div>
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!aBorrar} onOpenChange={(o) => !o && setABorrar(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Borrar este parte?</AlertDialogTitle>
+            <AlertDialogDescription>
+              «{aBorrar?.titulo || aBorrar?.numero}». Solo se pueden borrar partes abiertos y sin sesiones
+              registradas. No se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={borrar} disabled={trabajando} className="bg-red-600 hover:bg-red-700">
+              Sí, borrar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
