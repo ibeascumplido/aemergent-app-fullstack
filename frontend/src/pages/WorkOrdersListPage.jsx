@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ClipboardList, Search, ChevronRight, MapPin, Building2, FileDown, Lock, Unlock, Trash2 } from "lucide-react";
+import { ClipboardList, Search, ChevronRight, MapPin, Building2, FileDown, Lock, Unlock, Trash2, Archive } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -122,7 +122,7 @@ const WorkOrdersListPage = () => {
     try {
       await axios.patch(`${API}/work-orders/${wo.id}`, { estado });
       setPartes((ps) => ps.map((p) => (p.id === wo.id ? { ...p, estado } : p)));
-      toast.success(estado === "cerrado" ? "Parte cerrado" : "Parte reabierto");
+      toast.success({ cerrado: "Parte cerrado", abierto: "Parte reabierto", archivado: "Parte archivado" }[estado]);
     } catch (e) {
       toast.error(e.response?.status === 403 ? "No tienes permisos para esta acción" : "No se pudo cambiar el estado");
     }
@@ -151,6 +151,9 @@ const WorkOrdersListPage = () => {
       a.push(wo.estado === "abierto"
         ? { clave: "cerrar", etiqueta: "Cerrar", icono: <Lock className="w-5 h-5" />, cls: "bg-slate-600", onClick: () => cambiarEstado(wo, "cerrado") }
         : { clave: "reabrir", etiqueta: "Reabrir", icono: <Unlock className="w-5 h-5" />, cls: "bg-emerald-600", onClick: () => cambiarEstado(wo, "abierto") });
+      if (wo.estado === "cerrado") {
+        a.push({ clave: "archivar", etiqueta: "Archivar", icono: <Archive className="w-5 h-5" />, cls: "bg-amber-600", onClick: () => cambiarEstado(wo, "archivado") });
+      }
     }
     if (wo.estado === "abierto") {
       a.push({ clave: "borrar", etiqueta: "Borrar", icono: <Trash2 className="w-5 h-5" />, cls: "bg-red-600", onClick: () => setABorrar(wo) });
