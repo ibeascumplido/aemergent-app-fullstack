@@ -1112,6 +1112,16 @@ const WorkOrderDetailPage = () => {
         <>
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Trabajo realizado</h2>
+        {sessionsOrdenadas.length > 0 && (
+          <Button
+            onClick={() => abrirEditarSesion(sessionsOrdenadas[sessionsOrdenadas.length - 1])}
+            className="bg-[#AF1A1C] hover:bg-[#8f1517] text-white shadow-md"
+            data-testid="abrir-hoja-btn"
+          >
+            <FileText className="w-4 h-4 mr-2" />
+            Abrir hoja de parte
+          </Button>
+        )}
         {parteAbierto && sessionsOrdenadas.length === 0 && (
           <Button
             onClick={abrirNuevaSesion}
@@ -1150,7 +1160,8 @@ const WorkOrderDetailPage = () => {
             const firmante = nombreFirmante(s);
             const tareas = (s.tareas_ids || [])
               .map((tid) => (tareasPorId[tid] ? { id: tid, nombre: tareasPorId[tid] } : null))
-              .filter(Boolean);
+              .filter(Boolean)
+              .concat((s.tareas_libres || []).filter(Boolean).map((t, i) => ({ id: `libre-${i}`, nombre: t })));
             return (
               <Card key={s.id} className="border-slate-100" data-testid={`session-${s.id}`}>
                 <CardContent className="p-4">
@@ -1174,6 +1185,13 @@ const WorkOrderDetailPage = () => {
                     </div>
                     {parteAbierto && (
                       <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          className="h-8 bg-[#AF1A1C] hover:bg-[#8f1517] text-white mr-1"
+                          onClick={() => abrirEditarSesion(s)}
+                        >
+                          <FileText className="w-4 h-4 mr-1" />Hoja
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"

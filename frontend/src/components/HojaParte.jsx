@@ -57,6 +57,8 @@ const HojaParte = ({
   const [nuevaTarea, setNuevaTarea] = useState("");
   const [pedido, setPedido] = useState("");
   const [domicilio, setDomicilio] = useState("");
+  const [clienteH, setClienteH] = useState("");
+  const [presupH, setPresupH] = useState("");
   const sembrado = useRef(null);
   const temporizador = useRef({});
 
@@ -70,9 +72,14 @@ const HojaParte = ({
       fecha: sesion.fecha, hora_inicio: sesion.hora_inicio, hora_fin: sesion.hora_fin,
       horas_desplazamiento: sesion.horas_desplazamiento || "", materiales: sesion.materiales || "",
       notas: sesion.notas || "",
+      personal_texto: sesion.personal_texto || "",
+      num_operarios_texto: sesion.num_operarios_texto || "",
+      total_horas_texto: sesion.total_horas_texto || "",
     });
     setPedido(parte.numero_pedido || "");
     setDomicilio(parte.domicilio || centro?.direccion || "");
+    setClienteH(parte.cliente_hoja || "");
+    setPresupH(parte.presupuesto_hoja || "");
   }, [open, sesion, parte, centro]);
   useEffect(() => { if (!open) sembrado.current = null; }, [open]);
 
@@ -112,6 +119,19 @@ const HojaParte = ({
   const quitar = (t) => {
     if (t.id) patchSesion({ tareas_ids: sesion.tareas_ids.filter((x) => x !== t.id) });
     else patchSesion({ tareas_libres: sesion.tareas_libres.filter((_, i) => i !== t.libre) });
+  };
+  const editarTarea = (t, texto) => {
+    const nuevo = texto.trim();
+    if (!nuevo || nuevo === t.nombre) return;
+    if (t.id) {
+      // Una tarea del catalogo editada pasa a ser texto libre de este parte.
+      patchSesion({
+        tareas_ids: sesion.tareas_ids.filter((x) => x !== t.id),
+        tareas_libres: [...(sesion.tareas_libres || []), nuevo],
+      });
+    } else {
+      patchSesion({ tareas_libres: sesion.tareas_libres.map((x, i) => (i === t.libre ? nuevo : x)) });
+    }
   };
   const anadir = (texto) => {
     const t = (texto ?? nuevaTarea).trim();
@@ -168,7 +188,9 @@ const HojaParte = ({
                   onBlur={() => pedido !== (parte.numero_pedido || "") && patchParte({ numero_pedido: pedido.trim() })} />
               </Campo>
               <Campo etiqueta="Nº PRESUPUESTO:">
-                <span className="text-sm font-medium">{parte.budget_number || "—"}</span>
+                <input className={entrada} value={presupH || (parte.budget_number || "")} disabled={!abierto}
+                  onChange={(e) => setPresupH(e.target.value)}
+                  onBlur={() => presupH !== (parte.presupuesto_hoja || "") && patchParte({ presupuesto_hoja: presupH.trim() })} />
               </Campo>
               <Campo etiqueta="En Madrid a">
                 <input type="date" className={entrada} value={f.fecha} disabled={!abierto}
@@ -178,7 +200,11 @@ const HojaParte = ({
             </div>
           </div>
 
-          <Campo etiqueta="Cliente:"><div className={`${entrada} bg-slate-50`}>{clienteTxt || "—"}</div></Campo>
+          <Campo etiqueta="Cliente:">
+            <input className={entrada} value={clienteH || clienteTxt} disabled={!abierto}
+              onChange={(e) => setClienteH(e.target.value)}
+              onBlur={() => clienteH !== (parte.cliente_hoja || "") && patchParte({ cliente_hoja: clienteH.trim() === clienteTxt ? "" : clienteH.trim() })} />
+          </Campo>
           <Campo etiqueta="Domicilio:">
             <input className={entrada} value={domicilio} disabled={!abierto} placeholder="Dirección del trabajo"
               onChange={(e) => setDomicilio(e.target.value)}
@@ -190,7 +216,10 @@ const HojaParte = ({
               {tareas.length === 0 && <p className="text-xs text-slate-400">Añade las tareas realizadas…</p>}
               {tareas.map((t) => (
                 <div key={t.clave} className="flex items-center gap-2 text-sm">
-                  <span>•</span><span className="flex-1">{t.nombre}</span>
+                  <span>•</span>
+                  <input key={`${t.clave}-${t.nombre}`} className="flex-1 min-w-0 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none py-0.5"
+                    defaultValue={t.nombre} disabled={!abierto}
+                    onBlur={(e) => editarTarea(t, e.target.value)} />
                   {abierto && <button onClick={() => quitar(t)} className="text-slate-300 hover:text-red-500" title="Quitar"><X className="w-4 h-4" /></button>}
                 </div>
               ))}
@@ -222,7 +251,10 @@ const HojaParte = ({
           </Caja>
 
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 sm:max-w-md">
-            <Campo etiqueta="Nº operarios:"><div className={`${entrada} bg-slate-50`}>{nombres.length}</div></Campo>
+            <Campo etiqueta="Nº operarios:">
+              <input className={entrada} value={f.num_operarios_texto || String(nombres.length)} disabled={!abierto}
+                onChange={(e) => cambia("num_operarios_texto", e.target.value === String(nombres.length) ? "" : e.target.value)} />
+            </Campo>
             <Campo etiqueta="H. Desplaz.:">
               <input className={entrada} value={f.horas_desplazamiento} placeholder="0:30" disabled={!abierto}
                 onChange={(e) => cambia("horas_desplazamiento", e.target.value)} />
@@ -236,7 +268,10 @@ const HojaParte = ({
                 onChange={(e) => e.target.value && cambia("hora_fin", e.target.value, true)} />
             </Campo>
             <span />
-            <Campo etiqueta="Total horas:"><div className={`${entrada} bg-slate-50`}>{totalHoras(f.hora_inicio, f.hora_fin) || "—"}</div></Campo>
+            <Campo etiqueta="Total horas:">
+              <input className={entrada} value={f.total_horas_texto || totalHoras(f.hora_inicio, f.hora_fin)} disabled={!abierto}
+                onChange={(e) => cambia("total_horas_texto", e.target.value === totalHoras(f.hora_inicio, f.hora_fin) ? "" : e.target.value)} />
+            </Campo>
           </div>
 
           <Caja titulo="MATERIALES" extra={abierto ? <BotonDictado onTexto={(t) => cambia("materiales", `${f.materiales ? f.materiales + "\n" : ""}${t}`)} /> : null}>
@@ -246,7 +281,9 @@ const HojaParte = ({
           </Caja>
 
           <Campo etiqueta="Personal (Nombres):">
-            <div className={`${entrada} bg-slate-50 min-h-[2rem]`}>{nombres.join(", ") || "—"}</div>
+            <input className={entrada} value={f.personal_texto || nombres.join(", ")} disabled={!abierto}
+              placeholder="Nombres del personal"
+              onChange={(e) => cambia("personal_texto", e.target.value === nombres.join(", ") ? "" : e.target.value)} />
           </Campo>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">

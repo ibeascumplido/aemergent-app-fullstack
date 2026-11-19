@@ -5901,6 +5901,8 @@ class WorkOrderBase(BaseModel):
     notas: Optional[str] = Field("", max_length=4000)
     numero_pedido: Optional[str] = Field(None, max_length=60, description="Nº de pedido del cliente (hoja de parte).")
     domicilio: Optional[str] = Field(None, max_length=300, description="Domicilio del trabajo (hoja de parte). Si esta vacio se usa la direccion del centro.")
+    cliente_hoja: Optional[str] = Field(None, max_length=300, description="Texto de 'Cliente' en la hoja/PDF si se quiere distinto del nombre del cliente.")
+    presupuesto_hoja: Optional[str] = Field(None, max_length=60, description="Texto de 'Nº presupuesto' en la hoja/PDF si se quiere distinto del presupuesto vinculado.")
     usa_zonas: bool = Field(
         False,
         description="Si esta activo, las tareas de cada sesion se pueden asociar a una zona "
@@ -5938,6 +5940,8 @@ class WorkOrderUpdate(BaseModel):
     notas: Optional[str] = Field(None, max_length=4000)
     numero_pedido: Optional[str] = Field(None, max_length=60)
     domicilio: Optional[str] = Field(None, max_length=300)
+    cliente_hoja: Optional[str] = Field(None, max_length=300)
+    presupuesto_hoja: Optional[str] = Field(None, max_length=60)
     budget_template_id: Optional[str] = None
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
@@ -6010,6 +6014,9 @@ class WorkSessionBase(BaseModel):
     notas: Optional[str] = Field("", max_length=2000)
     horas_desplazamiento: Optional[str] = Field("", max_length=30, description="Horas de desplazamiento (texto libre, ej. '0:30').")
     materiales: Optional[str] = Field("", max_length=3000, description="Materiales usados (una linea por material).")
+    personal_texto: Optional[str] = Field("", max_length=500, description="Si no esta vacio, sustituye al texto automatico de 'Personal (Nombres)' en la hoja/PDF.")
+    num_operarios_texto: Optional[str] = Field("", max_length=20, description="Si no esta vacio, sustituye al calculo automatico de 'Nº operarios'.")
+    total_horas_texto: Optional[str] = Field("", max_length=30, description="Si no esta vacio, sustituye al calculo automatico de 'Total horas'.")
     visibilidad: Dict[str, bool] = Field(
         default_factory=dict,
         description="Toggles de visibilidad al cliente por campo (Fase 5A.3). Claves: operarios, horas, tareas, notas. Si una clave no esta presente se considera visible.",
@@ -6039,6 +6046,9 @@ class WorkSessionUpdate(BaseModel):
     notas: Optional[str] = None
     horas_desplazamiento: Optional[str] = Field(None, max_length=30)
     materiales: Optional[str] = Field(None, max_length=3000)
+    personal_texto: Optional[str] = Field(None, max_length=500)
+    num_operarios_texto: Optional[str] = Field(None, max_length=20)
+    total_horas_texto: Optional[str] = Field(None, max_length=30)
     visibilidad: Optional[Dict[str, bool]] = None
     firma_responsable: Optional[str] = Field(None, max_length=270000)
 
@@ -6088,6 +6098,9 @@ class SesionPublica(BaseModel):
     firma_responsable: Optional[str] = None
     horas_desplazamiento: Optional[str] = None
     materiales: Optional[str] = None
+    personal_texto: Optional[str] = None
+    num_operarios_texto: Optional[str] = None
+    total_horas_texto: Optional[str] = None
 
 
 class WorkOrderPublicView(BaseModel):
@@ -6102,6 +6115,7 @@ class WorkOrderPublicView(BaseModel):
     numero_pedido: Optional[str] = None
     numero_presupuesto: Optional[str] = None
     domicilio: Optional[str] = None
+    cliente_hoja: Optional[str] = None
     estado: str
     creado_en: datetime
     sessions: List[SesionPublica]
@@ -6536,6 +6550,11 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
 
         item["horas_desplazamiento"] = s.get("horas_desplazamiento") or ""
         item["materiales"] = s.get("materiales") or ""
+        if vis.get("operarios", True):
+            item["personal_texto"] = s.get("personal_texto") or ""
+            item["num_operarios_texto"] = s.get("num_operarios_texto") or ""
+        if vis.get("horas", True):
+            item["total_horas_texto"] = s.get("total_horas_texto") or ""
 
         sessions_publicas.append(SesionPublica(**item))
 
@@ -6546,7 +6565,8 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         cliente_logo_url=cliente.get("logo_url") if cliente else None,
         centro_nombre=centro["nombre"] if centro else None,
         numero_pedido=doc.get("numero_pedido"),
-        numero_presupuesto=doc.get("budget_number"),
+        numero_presupuesto=doc.get("presupuesto_hoja") or doc.get("budget_number"),
+        cliente_hoja=doc.get("cliente_hoja"),
         domicilio=doc.get("domicilio") or (centro.get("direccion") if centro else None),
         estado=doc["estado"],
         creado_en=doc["creado_en"],
@@ -7058,6 +7078,8 @@ async def _generar_pdf_hoja_parte(vista: WorkOrderPublicView, work_order_id: Opt
         cliente = vista.cliente_nombre or ""
         if vista.centro_nombre and vista.centro_nombre != vista.cliente_nombre:
             cliente = f"{cliente} · {vista.centro_nombre}" if cliente else vista.centro_nombre
+        if getattr(vista, "cliente_hoja", None):
+            cliente = vista.cliente_hoja
 
         desc = []
         for t in (s.tareas if s and s.tareas else []):
@@ -7072,13 +7094,15 @@ async def _generar_pdf_hoja_parte(vista: WorkOrderPublicView, work_order_id: Opt
                 mats.append(Paragraph(f"• {_p(linea.strip())}", cuerpo))
 
         n_oper = len(s.operarios) if s and s.operarios is not None else None
+        if s and getattr(s, "num_operarios_texto", None):
+            n_oper = s.num_operarios_texto
         ini = s.hora_inicio if s else None
         fin = s.hora_fin if s else None
         info = Table(
             [[Paragraph("Nº operarios:", lab), Paragraph(str(n_oper) if n_oper is not None else "", val),
               Paragraph("H. Desplazamiento:", lab), Paragraph(_p(s.horas_desplazamiento if s else ""), val)],
              [Paragraph("H. inicio:", lab), Paragraph(_p(ini), val), Paragraph("H. fin:", lab), Paragraph(_p(fin), val)],
-             ["", "", Paragraph("Total Horas:", lab), Paragraph(_total_horas_txt(ini, fin), val)]],
+             ["", "", Paragraph("Total Horas:", lab), Paragraph(_p((getattr(s, "total_horas_texto", None) if s else None) or _total_horas_txt(ini, fin)), val)]],
             colWidths=[2.6 * cm, 2.6 * cm, 3.4 * cm, 2.6 * cm],
             hAlign="LEFT",
         )
@@ -7094,6 +7118,8 @@ async def _generar_pdf_hoja_parte(vista: WorkOrderPublicView, work_order_id: Opt
         personal = ", ".join(s.operarios) if s and s.operarios else ""
         if s and s.firmante and s.firmante not in personal:
             personal = f"{personal} (responsable: {s.firmante})" if personal else f"Responsable: {s.firmante}"
+        if s and getattr(s, "personal_texto", None):
+            personal = s.personal_texto
 
         fc = _decode_firma_pdf(vista.firma_cliente, max_width_cm=7.5, max_height_cm=2.6)
         fo = _decode_firma_pdf(s.firma_responsable if s else None, max_width_cm=7.5, max_height_cm=2.6)
