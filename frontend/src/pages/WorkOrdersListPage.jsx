@@ -148,9 +148,13 @@ const WorkOrdersListPage = () => {
   const accionesDe = (wo) => {
     const a = [{ clave: "pdf", etiqueta: "PDF", icono: <FileDown className="w-5 h-5" />, cls: "bg-indigo-600", onClick: () => descargarPdf(wo) }];
     if (isAdmin) {
-      a.push(wo.estado === "abierto"
-        ? { clave: "cerrar", etiqueta: "Cerrar", icono: <Lock className="w-5 h-5" />, cls: "bg-slate-600", onClick: () => cambiarEstado(wo, "cerrado") }
-        : { clave: "reabrir", etiqueta: "Reabrir", icono: <Unlock className="w-5 h-5" />, cls: "bg-emerald-600", onClick: () => cambiarEstado(wo, "abierto") });
+      if (wo.estado === "abierto") {
+        a.push({ clave: "cerrar", etiqueta: "Cerrar", icono: <Lock className="w-5 h-5" />, cls: "bg-slate-600", onClick: () => cambiarEstado(wo, "cerrado") });
+      } else if (wo.estado === "archivado") {
+        a.push({ clave: "desarchivar", etiqueta: "Desarchivar", icono: <Unlock className="w-5 h-5" />, cls: "bg-emerald-600", onClick: () => cambiarEstado(wo, "cerrado") });
+      } else {
+        a.push({ clave: "reabrir", etiqueta: "Reabrir", icono: <Unlock className="w-5 h-5" />, cls: "bg-emerald-600", onClick: () => cambiarEstado(wo, "abierto") });
+      }
       if (wo.estado === "cerrado") {
         a.push({ clave: "archivar", etiqueta: "Archivar", icono: <Archive className="w-5 h-5" />, cls: "bg-amber-600", onClick: () => cambiarEstado(wo, "archivado") });
       }
