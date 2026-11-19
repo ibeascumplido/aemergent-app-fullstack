@@ -5899,6 +5899,8 @@ class WorkOrderBase(BaseModel):
     budget_template_id: Optional[str] = Field(None, description="Presupuesto asociado (opcional)")
     titulo: str = Field(..., min_length=1, max_length=200)
     notas: Optional[str] = Field("", max_length=4000)
+    numero_pedido: Optional[str] = Field(None, max_length=60, description="Nº de pedido del cliente (hoja de parte).")
+    domicilio: Optional[str] = Field(None, max_length=300, description="Domicilio del trabajo (hoja de parte). Si esta vacio se usa la direccion del centro.")
     usa_zonas: bool = Field(
         False,
         description="Si esta activo, las tareas de cada sesion se pueden asociar a una zona "
@@ -5934,6 +5936,8 @@ class WorkOrderCreate(WorkOrderBase):
 class WorkOrderUpdate(BaseModel):
     titulo: Optional[str] = Field(None, min_length=1, max_length=200)
     notas: Optional[str] = Field(None, max_length=4000)
+    numero_pedido: Optional[str] = Field(None, max_length=60)
+    domicilio: Optional[str] = Field(None, max_length=300)
     budget_template_id: Optional[str] = None
     estado: Optional[str] = None  # solo admin puede cambiar a archivado, se valida en handler
     usa_zonas: Optional[bool] = None
@@ -6004,6 +6008,8 @@ class WorkSessionBase(BaseModel):
         "restringe para no acoplarse a la lista exacta de letras.",
     )
     notas: Optional[str] = Field("", max_length=2000)
+    horas_desplazamiento: Optional[str] = Field("", max_length=30, description="Horas de desplazamiento (texto libre, ej. '0:30').")
+    materiales: Optional[str] = Field("", max_length=3000, description="Materiales usados (una linea por material).")
     visibilidad: Dict[str, bool] = Field(
         default_factory=dict,
         description="Toggles de visibilidad al cliente por campo (Fase 5A.3). Claves: operarios, horas, tareas, notas. Si una clave no esta presente se considera visible.",
@@ -6031,6 +6037,8 @@ class WorkSessionUpdate(BaseModel):
     tareas_libres: Optional[List[str]] = None
     tareas_zonas: Optional[Dict[str, List[str]]] = None
     notas: Optional[str] = None
+    horas_desplazamiento: Optional[str] = Field(None, max_length=30)
+    materiales: Optional[str] = Field(None, max_length=3000)
     visibilidad: Optional[Dict[str, bool]] = None
     firma_responsable: Optional[str] = Field(None, max_length=270000)
 
@@ -6078,6 +6086,8 @@ class SesionPublica(BaseModel):
     notas: Optional[str] = None
     firmante: Optional[str] = None
     firma_responsable: Optional[str] = None
+    horas_desplazamiento: Optional[str] = None
+    materiales: Optional[str] = None
 
 
 class WorkOrderPublicView(BaseModel):
@@ -6089,6 +6099,9 @@ class WorkOrderPublicView(BaseModel):
     cliente_nombre: str
     cliente_logo_url: Optional[str] = None
     centro_nombre: Optional[str] = None
+    numero_pedido: Optional[str] = None
+    numero_presupuesto: Optional[str] = None
+    domicilio: Optional[str] = None
     estado: str
     creado_en: datetime
     sessions: List[SesionPublica]
@@ -6508,7 +6521,7 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         if vis.get("tareas", True):
             item["tareas"] = [
                 tareas_map[tid] for tid in s.get("tareas_ids", []) if tid in tareas_map
-            ]
+            ] + [t for t in (s.get("tareas_libres") or []) if t]
 
         if vis.get("notas", True) and s.get("notas"):
             item["notas"] = s["notas"]
@@ -6521,6 +6534,9 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         if s.get("firma_responsable"):
             item["firma_responsable"] = s["firma_responsable"]
 
+        item["horas_desplazamiento"] = s.get("horas_desplazamiento") or ""
+        item["materiales"] = s.get("materiales") or ""
+
         sessions_publicas.append(SesionPublica(**item))
 
     return WorkOrderPublicView(
@@ -6529,6 +6545,9 @@ async def _construir_vista_publica(doc: dict) -> WorkOrderPublicView:
         cliente_nombre=cliente_nombre,
         cliente_logo_url=cliente.get("logo_url") if cliente else None,
         centro_nombre=centro["nombre"] if centro else None,
+        numero_pedido=doc.get("numero_pedido"),
+        numero_presupuesto=doc.get("budget_number"),
+        domicilio=doc.get("domicilio") or (centro.get("direccion") if centro else None),
         estado=doc["estado"],
         creado_en=doc["creado_en"],
         sessions=sessions_publicas,
@@ -6945,6 +6964,196 @@ async def _generar_pdf_parte(vista: WorkOrderPublicView, work_order_id: Optional
 
     doc.build(story)
     return buffer.getvalue()
+
+def _min_de_hhmm(h: Optional[str]) -> Optional[int]:
+    try:
+        a, b = (h or "").split(":")
+        return int(a) * 60 + int(b)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _total_horas_txt(ini: Optional[str], fin: Optional[str]) -> str:
+    a, b = _min_de_hhmm(ini), _min_de_hhmm(fin)
+    if a is None or b is None or b <= a:
+        return ""
+    m = b - a
+    return f"{m // 60}:{m % 60:02d} h"
+
+
+async def _generar_pdf_hoja_parte(vista: WorkOrderPublicView, work_order_id: Optional[str] = None) -> bytes:
+    """PDF con el formato de la hoja de parte en papel de Inicia: una pagina
+    por sesion (Nº pedido, cliente, domicilio, descripcion, horas, materiales,
+    personal y firmas), seguida de las fotos del parte si las hay."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, topMargin=1.0 * cm, bottomMargin=2.0 * cm,
+        leftMargin=1.6 * cm, rightMargin=1.6 * cm, title=vista.titulo,
+    )
+    styles = getSampleStyleSheet()
+    W = doc.width
+    GRIS = colors.HexColor("#475569")
+    BORDE = colors.HexColor("#94a3b8")
+    lab = ParagraphStyle("HojaLab", parent=styles["Normal"], fontSize=8.5, textColor=GRIS, leading=11)
+    val = ParagraphStyle("HojaVal", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#0f172a"), leading=13)
+    cuerpo = ParagraphStyle("HojaCuerpo", parent=styles["Normal"], fontSize=10, leading=13.5)
+    titulo_caja = ParagraphStyle("HojaTitCaja", parent=styles["Normal"], fontName="Times-Bold", fontSize=10.5, alignment=1)
+    firma_lab = ParagraphStyle("HojaFirma", parent=styles["Normal"], fontName="Helvetica-Oblique", fontSize=8, textColor=GRIS)
+    cab_der = ParagraphStyle("HojaCabDer", parent=styles["Normal"], fontSize=10.5, leading=14)
+
+    def _caja_titulo(texto):
+        t = Table([[Paragraph(texto, titulo_caja)]], colWidths=[W])
+        t.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.8, BORDE),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        return t
+
+    def _caja_cuerpo(elementos, alto):
+        marco = KeepInFrame(W - 0.5 * cm, alto - 0.4 * cm, elementos or [Spacer(1, 1)], mode="shrink")
+        t = Table([[marco]], colWidths=[W], rowHeights=[alto])
+        t.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.8, BORDE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        return t
+
+    def _linea_campo(etiqueta, valor):
+        t = Table([[Paragraph(etiqueta, lab), Paragraph(_p(valor), val)]], colWidths=[2.2 * cm, W - 2.2 * cm])
+        t.setStyle(TableStyle([
+            ("BOX", (1, 0), (1, 0), 0.8, BORDE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (1, 0), (1, 0), 6),
+        ]))
+        return t
+
+    def _pagina(s):
+        fecha_txt = ""
+        if s and s.fecha:
+            try:
+                d = datetime.strptime(s.fecha, "%Y-%m-%d")
+                fecha_txt = f"En Madrid a {d.day} de {_MESES_ES[d.month - 1]} de {d.year}"
+            except ValueError:
+                fecha_txt = f"En Madrid a {s.fecha}"
+        else:
+            fecha_txt = "En Madrid a        de                 de 20"
+        logo = _logo_inicia_image(max_width_cm=6.2, max_height_cm=2.2)
+        izq = [logo or Paragraph("INICIA", titulo_caja), Paragraph("C.I.F.: B-73.692.725", lab)]
+        der = Table(
+            [[Paragraph(f"Nº PEDIDO: <b>{_p(vista.numero_pedido)}</b>", cab_der)],
+             [Paragraph(f"Nº PRESUPUESTO: <b>{_p(vista.numero_presupuesto)}</b>", cab_der)],
+             [Paragraph(_p(fecha_txt), cab_der)]],
+            colWidths=[W - 7.0 * cm],
+        )
+        der.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, BORDE),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        cab = Table([[izq, der]], colWidths=[7.0 * cm, W - 7.0 * cm])
+        cab.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                 ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+
+        cliente = vista.cliente_nombre or ""
+        if vista.centro_nombre and vista.centro_nombre != vista.cliente_nombre:
+            cliente = f"{cliente} · {vista.centro_nombre}" if cliente else vista.centro_nombre
+
+        desc = []
+        for t in (s.tareas if s and s.tareas else []):
+            desc.append(Paragraph(f"• {_p(t)}", cuerpo))
+        if s and s.notas:
+            desc.append(Spacer(1, 4))
+            desc.append(Paragraph(_p(s.notas).replace("\n", "<br/>"), cuerpo))
+
+        mats = []
+        for linea in ((s.materiales if s else "") or "").splitlines():
+            if linea.strip():
+                mats.append(Paragraph(f"• {_p(linea.strip())}", cuerpo))
+
+        n_oper = len(s.operarios) if s and s.operarios is not None else None
+        ini = s.hora_inicio if s else None
+        fin = s.hora_fin if s else None
+        info = Table(
+            [[Paragraph("Nº operarios:", lab), Paragraph(str(n_oper) if n_oper is not None else "", val),
+              Paragraph("H. Desplazamiento:", lab), Paragraph(_p(s.horas_desplazamiento if s else ""), val)],
+             [Paragraph("H. inicio:", lab), Paragraph(_p(ini), val), Paragraph("H. fin:", lab), Paragraph(_p(fin), val)],
+             ["", "", Paragraph("Total Horas:", lab), Paragraph(_total_horas_txt(ini, fin), val)]],
+            colWidths=[2.6 * cm, 2.6 * cm, 3.4 * cm, 2.6 * cm],
+            hAlign="LEFT",
+        )
+        info.setStyle(TableStyle([
+            ("BOX", (1, 0), (1, 0), 0.8, BORDE), ("BOX", (3, 0), (3, 0), 0.8, BORDE),
+            ("BOX", (1, 1), (1, 1), 0.8, BORDE), ("BOX", (3, 1), (3, 1), 0.8, BORDE),
+            ("BOX", (3, 2), (3, 2), 0.8, BORDE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (1, 0), (1, -1), 5), ("LEFTPADDING", (3, 0), (3, -1), 5),
+        ]))
+
+        personal = ", ".join(s.operarios) if s and s.operarios else ""
+        if s and s.firmante and s.firmante not in personal:
+            personal = f"{personal} (responsable: {s.firmante})" if personal else f"Responsable: {s.firmante}"
+
+        fc = _decode_firma_pdf(vista.firma_cliente, max_width_cm=7.5, max_height_cm=2.6)
+        fo = _decode_firma_pdf(s.firma_responsable if s else None, max_width_cm=7.5, max_height_cm=2.6)
+        firmas = Table(
+            [[Paragraph("Fdo: El cliente o persona autorizada,", firma_lab), Paragraph("Fdo: Ellos operarios,", firma_lab)],
+             [fc or "", fo or ""]],
+            colWidths=[W / 2, W / 2], rowHeights=[0.6 * cm, 2.8 * cm],
+        )
+        firmas.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2)]))
+
+        return [
+            cab, Spacer(1, 8),
+            _linea_campo("Cliente:", cliente), Spacer(1, 4),
+            _linea_campo("Domicilio:", vista.domicilio or ""), Spacer(1, 8),
+            _caja_titulo("DESCRIPCION DE TRABAJOS"),
+            _caja_cuerpo(desc, 7.6 * cm), Spacer(1, 8),
+            info, Spacer(1, 4),
+            _caja_titulo("MATERIALES"),
+            _caja_cuerpo(mats, 5.4 * cm), Spacer(1, 6),
+            Table(
+                [[Paragraph("Personal (Nombres):", lab), Paragraph(_p(personal), val)]],
+                colWidths=[3.2 * cm, W - 3.2 * cm],
+                style=TableStyle([("BOX", (1, 0), (1, 0), 0.8, BORDE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                                  ("LEFTPADDING", (1, 0), (1, 0), 6)]),
+            ),
+            Spacer(1, 4), firmas,
+        ]
+
+    def _pie(canv, _doc):
+        canv.saveState()
+        canv.setStrokeColor(colors.HexColor("#cbd5e1"))
+        canv.line(1.6 * cm, 1.7 * cm, A4[0] - 1.6 * cm, 1.7 * cm)
+        canv.setFont("Helvetica-Bold", 8)
+        canv.setFillColor(colors.HexColor("#334155"))
+        canv.drawCentredString(A4[0] / 2, 1.25 * cm, "Calle Velazquez S/N - 30100 El Puntal (Murcia)")
+        canv.setFont("Helvetica", 8)
+        canv.drawCentredString(
+            A4[0] / 2, 0.85 * cm,
+            "Teléfono: 968 964 005 - Fax: 968 305 531   www.iniciaservicios.es   inicia@iniciaservicios.es",
+        )
+        canv.restoreState()
+
+    story = []
+    sesiones = vista.sessions or [None]
+    for i, s in enumerate(sesiones):
+        if i > 0:
+            story.append(PageBreak())
+        story.extend(_pagina(s))
+    try:
+        if work_order_id:
+            fotos = await _seccion_fotos_pdf(work_order_id, styles)
+            if fotos:
+                story.append(PageBreak())
+                story.extend(fotos)
+    except Exception:
+        logger.warning("No se pudieron añadir fotos al PDF de la hoja de parte", exc_info=True)
+    doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
+    return buffer.getvalue()
+
 
 async def _descargar_imagen_pdf(
     url: Optional[str], max_width_cm: float = 16.0, max_height_cm: float = 16.0
@@ -7623,7 +7832,7 @@ async def guardar_actuaciones_pendientes(
 
 @api_router.get("/work-orders/{work_order_id}/pdf")
 async def descargar_pdf_parte(
-    work_order_id: str, _: dict = Depends(require_approved)
+    work_order_id: str, formato: str = "hoja", _: dict = Depends(require_approved)
 ):
     doc = await _cargar_parte(work_order_id)
     if doc.get("usa_zonas"):
@@ -7632,7 +7841,10 @@ async def descargar_pdf_parte(
         pagina_actuaciones_cliente = cliente
     else:
         vista = await _construir_vista_publica(doc)
-        pdf_bytes = await _generar_pdf_parte(vista, work_order_id=doc["id"])
+        if formato == "clasico":
+            pdf_bytes = await _generar_pdf_parte(vista, work_order_id=doc["id"])
+        else:
+            pdf_bytes = await _generar_pdf_hoja_parte(vista, work_order_id=doc["id"])
         pagina_actuaciones_cliente = (
             await db.clients.find_one({"id": doc["client_id"]}) if doc.get("client_id") else None
         )
