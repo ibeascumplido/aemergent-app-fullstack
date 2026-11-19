@@ -403,7 +403,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
           ? firmanteTipo.slice(6)
           : "",
         tareas_ids: tareasIds,
-        tareas_libres: [],
+        tareas_libres: session?.tareas_libres || [],
         tareas_zonas: usaZonas
           ? Object.fromEntries(
               tareasIds.map((id) => [id, limpiarZonas(tareasZonas[id])?.length ? limpiarZonas(tareasZonas[id]) : ["X"]])
@@ -417,6 +417,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
         visibilidad,
         firma_responsable: firmaResponsable,
       };
+      let creada = null;
       if (editing) {
         await axios.patch(
           `${API}/work-orders/${workOrderId}/sessions/${session.id}`,
@@ -424,11 +425,12 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
         );
         toast.success("Sesion actualizada");
       } else {
-        await axios.post(`${API}/work-orders/${workOrderId}/sessions`, payload);
-        toast.success("Sesion anadida");
+        const resp = await axios.post(`${API}/work-orders/${workOrderId}/sessions`, payload);
+        toast.success("Parte iniciado");
+        creada = resp.data;
       }
       onOpenChange(false);
-      onSaved && onSaved();
+      onSaved && onSaved(creada);
     } catch (err) {
       console.error("Error guardando sesion:", err);
       const status = err?.response?.status;
@@ -931,7 +933,7 @@ const SessionDialog = ({ open, onOpenChange, workOrderId, session, usaZonas, cli
             className="bg-indigo-600 hover:bg-indigo-700 text-white"
             data-testid="guardar-sesion-btn"
           >
-            {guardando ? "Guardando..." : editing ? "Guardar cambios" : "Anadir sesion"}
+            {guardando ? "Guardando..." : editing ? "Guardar cambios" : "Iniciar parte"}
           </Button>
         </DialogFooter>
       </DialogContent>

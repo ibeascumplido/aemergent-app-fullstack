@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -55,6 +55,7 @@ import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import SessionDialog from "@/components/SessionDialog";
+import HojaParte from "@/components/HojaParte";
 import GaleriaFotos from "@/components/GaleriaFotos";
 import AnadirFotosParte from "@/components/AnadirFotosParte";
 import ActuacionesPendientesParte from "@/components/ActuacionesPendientesParte";
@@ -131,6 +132,9 @@ const WorkOrderDetailPage = () => {
   // Dialogo de sesion (crear/editar)
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
   const [sesionEditando, setSesionEditando] = useState(null);
+  const [hojaOpen, setHojaOpen] = useState(false);
+  const [hojaSesionId, setHojaSesionId] = useState(null);
+  const volverAHoja = useRef(false);
 
   // Confirmaciones
   const [sesionABorrar, setSesionABorrar] = useState(null);
@@ -521,8 +525,28 @@ const WorkOrderDetailPage = () => {
   };
 
   const abrirEditarSesion = (s) => {
+    // Partes normales: se edita en la hoja (formato del parte en papel).
+    // Partes con rejilla de zonas: se mantiene el formulario de siempre.
+    if (!parte.usa_zonas) {
+      setHojaSesionId(s.id);
+      setHojaOpen(true);
+      return;
+    }
     setSesionEditando(s);
     setSessionDialogOpen(true);
+  };
+
+  const ajustesDesdeHoja = (s) => {
+    volverAHoja.current = true;
+    setHojaOpen(false);
+    setSesionEditando(s);
+    setSessionDialogOpen(true);
+  };
+  const reabrirHoja = () => {
+    if (volverAHoja.current) {
+      volverAHoja.current = false;
+      setHojaOpen(true);
+    }
   };
 
   // --- Vincular a un cliente registrado (parte de cliente libre) --------
@@ -1282,14 +1306,42 @@ const WorkOrderDetailPage = () => {
       </Dialog>
 
       {/* Dialogo crear/editar sesion */}
+      <HojaParte
+        open={hojaOpen}
+        onOpenChange={setHojaOpen}
+        parte={parte}
+        cliente={cliente}
+        centro={centro}
+        sesionId={hojaSesionId}
+        tareasCatalogo={tareasCatalogo}
+        operariosCatalogo={operariosCatalogo}
+        onRefrescar={fetchParte}
+        onAjustes={ajustesDesdeHoja}
+        onFirmaCliente={() => { setHojaOpen(false); abrirFirmaPresencial(); }}
+        onPdf={handleDescargarPdf}
+        pdfGenerando={descargandoPdf}
+      />
+
       <SessionDialog
         open={sessionDialogOpen}
-        onOpenChange={setSessionDialogOpen}
+        onOpenChange={(o) => {
+          setSessionDialogOpen(o);
+          if (!o && volverAHoja.current) setTimeout(reabrirHoja, 900);
+        }}
         workOrderId={id}
         session={sesionEditando}
         usaZonas={!!parte.usa_zonas}
         clienteTieneMapaZonas={!!cliente?.mapa_zonas_url}
-        onSaved={fetchParte}
+        onSaved={async (creada) => {
+          await fetchParte();
+          if (creada && !parte.usa_zonas) {
+            // Parte nuevo: tras rellenar lo basico se abre la hoja de parte.
+            setHojaSesionId(creada.id);
+            setHojaOpen(true);
+          } else {
+            reabrirHoja();
+          }
+        }}
       />
 
       {/* Confirmar borrado de sesion */}
