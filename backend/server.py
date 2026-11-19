@@ -6221,7 +6221,8 @@ async def listar_partes_accesibles(
     current_user: dict = Depends(require_approved),
 ):
     """Partes visibles para el usuario. El admin ve todos. El operario solo
-    los partes en los que figura como operario en alguna sesion. Para dar
+    los partes en los que figura como operario en alguna sesion o que ha
+    creado el mismo. Para dar
     acceso a un parte de un companero, el admin lo anade como operario en
     una sesion de ese parte."""
     query = {}
@@ -6234,9 +6235,10 @@ async def listar_partes_accesibles(
         wo_ids = await db.work_sessions.distinct(
             "work_order_id", {"operarios_ids": current_user["user_id"]}
         )
-        if not wo_ids:
-            return []
-        query["id"] = {"$in": wo_ids}
+        # Tambien ve los partes que ha creado el, aunque aun no tengan
+        # sesiones (si no, un parte recien creado "desaparece" de su lista).
+        creadores = [v for v in (current_user.get("user_id"), current_user.get("id"), current_user.get("email")) if v]
+        query["$or"] = [{"id": {"$in": wo_ids}}, {"creado_por": {"$in": creadores}}]
 
     partes = [doc async for doc in db.work_orders.find(query).sort("creado_en", -1)]
 
