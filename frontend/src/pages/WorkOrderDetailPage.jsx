@@ -1186,13 +1186,6 @@ const WorkOrderDetailPage = () => {
                     {parteAbierto && (
                       <div className="flex items-center gap-1 shrink-0">
                         <Button
-                          size="sm"
-                          className="h-8 bg-[#AF1A1C] hover:bg-[#8f1517] text-white mr-1"
-                          onClick={() => abrirEditarSesion(s)}
-                        >
-                          <FileText className="w-4 h-4 mr-1" />Hoja
-                        </Button>
-                        <Button
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 hover:bg-slate-100"
