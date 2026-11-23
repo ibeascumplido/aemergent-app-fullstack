@@ -18,6 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import {
   Dialog,
   DialogContent,
@@ -78,7 +81,7 @@ const AdminCalendarPage = () => {
   const [asignarModo, setAsignarModo] = useState("rango"); // "rango" o "sueltos"
   const [asignarDesde, setAsignarDesde] = useState("");
   const [asignarHasta, setAsignarHasta] = useState("");
-  const [asignarFechasSueltas, setAsignarFechasSueltas] = useState("");
+  const [asignarDiasSel, setAsignarDiasSel] = useState([]);
   const [asignando, setAsignando] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [borrando, setBorrando] = useState(false);
@@ -376,12 +379,11 @@ const AdminCalendarPage = () => {
       payload.desde = asignarDesde;
       payload.hasta = asignarHasta;
     } else {
-      const fechas = asignarFechasSueltas
-        .split(/[\s,]+/)
-        .map((f) => f.trim())
-        .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f));
+      const fechas = [...asignarDiasSel]
+        .sort((a, b) => a - b)
+        .map((d) => format(d, "yyyy-MM-dd"));
       if (fechas.length === 0) {
-        toast.error("Escribe al menos una fecha válida (AAAA-MM-DD)");
+        toast.error("Elige al menos un día en el calendario");
         return;
       }
       payload.fechas = fechas;
@@ -394,7 +396,7 @@ const AdminCalendarPage = () => {
       setAsignarOperario("");
       setAsignarDesde("");
       setAsignarHasta("");
-      setAsignarFechasSueltas("");
+      setAsignarDiasSel([]);
       fetchVacaciones();
       fetchResumen();
     } catch (err) {
@@ -984,14 +986,24 @@ const AdminCalendarPage = () => {
               </div>
             ) : (
               <div className="space-y-1.5">
-                <Label>Fechas (AAAA-MM-DD, separadas por coma o espacio)</Label>
-                <Textarea
-                  value={asignarFechasSueltas}
-                  onChange={(e) => setAsignarFechasSueltas(e.target.value)}
-                  placeholder="2026-08-15, 2026-08-22, 2026-09-01"
-                  rows={2}
-                  data-testid="asignar-fechas-sueltas"
-                />
+                <Label>Elige el día (o varios) en el calendario</Label>
+                <div className="flex justify-center border border-slate-200 rounded-lg" data-testid="asignar-fechas-sueltas">
+                  <Calendar
+                    mode="multiple"
+                    locale={es}
+                    weekStartsOn={1}
+                    selected={asignarDiasSel}
+                    onSelect={(d) => setAsignarDiasSel(d || [])}
+                  />
+                </div>
+                <p className="text-xs text-slate-500">
+                  {asignarDiasSel.length === 0
+                    ? "Toca un día para marcarlo; vuelve a tocarlo para quitarlo."
+                    : `${asignarDiasSel.length} día(s): ${[...asignarDiasSel]
+                        .sort((a, b) => a - b)
+                        .map((d) => format(d, "d MMM", { locale: es }))
+                        .join(", ")}`}
+                </p>
               </div>
             )}
           </div>
