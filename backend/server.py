@@ -1364,10 +1364,13 @@ async def get_my_resumen(request: Request, year: Optional[int] = None):
         "status": VacationStatus.PENDING
     })
     
-    dias_vacaciones_disponibles = user.get("dias_vacaciones", 32)
-    dias_libres_disponibles = user.get("dias_libres", 6)
+    _sd = await _saldo_anio(user, year)
+    dias_vacaciones_disponibles = _sd["total_vacaciones"]
+    dias_libres_disponibles = _sd["total_libres"]
     
     return {
+        "arrastre_vacaciones": _sd["arrastre_vacaciones"],
+        "arrastre_libres": _sd["arrastre_libres"],
         "user_id": user["user_id"],
         "nombre": user.get("name", ""),
         "email": user.get("email", ""),
@@ -1716,10 +1719,13 @@ async def get_all_resumen(request: Request, year: Optional[int] = None):
             "status": VacationStatus.PENDING
         })
         
-        dias_vacaciones_disponibles = user.get("dias_vacaciones", 32)
-        dias_libres_disponibles = user.get("dias_libres", 6)
+        _sd = await _saldo_anio(user, year)
+        dias_vacaciones_disponibles = _sd["total_vacaciones"]
+        dias_libres_disponibles = _sd["total_libres"]
         
         resumen.append({
+            "arrastre_vacaciones": _sd["arrastre_vacaciones"],
+            "arrastre_libres": _sd["arrastre_libres"],
             "user_id": user["user_id"],
             "nombre": user.get("name", ""),
             "email": user.get("email", ""),
@@ -12078,6 +12084,102 @@ async def calendario_laboral_pdf(request: Request, year: int = 2027, municipio: 
         content=contenido, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="calendario-laboral-{year}.pdf"'},
     )
+
+
+# =====================================================================
+# SALDOS DE VACACIONES POR AÑO (arrastre + histórico)
+# =====================================================================
+
+async def _saldo_anio(user: dict, year: int) -> dict:
+    doc = await db.saldos_vacaciones.find_one({"user_id": user["user_id"], "year": year}, {"_id": 0}) or {}
+    base_v = doc.get("dias_vacaciones")
+    base_l = doc.get("dias_libres")
+    if base_v is None:
+        base_v = user.get("dias_vacaciones", 32)
+    if base_l is None:
+        base_l = user.get("dias_libres", 6)
+    arr_v = doc.get("arrastre_vacaciones") or 0
+    arr_l = doc.get("arrastre_libres") or 0
+    return {"base_vacaciones": base_v, "base_libres": base_l, "arrastre_vacaciones": arr_v, "arrastre_libres": arr_l,
+            "total_vacaciones": base_v + arr_v, "total_libres": base_l + arr_l, "nota": doc.get("nota", "")}
+
+
+async def _uso_anio(user_id: str, year: int) -> dict:
+    out = {}
+    for tipo, clave in (("vacacion", "vac"), ("libre", "lib")):
+        for st, c2 in ((VacationStatus.APPROVED, "aprob"), (VacationStatus.PENDING, "pend")):
+            out[f"{clave}_{c2}"] = await db.vacaciones.count_documents(
+                {"user_id": user_id, "fecha": {"$regex": f"^{year}"}, "tipo": tipo, "status": st})
+    return out
+
+
+class SaldoIn(BaseModel):
+    arrastre_vacaciones: int = Field(default=0, ge=0, le=365)
+    arrastre_libres: int = Field(default=0, ge=0, le=365)
+    dias_vacaciones: Optional[int] = Field(default=None, ge=0, le=365)
+    dias_libres: Optional[int] = Field(default=None, ge=0, le=365)
+    nota: str = Field(default="", max_length=300)
+
+
+@api_router.get("/admin/vacaciones/saldos")
+async def saldos_anio(year: int, _: dict = Depends(require_admin)):
+    users = await db.users.find({"status": UserStatus.APPROVED}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    out = []
+    for u in sorted(users, key=lambda x: (x.get("name") or "").lower()):
+        if u.get("role") == UserRole.FACTURACION:
+            continue
+        s_ = await _saldo_anio(u, year)
+        prev = await _saldo_anio(u, year - 1)
+        uso_prev = await _uso_anio(u["user_id"], year - 1)
+        uso = await _uso_anio(u["user_id"], year)
+        out.append({
+            "user_id": u["user_id"], "name": u.get("name", ""), **s_,
+            "restantes_anterior_vacaciones": max(0, prev["total_vacaciones"] - uso_prev["vac_aprob"]),
+            "restantes_anterior_libres": max(0, prev["total_libres"] - uso_prev["lib_aprob"]),
+            "usados_vacaciones": uso["vac_aprob"], "usados_libres": uso["lib_aprob"],
+        })
+    return out
+
+
+@api_router.put("/admin/vacaciones/saldos/{user_id}/{year}")
+async def saldo_guardar(user_id: str, year: int, payload: SaldoIn, _: dict = Depends(require_admin)):
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    cur = await _saldo_anio(u, year)
+    doc = {
+        "user_id": user_id, "year": year,
+        "arrastre_vacaciones": payload.arrastre_vacaciones, "arrastre_libres": payload.arrastre_libres,
+        # se congela la base del año para que el histórico no cambie si luego se edita el usuario
+        "dias_vacaciones": payload.dias_vacaciones if payload.dias_vacaciones is not None else cur["base_vacaciones"],
+        "dias_libres": payload.dias_libres if payload.dias_libres is not None else cur["base_libres"],
+        "nota": payload.nota.strip(), "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.saldos_vacaciones.update_one({"user_id": user_id, "year": year}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.get("/admin/vacaciones/historial/{user_id}")
+async def saldo_historial(user_id: str, _: dict = Depends(require_admin)):
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    anios = {datetime.now().year, datetime.now().year + 1}
+    async for v in db.vacaciones.find({"user_id": user_id}, {"fecha": 1, "_id": 0}):
+        try:
+            anios.add(int(v["fecha"][:4]))
+        except Exception:
+            pass
+    async for d in db.saldos_vacaciones.find({"user_id": user_id}, {"year": 1, "_id": 0}):
+        anios.add(d["year"])
+    filas = []
+    for y in sorted(anios, reverse=True):
+        s_ = await _saldo_anio(u, y)
+        uso = await _uso_anio(user_id, y)
+        filas.append({"year": y, **s_, **uso,
+                      "restantes_vacaciones": s_["total_vacaciones"] - uso["vac_aprob"],
+                      "restantes_libres": s_["total_libres"] - uso["lib_aprob"]})
+    return {"user_id": user_id, "name": u.get("name", ""), "anios": filas}
 
 
 # Include the router in the main app

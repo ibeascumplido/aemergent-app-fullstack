@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import FestivosDialog from "@/components/FestivosDialog";
-import { Users, MapPin, Palmtree, CalendarRange } from "lucide-react";
+import SaldosVacacionesDialog from "@/components/SaldosVacacionesDialog";
+import { Users, MapPin, Palmtree, CalendarRange, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const DESTINOS = {
@@ -16,6 +17,7 @@ const NavPlanificacion = ({ actual }) => {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const [festivosOpen, setFestivosOpen] = useState(false);
+  const [saldosOpen, setSaldosOpen] = useState(false);
   return (
     <div className="flex items-center gap-2 flex-wrap mb-4" data-testid="nav-planificacion">
       {Object.entries(DESTINOS)
@@ -32,6 +34,11 @@ const NavPlanificacion = ({ actual }) => {
             <CalendarRange className="w-4 h-4 mr-2" />
             Calendario laboral 2027
           </Button>
+          <Button size="sm" variant="outline" className="border-slate-200" onClick={() => setSaldosOpen(true)} data-testid="saldos-vacaciones-btn">
+            <History className="w-4 h-4 mr-2" />
+            Saldos y arrastre
+          </Button>
+          <SaldosVacacionesDialog open={saldosOpen} onOpenChange={setSaldosOpen} />
           <FestivosDialog open={festivosOpen} onOpenChange={setFestivosOpen} year={2027} />
         </>
       )}
