@@ -11722,6 +11722,122 @@ async def tramites_borrar_documento(exp_id: str, doc_id: str, _: dict = Depends(
     return _tr_out(await db.tramite_expedientes.find_one({"id": exp_id}))
 
 
+# =====================================================================
+# PROVEEDORES (solo administrador)
+# ---------------------------------------------------------------------
+# Agenda de proveedores: contactos, condiciones, productos/tarifas y
+# documentos (tarifas en PDF, catalogos...).
+# =====================================================================
+
+class ProveedorContacto(BaseModel):
+    nombre: str = Field(default="", max_length=150)
+    cargo: str = Field(default="", max_length=100)
+    telefono: str = Field(default="", max_length=60)
+    email: str = Field(default="", max_length=200)
+
+
+class ProveedorProducto(BaseModel):
+    nombre: str = Field(min_length=1, max_length=200)
+    referencia: str = Field(default="", max_length=80)
+    precio: Optional[float] = Field(default=None, ge=0, le=10_000_000)
+    unidad: str = Field(default="", max_length=40)
+    fecha_tarifa: str = Field(default="", max_length=20)
+    notas: str = Field(default="", max_length=500)
+
+
+class ProveedorIn(BaseModel):
+    nombre: str = Field(min_length=1, max_length=200)
+    categoria: str = Field(default="", max_length=80)
+    web: str = Field(default="", max_length=300)
+    direccion: str = Field(default="", max_length=300)
+    condiciones: str = Field(default="", max_length=2000)
+    notas: str = Field(default="", max_length=4000)
+    contactos: List[ProveedorContacto] = []
+    productos: List[ProveedorProducto] = []
+
+
+class ProveedorDocumentoIn(BaseModel):
+    archivo: str
+    nombre: str = Field(default="", max_length=200)
+    tipo: str = Field(default="tarifa", max_length=30)  # tarifa | catalogo | otro
+
+
+@api_router.get("/admin/proveedores")
+async def proveedores_listar(_: dict = Depends(require_admin)):
+    return [_tr_out(p) async for p in db.proveedores.find({}).sort("nombre", 1)]
+
+
+@api_router.post("/admin/proveedores")
+async def proveedores_crear(payload: ProveedorIn, _: dict = Depends(require_admin)):
+    ahora = datetime.now(timezone.utc).isoformat()
+    doc = {"id": str(uuid.uuid4()), **payload.model_dump(), "documentos": [], "created_at": ahora, "updated_at": ahora}
+    doc["nombre"] = doc["nombre"].strip()
+    await db.proveedores.insert_one(doc)
+    return _tr_out(doc)
+
+
+@api_router.get("/admin/proveedores/{prov_id}")
+async def proveedores_obtener(prov_id: str, _: dict = Depends(require_admin)):
+    p = await db.proveedores.find_one({"id": prov_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    return _tr_out(p)
+
+
+@api_router.put("/admin/proveedores/{prov_id}")
+async def proveedores_actualizar(prov_id: str, payload: ProveedorIn, _: dict = Depends(require_admin)):
+    upd = payload.model_dump()
+    upd["nombre"] = upd["nombre"].strip()
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.proveedores.update_one({"id": prov_id}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    return _tr_out(await db.proveedores.find_one({"id": prov_id}))
+
+
+@api_router.delete("/admin/proveedores/{prov_id}")
+async def proveedores_borrar(prov_id: str, _: dict = Depends(require_admin)):
+    p = await db.proveedores.find_one({"id": prov_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    for d in p.get("documentos", []):
+        await _borrar_documento_cloudinary(d.get("public_id"), d.get("resource_type", "image"))
+    await db.proveedores.delete_one({"id": prov_id})
+    return {"ok": True}
+
+
+@api_router.post("/admin/proveedores/{prov_id}/documentos")
+async def proveedores_subir_documento(prov_id: str, payload: ProveedorDocumentoIn, _: dict = Depends(require_admin)):
+    p = await db.proveedores.find_one({"id": prov_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    url, public_id, resource_type = await _subir_documento_cloudinary(payload.archivo, "proveedores")
+    doc = {
+        "id": str(uuid.uuid4()), "nombre": payload.nombre.strip() or "Documento",
+        "tipo": payload.tipo if payload.tipo in ("tarifa", "catalogo", "otro") else "otro",
+        "url": url, "public_id": public_id, "resource_type": resource_type,
+        "subido_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.proveedores.update_one(
+        {"id": prov_id},
+        {"$push": {"documentos": doc}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return _tr_out(await db.proveedores.find_one({"id": prov_id}))
+
+
+@api_router.delete("/admin/proveedores/{prov_id}/documentos/{doc_id}")
+async def proveedores_borrar_documento(prov_id: str, doc_id: str, _: dict = Depends(require_admin)):
+    p = await db.proveedores.find_one({"id": prov_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    d = next((x for x in p.get("documentos", []) if x["id"] == doc_id), None)
+    if not d:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    await _borrar_documento_cloudinary(d.get("public_id"), d.get("resource_type", "image"))
+    await db.proveedores.update_one({"id": prov_id}, {"$pull": {"documentos": {"id": doc_id}}})
+    return _tr_out(await db.proveedores.find_one({"id": prov_id}))
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
