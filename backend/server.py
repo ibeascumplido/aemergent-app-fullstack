@@ -11838,6 +11838,218 @@ async def proveedores_borrar_documento(prov_id: str, doc_id: str, _: dict = Depe
     return _tr_out(await db.proveedores.find_one({"id": prov_id}))
 
 
+# =====================================================================
+# CALENDARIO LABORAL / FESTIVOS
+# ---------------------------------------------------------------------
+# Festivos por año: "comunidad" (nacionales + Comunidad de Madrid, valen
+# para todos) y "local" (por municipio). Los de 2027 oficiales de la
+# Comunidad y de Madrid capital / San Sebastián de los Reyes vienen
+# sembrados; el resto de municipios se rellenan a mano cuando se publican.
+# =====================================================================
+
+FESTIVOS_COMUNIDAD_2027 = [
+    ("2027-01-01", "Año Nuevo"), ("2027-01-06", "Epifanía del Señor"), ("2027-03-19", "San José"),
+    ("2027-03-25", "Jueves Santo"), ("2027-03-26", "Viernes Santo"), ("2027-05-01", "Fiesta del Trabajo"),
+    ("2027-08-16", "Traslado de la Asunción de la Virgen"), ("2027-10-12", "Fiesta Nacional de España"),
+    ("2027-11-01", "Todos los Santos"), ("2027-12-06", "Día de la Constitución"),
+    ("2027-12-08", "Inmaculada Concepción"), ("2027-12-25", "Natividad del Señor"),
+]
+FESTIVOS_LOCALES_2027 = {
+    "Madrid": [("2027-05-15", "San Isidro Labrador"), ("2027-11-09", "Nuestra Señora de la Almudena")],
+    "San Sebastián de los Reyes": [("2027-01-20", "San Sebastián Mártir"), ("2027-08-28", "Santísimo Cristo de los Remedios")],
+    "Alcorcón": [],
+}
+
+
+async def asegurar_festivos_2027():
+    ahora = datetime.now(timezone.utc).isoformat()
+    for nombre in FESTIVOS_LOCALES_2027:
+        if not await db.calendario_municipios.find_one({"nombre": nombre}):
+            await db.calendario_municipios.insert_one({"id": str(uuid.uuid4()), "nombre": nombre, "created_at": ahora})
+    if await db.festivos.count_documents({"fecha": {"$regex": "^2027"}}) == 0:
+        docs = [{"id": str(uuid.uuid4()), "fecha": f, "nombre": n, "ambito": "comunidad", "municipio": "", "created_at": ahora}
+                for f, n in FESTIVOS_COMUNIDAD_2027]
+        for muni, lista in FESTIVOS_LOCALES_2027.items():
+            docs += [{"id": str(uuid.uuid4()), "fecha": f, "nombre": n, "ambito": "local", "municipio": muni, "created_at": ahora}
+                     for f, n in lista]
+        await db.festivos.insert_many(docs)
+
+
+class FestivoIn(BaseModel):
+    fecha: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    nombre: str = Field(min_length=1, max_length=120)
+    ambito: str = Field(default="local")  # comunidad | local
+    municipio: str = Field(default="", max_length=100)
+
+
+class MunicipioCalIn(BaseModel):
+    nombre: str = Field(min_length=1, max_length=100)
+
+
+async def _datos_festivos(year: int):
+    festivos = [_tr_out(f) async for f in db.festivos.find({"fecha": {"$regex": f"^{year}"}}).sort("fecha", 1)]
+    municipios = [m["nombre"] async for m in db.calendario_municipios.find({}).sort("nombre", 1)]
+    return festivos, municipios
+
+
+@api_router.get("/festivos")
+async def festivos_listar(request: Request, year: int):
+    await require_approved(request)
+    festivos, municipios = await _datos_festivos(year)
+    return {"year": year, "festivos": festivos, "municipios": municipios}
+
+
+@api_router.post("/admin/festivos")
+async def festivos_crear(payload: FestivoIn, _: dict = Depends(require_admin)):
+    if payload.ambito not in ("comunidad", "local"):
+        raise HTTPException(status_code=400, detail="Ambito no valido")
+    try:
+        datetime.strptime(payload.fecha, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fecha no valida")
+    muni = payload.municipio.strip()
+    if payload.ambito == "local":
+        if not muni:
+            raise HTTPException(status_code=400, detail="Indica el municipio")
+        if not await db.calendario_municipios.find_one({"nombre": muni}):
+            await db.calendario_municipios.insert_one(
+                {"id": str(uuid.uuid4()), "nombre": muni, "created_at": datetime.now(timezone.utc).isoformat()})
+    doc = {"id": str(uuid.uuid4()), "fecha": payload.fecha, "nombre": payload.nombre.strip(),
+           "ambito": payload.ambito, "municipio": muni if payload.ambito == "local" else "",
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.festivos.insert_one(doc)
+    return _tr_out(doc)
+
+
+@api_router.delete("/admin/festivos/{festivo_id}")
+async def festivos_borrar(festivo_id: str, _: dict = Depends(require_admin)):
+    await db.festivos.delete_one({"id": festivo_id})
+    return {"ok": True}
+
+
+@api_router.post("/admin/festivos-municipios")
+async def festivos_crear_municipio(payload: MunicipioCalIn, _: dict = Depends(require_admin)):
+    nombre = payload.nombre.strip()
+    if not await db.calendario_municipios.find_one({"nombre": nombre}):
+        await db.calendario_municipios.insert_one(
+            {"id": str(uuid.uuid4()), "nombre": nombre, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"ok": True}
+
+
+@api_router.delete("/admin/festivos-municipios/{nombre}")
+async def festivos_borrar_municipio(nombre: str, _: dict = Depends(require_admin)):
+    await db.calendario_municipios.delete_one({"nombre": nombre})
+    await db.festivos.delete_many({"ambito": "local", "municipio": nombre})
+    return {"ok": True}
+
+
+def _pdf_calendario_laboral(year: int, festivos: list, municipios: list) -> bytes:
+    import calendar as _cal
+    buf = io.BytesIO()
+    W, H = landscape(A4)
+    c = rl_canvas.Canvas(buf, pagesize=(W, H))
+    c.setTitle(f"Calendario laboral {year}")
+    MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto",
+             "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    DIAS = ["L", "M", "X", "J", "V", "S", "D"]
+    com = {f["fecha"]: f["nombre"] for f in festivos if f["ambito"] == "comunidad"}
+    loc = {}
+    for f in festivos:
+        if f["ambito"] == "local":
+            loc.setdefault(f["fecha"], []).append(f["municipio"])
+    m = 28
+    c.setFont("Helvetica-Bold", 17)
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.drawString(m, H - 34, f"Calendario laboral {year}")
+    c.setFont("Helvetica", 8.5)
+    c.setFillColor(colors.HexColor("#64748b"))
+    c.drawRightString(W - m, H - 34, "Inicia Servicios · Marca tus días de vacaciones desde «Mi calendario» en la app")
+    gap = 10
+    cw = (W - 2 * m - 3 * gap) / 4
+    top = H - 50
+    ch = 128
+    for mes in range(12):
+        col, fila = mes % 4, mes // 4
+        x0 = m + col * (cw + gap)
+        y0 = top - fila * (ch + 6)
+        c.setFont("Helvetica-Bold", 9.5)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(x0, y0 - 10, f"{MESES[mes]} {year}")
+        cell = cw / 7
+        c.setFont("Helvetica-Bold", 6.5)
+        c.setFillColor(colors.HexColor("#64748b"))
+        for i, d in enumerate(DIAS):
+            c.drawCentredString(x0 + cell * (i + 0.5), y0 - 21, d)
+        semanas = _cal.Calendar(firstweekday=0).monthdayscalendar(year, mes + 1)
+        for r, sem in enumerate(semanas):
+            for i, dia in enumerate(sem):
+                if not dia:
+                    continue
+                fecha = f"{year}-{mes + 1:02d}-{dia:02d}"
+                cx, cy = x0 + cell * i, y0 - 25 - (r + 1) * 14.5
+                finde = i >= 5
+                if fecha in com:
+                    c.setFillColor(colors.HexColor("#fca5a5"))
+                    c.rect(cx + 0.5, cy, cell - 1, 13.5, stroke=0, fill=1)
+                elif fecha in loc:
+                    c.setFillColor(colors.HexColor("#fdba74"))
+                    c.rect(cx + 0.5, cy, cell - 1, 13.5, stroke=0, fill=1)
+                elif finde:
+                    c.setFillColor(colors.HexColor("#f1f5f9"))
+                    c.rect(cx + 0.5, cy, cell - 1, 13.5, stroke=0, fill=1)
+                c.setFont("Helvetica-Bold" if (fecha in com or fecha in loc) else "Helvetica", 7.5)
+                c.setFillColor(colors.HexColor("#7f1d1d") if fecha in com else colors.HexColor("#7c2d12") if fecha in loc
+                               else colors.HexColor("#94a3b8") if finde else colors.HexColor("#0f172a"))
+                c.drawCentredString(cx + cell / 2, cy + 4, str(dia))
+    # Leyenda
+    ly = top - 3 * (ch + 6) - 2
+    c.setFont("Helvetica-Bold", 8)
+    c.setFillColor(colors.HexColor("#b91c1c"))
+    c.drawString(m, ly, "Rojo: festivos nacionales y de la Comunidad de Madrid (para todos)")
+    c.setFont("Helvetica", 7)
+    c.setFillColor(colors.HexColor("#0f172a"))
+    items = []
+    for f in festivos:
+        if f["ambito"] == "comunidad":
+            d = datetime.strptime(f["fecha"], "%Y-%m-%d")
+            items.append(f"{d.day} {MESES[d.month - 1][:3].lower()} · {f['nombre']}")
+    for i, t in enumerate(items):
+        c.drawString(m + (i % 4) * (cw + gap), ly - 10 - (i // 4) * 9, t)
+    ly2 = ly - 10 - ((len(items) + 3) // 4) * 9 - 6
+    c.setFont("Helvetica-Bold", 8)
+    c.setFillColor(colors.HexColor("#c2410c"))
+    c.drawString(m, ly2, "Naranja: fiestas locales (según el municipio donde se trabaje)")
+    c.setFont("Helvetica", 7)
+    c.setFillColor(colors.HexColor("#0f172a"))
+    yy = ly2 - 10
+    for muni in municipios:
+        propias = [f for f in festivos if f["ambito"] == "local" and f["municipio"] == muni]
+        if propias:
+            txt = " · ".join(
+                f"{datetime.strptime(f['fecha'], '%Y-%m-%d').day} {MESES[int(f['fecha'][5:7]) - 1][:3].lower()} {f['nombre']}"
+                for f in propias)
+            c.drawString(m, yy, f"{muni}: {txt}")
+        else:
+            c.setFillColor(colors.HexColor("#94a3b8"))
+            c.drawString(m, yy, f"{muni}: pendiente de publicación oficial")
+            c.setFillColor(colors.HexColor("#0f172a"))
+        yy -= 9
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@api_router.get("/calendario-laboral/pdf")
+async def calendario_laboral_pdf(request: Request, year: int = 2027):
+    await require_approved(request)
+    festivos, municipios = await _datos_festivos(year)
+    contenido = await asyncio.to_thread(_pdf_calendario_laboral, year, festivos, municipios)
+    return Response(
+        content=contenido, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="calendario-laboral-{year}.pdf"'},
+    )
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -12116,6 +12328,10 @@ async def on_startup():
     await seed_work_tasks_if_empty()
     await asegurar_tareas_extra_catalogo()
     await sincronizar_fotos_con_partes()
+    try:
+        await asegurar_festivos_2027()
+    except Exception:
+        logger.warning("No se pudieron sembrar los festivos", exc_info=True)
     try:
         await asegurar_plantillas_tramites()
     except Exception:

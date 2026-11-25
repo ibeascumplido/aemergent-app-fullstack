@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Users, MapPin, Palmtree } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import FestivosDialog from "@/components/FestivosDialog";
+import { Users, MapPin, Palmtree, CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const DESTINOS = {
@@ -11,6 +14,8 @@ const DESTINOS = {
 // Accesos entre las tres pantallas hermanas; oculta la actual.
 const NavPlanificacion = ({ actual }) => {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
+  const [festivosOpen, setFestivosOpen] = useState(false);
   return (
     <div className="flex items-center gap-2 flex-wrap mb-4" data-testid="nav-planificacion">
       {Object.entries(DESTINOS)
@@ -21,6 +26,15 @@ const NavPlanificacion = ({ actual }) => {
             {d.label}
           </Button>
         ))}
+      {isAdmin && (
+        <>
+          <Button size="sm" className="bg-red-500 hover:bg-red-600" onClick={() => setFestivosOpen(true)} data-testid="calendario-laboral-btn">
+            <CalendarRange className="w-4 h-4 mr-2" />
+            Calendario laboral 2027
+          </Button>
+          <FestivosDialog open={festivosOpen} onOpenChange={setFestivosOpen} year={2027} />
+        </>
+      )}
     </div>
   );
 };

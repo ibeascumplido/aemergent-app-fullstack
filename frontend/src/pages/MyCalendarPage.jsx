@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import axios from "axios";
+import { descargarCalendarioLaboral } from "@/components/FestivosDialog";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -54,6 +55,7 @@ const MyCalendarPage = () => {
   const [misDestinos, setMisDestinos] = useState({}); // { fecha: [{nombre, nota, centroId},...] }
   const [incidenciasPorCentro, setIncidenciasPorCentro] = useState({}); // { centroId: countAbiertas }
   const [loading, setLoading] = useState(true);
+  const [festivos, setFestivos] = useState({}); // { fecha: {nombre, ambito, municipio} }
   const [markMode, setMarkMode] = useState("vacacion");
   const [galpDia, setGalpDia] = useState(null); // fecha seleccionada para ver estaciones
   const [galpEstaciones, setGalpEstaciones] = useState([]);
@@ -131,6 +133,17 @@ const MyCalendarPage = () => {
       console.error("Error fetching mis destinos:", error);
     }
   }, [currentDate, user]);
+
+  useEffect(() => {
+    const y = currentDate.getFullYear();
+    axios.get(`${API}/festivos`, { params: { year: y } })
+      .then((r) => {
+        const m = {};
+        (r.data.festivos || []).forEach((f) => { if (!m[f.fecha] || f.ambito === "comunidad") m[f.fecha] = f; });
+        setFestivos(m);
+      })
+      .catch(() => setFestivos({}));
+  }, [currentDate.getFullYear()]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchVacaciones = useCallback(async () => {
     try {
@@ -502,10 +515,12 @@ const MyCalendarPage = () => {
                   className={`aspect-square text-[10px] flex items-center justify-center transition-all ${
                     !day.isCurrentMonth ? "text-slate-300" :
                     hasAny ? "text-white font-bold" :
+                    festivos[dateStr] ? (festivos[dateStr].ambito === "comunidad" ? "bg-red-200 text-red-800 font-bold" : "bg-orange-200 text-orange-800 font-bold") :
                     isTodayDate ? "bg-red-100 text-red-600 font-bold" :
                     isWeekend ? "text-slate-400" : "text-slate-700 hover:bg-slate-100"
                   } ${isPendingVac && hasAny ? "animate-pulse" : ""}`}
                   style={hasAny ? estiloDia(vacInfo) : {}}
+                  title={festivos[dateStr] ? `${festivos[dateStr].nombre}${festivos[dateStr].municipio ? " (" + festivos[dateStr].municipio + ")" : ""}` : undefined}
                 >
                   {day.date}
                 </button>
@@ -519,16 +534,22 @@ const MyCalendarPage = () => {
                 disabled={!day.isCurrentMonth || isPending || isApproved}
                 className={`relative min-h-[60px] p-1 border border-slate-100 transition-all ${
                   !day.isCurrentMonth ? "bg-slate-50 text-slate-400" :
+                  festivos[dateStr] ? (festivos[dateStr].ambito === "comunidad" ? "bg-red-100" : "bg-orange-100") :
                   isWeekend ? "bg-slate-50/50" : "bg-white hover:bg-slate-50"
                 } ${isTodayDate ? "ring-2 ring-red-400 ring-inset" : ""} ${
                   hasAny ? "text-white" : ""
                 }`}
                 style={hasAny ? estiloDia(vacInfo) : {}}
-                title={vacInfo?.rejection_comment ? `Rechazado: ${vacInfo.rejection_comment}` : ""}
+                title={vacInfo?.rejection_comment ? `Rechazado: ${vacInfo.rejection_comment}` : festivos[dateStr] ? `${festivos[dateStr].nombre}${festivos[dateStr].municipio ? " (" + festivos[dateStr].municipio + ")" : ""}` : ""}
               >
                 <span className={`text-sm font-medium ${hasAny ? "text-white" : ""}`}>
                   {day.date}
                 </span>
+                {festivos[dateStr] && !hasAny && (
+                  <span className={`block text-[8px] leading-tight truncate ${festivos[dateStr].ambito === "comunidad" ? "text-red-700" : "text-orange-700"}`}>
+                    {festivos[dateStr].municipio ? festivos[dateStr].municipio + ": " : ""}{festivos[dateStr].nombre}
+                  </span>
+                )}
                 {destinosHoy.length > 0 && (
                   <div className="mt-0.5 flex flex-col items-center gap-0.5">
                     {destinosHoy.slice(0, 2).map((dest, i) => {
@@ -647,6 +668,9 @@ const MyCalendarPage = () => {
           >
             <CalendarIcon className="w-4 h-4 mr-2" />
             Año
+          </Button>
+          <Button variant="outline" onClick={() => descargarCalendarioLaboral(currentDate.getFullYear() < 2027 ? 2027 : currentDate.getFullYear())}>
+            PDF laboral
           </Button>
         </div>
       </div>
