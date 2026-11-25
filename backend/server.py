@@ -11893,10 +11893,14 @@ async def _datos_festivos(year: int):
 
 
 @api_router.get("/festivos")
-async def festivos_listar(request: Request, year: int):
-    await require_approved(request)
+async def festivos_listar(request: Request, year: int, mios: bool = False):
+    user = await require_approved(request)
     festivos, municipios = await _datos_festivos(year)
-    return {"year": year, "festivos": festivos, "municipios": municipios}
+    if user.get("role") != UserRole.ADMIN or mios:
+        muni = user.get("festivos_municipio") or "Madrid"
+        festivos = [f for f in festivos if f["ambito"] == "comunidad" or f["municipio"] == muni]
+    return {"year": year, "festivos": festivos, "municipios": municipios,
+            "mi_municipio": user.get("festivos_municipio") or "Madrid"}
 
 
 @api_router.post("/admin/festivos")
@@ -11924,6 +11928,27 @@ async def festivos_crear(payload: FestivoIn, _: dict = Depends(require_admin)):
 @api_router.delete("/admin/festivos/{festivo_id}")
 async def festivos_borrar(festivo_id: str, _: dict = Depends(require_admin)):
     await db.festivos.delete_one({"id": festivo_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/festivos-operarios")
+async def festivos_operarios(_: dict = Depends(require_admin)):
+    users = await db.users.find({"status": UserStatus.APPROVED}, {"_id": 0, "user_id": 1, "name": 1, "role": 1, "festivos_municipio": 1}).to_list(1000)
+    return sorted(
+        [{"user_id": u["user_id"], "name": u.get("name", ""), "municipio": u.get("festivos_municipio") or "Madrid"}
+         for u in users if u.get("role") != UserRole.FACTURACION],
+        key=lambda x: x["name"].lower())
+
+
+class FestivosOperarioIn(BaseModel):
+    municipio: str = Field(min_length=1, max_length=100)
+
+
+@api_router.put("/admin/festivos-operarios/{user_id}")
+async def festivos_operario_set(user_id: str, payload: FestivosOperarioIn, _: dict = Depends(require_admin)):
+    r = await db.users.update_one({"user_id": user_id}, {"$set": {"festivos_municipio": payload.municipio.strip()}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return {"ok": True}
 
 
@@ -12040,9 +12065,14 @@ def _pdf_calendario_laboral(year: int, festivos: list, municipios: list) -> byte
 
 
 @api_router.get("/calendario-laboral/pdf")
-async def calendario_laboral_pdf(request: Request, year: int = 2027):
-    await require_approved(request)
+async def calendario_laboral_pdf(request: Request, year: int = 2027, municipio: str = ""):
+    user = await require_approved(request)
     festivos, municipios = await _datos_festivos(year)
+    if user.get("role") != UserRole.ADMIN and not municipio:
+        municipio = user.get("festivos_municipio") or "Madrid"
+    if municipio:
+        festivos = [f for f in festivos if f["ambito"] == "comunidad" or f["municipio"] == municipio]
+        municipios = [municipio]
     contenido = await asyncio.to_thread(_pdf_calendario_laboral, year, festivos, municipios)
     return Response(
         content=contenido, media_type="application/pdf",

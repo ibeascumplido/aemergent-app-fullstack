@@ -136,7 +136,7 @@ const MyCalendarPage = () => {
 
   useEffect(() => {
     const y = currentDate.getFullYear();
-    axios.get(`${API}/festivos`, { params: { year: y } })
+    axios.get(`${API}/festivos`, { params: { year: y, mios: true } })
       .then((r) => {
         const m = {};
         (r.data.festivos || []).forEach((f) => { if (!m[f.fecha] || f.ambito === "comunidad") m[f.fecha] = f; });

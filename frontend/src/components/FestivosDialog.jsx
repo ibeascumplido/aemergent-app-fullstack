@@ -9,12 +9,12 @@ import { Input } from "@/components/ui/input";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const fmt = (f) => new Date(f + "T00:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
 
-export const descargarCalendarioLaboral = async (year) => {
+export const descargarCalendarioLaboral = async (year, municipio = "", nombre = "") => {
   try {
-    const r = await axios.get(`${API}/calendario-laboral/pdf`, { params: { year }, responseType: "blob" });
+    const r = await axios.get(`${API}/calendario-laboral/pdf`, { params: { year, municipio }, responseType: "blob" });
     const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
     const a = document.createElement("a");
-    a.href = url; a.download = `calendario-laboral-${year}.pdf`; a.click();
+    a.href = url; a.download = `calendario-laboral-${year}${nombre ? "-" + nombre.replace(/\s+/g, "_") : ""}.pdf`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   } catch { toast.error("No se pudo generar el PDF"); }
 };
@@ -23,10 +23,12 @@ const FestivosDialog = ({ open, onOpenChange, year = 2027 }) => {
   const [data, setData] = useState({ festivos: [], municipios: [] });
   const [nuevo, setNuevo] = useState({ municipio: "", fecha: "", nombre: "" });
   const [nuevoMuni, setNuevoMuni] = useState("");
+  const [operarios, setOperarios] = useState([]);
 
   const cargar = useCallback(async () => {
     try { setData((await axios.get(`${API}/festivos`, { params: { year } })).data); }
     catch { toast.error("No se pudieron cargar los festivos"); }
+    try { setOperarios((await axios.get(`${API}/admin/festivos-operarios`)).data); } catch { /* */ }
   }, [year]);
   useEffect(() => { if (open) cargar(); }, [open, cargar]);
 
@@ -43,6 +45,11 @@ const FestivosDialog = ({ open, onOpenChange, year = 2027 }) => {
   const delMuni = async (n) => {
     if (!window.confirm(`¿Quitar ${n} y sus festivos locales?`)) return;
     await axios.delete(`${API}/admin/festivos-municipios/${encodeURIComponent(n)}`); cargar();
+  };
+  const setOp = async (u, municipio) => {
+    setOperarios((l) => l.map((x) => (x.user_id === u.user_id ? { ...x, municipio } : x)));
+    try { await axios.put(`${API}/admin/festivos-operarios/${u.user_id}`, { municipio }); }
+    catch { toast.error("No se pudo guardar"); cargar(); }
   };
   const guardarLocal = async () => {
     if (!nuevo.municipio || !nuevo.fecha || !nuevo.nombre.trim()) return toast.error("Municipio, fecha y nombre");
@@ -67,6 +74,20 @@ const FestivosDialog = ({ open, onOpenChange, year = 2027 }) => {
               {comunes.map((f) => <div key={f.id} className="flex justify-between border-b border-slate-100 py-0.5"><span>{fmt(f.fecha)}</span><span className="text-right">{f.nombre}</span></div>)}
             </div>
             <p className="text-xs text-slate-400 mt-1">Decreto 82/2026 (BOCM 1-oct-2026). El 2 de mayo cae en domingo y no se traslada.</p>
+          </div>
+
+          <div>
+            <p className="font-semibold text-slate-900 mb-1">Festivos locales de cada operario</p>
+            <p className="text-xs text-slate-500 mb-2">Elige qué festivos locales disfruta cada uno (p. ej. trabaja en Alcorcón pero le pones Madrid). Es lo que verá en su calendario y en su PDF.</p>
+            {operarios.map((u) => (
+              <div key={u.user_id} className="flex items-center gap-2 py-1 border-b border-slate-100">
+                <span className="flex-1 truncate">{u.name}</span>
+                <select value={u.municipio} onChange={(e) => setOp(u, e.target.value)} className="border border-slate-200 rounded-md px-2 py-1 bg-white">
+                  {[...new Set(["Madrid", ...data.municipios, u.municipio])].map((m) => <option key={m}>{m}</option>)}
+                </select>
+                <Button variant="outline" size="sm" onClick={() => descargarCalendarioLaboral(year, u.municipio, u.name)} title="PDF de este operario"><Download className="w-4 h-4" /></Button>
+              </div>
+            ))}
           </div>
 
           <div className="space-y-3">
