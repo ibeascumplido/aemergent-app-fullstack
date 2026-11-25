@@ -11863,22 +11863,33 @@ FESTIVOS_COMUNIDAD_2027 = [
 FESTIVOS_LOCALES_2027 = {
     "Madrid": [("2027-05-15", "San Isidro Labrador"), ("2027-11-09", "Nuestra Señora de la Almudena")],
     "San Sebastián de los Reyes": [("2027-01-20", "San Sebastián Mártir"), ("2027-08-28", "Santísimo Cristo de los Remedios")],
-    "Alcorcón": [],
+    "Torrejón de Ardoz": [("2027-06-21", "Fiestas Populares"), ("2027-06-22", "Fiestas Populares")],
+    "Las Rozas de Madrid": [("2027-05-03", "La Retamosa"), ("2027-09-29", "San Miguel")],
+    "Alcorcón": [],  # pendiente: el BOCM publica las locales en diciembre
 }
 
 
 async def asegurar_festivos_2027():
     ahora = datetime.now(timezone.utc).isoformat()
-    for nombre in FESTIVOS_LOCALES_2027:
-        if not await db.calendario_municipios.find_one({"nombre": nombre}):
-            await db.calendario_municipios.insert_one({"id": str(uuid.uuid4()), "nombre": nombre, "created_at": ahora})
-    if await db.festivos.count_documents({"fecha": {"$regex": "^2027"}}) == 0:
-        docs = [{"id": str(uuid.uuid4()), "fecha": f, "nombre": n, "ambito": "comunidad", "municipio": "", "created_at": ahora}
-                for f, n in FESTIVOS_COMUNIDAD_2027]
-        for muni, lista in FESTIVOS_LOCALES_2027.items():
-            docs += [{"id": str(uuid.uuid4()), "fecha": f, "nombre": n, "ambito": "local", "municipio": muni, "created_at": ahora}
-                     for f, n in lista]
-        await db.festivos.insert_many(docs)
+    for nombre, lista in FESTIVOS_LOCALES_2027.items():
+        m = await db.calendario_municipios.find_one({"nombre": nombre})
+        if not m:
+            await db.calendario_municipios.insert_one(
+                {"id": str(uuid.uuid4()), "nombre": nombre, "created_at": ahora, "sembrado_2027": True})
+            sembrar = True
+        else:
+            sembrar = not m.get("sembrado_2027")
+            if sembrar:
+                await db.calendario_municipios.update_one({"nombre": nombre}, {"$set": {"sembrado_2027": True}})
+        if sembrar:  # una sola vez por municipio: si luego se borra a mano, no se vuelve a crear
+            for f, n in lista:
+                if not await db.festivos.find_one({"fecha": f, "ambito": "local", "municipio": nombre}):
+                    await db.festivos.insert_one({"id": str(uuid.uuid4()), "fecha": f, "nombre": n,
+                                                  "ambito": "local", "municipio": nombre, "created_at": ahora})
+    if await db.festivos.count_documents({"fecha": {"$regex": "^2027"}, "ambito": "comunidad"}) == 0:
+        await db.festivos.insert_many([
+            {"id": str(uuid.uuid4()), "fecha": f, "nombre": n, "ambito": "comunidad", "municipio": "", "created_at": ahora}
+            for f, n in FESTIVOS_COMUNIDAD_2027])
 
 
 class FestivoIn(BaseModel):
